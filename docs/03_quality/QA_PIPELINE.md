@@ -213,7 +213,7 @@ warning数件の手動修正は通常5分以内で完了する。
 
 #### Agent 4: ContentReviewer（Opus）
 
-**入力**: scene_definition.json + CONTENT_PLAN.md
+**入力**: scene_definition.json + episode_config.json
 **タスク**: コンテンツとしての完成度を多角的に評価
 
 **チェック項目**:

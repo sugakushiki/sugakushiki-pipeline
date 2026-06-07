@@ -432,7 +432,7 @@ def main():
     if warnings > 0:
         print(
             "\n[!] Review all warnings above before reporting build complete to user.\n"
-            "[!] Memory: feedback_build_complete_view_check.md - do NOT skip Read of extracted frames."
+            "[!] Do NOT skip Read of the extracted frames before declaring the build complete."
         )
         return 1
     return 0

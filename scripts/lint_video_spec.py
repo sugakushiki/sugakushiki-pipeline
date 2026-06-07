@@ -7,7 +7,7 @@ the canonical value. Different content types (regular / shorts / samples)
 may legitimately mention other ranges, so additional mentions are OK.
 
 This is the structural safeguard against the past sanitize-miss class of
-bug (CLAUDE.md / README.md / architecture.md / CONTENT_PLAN.md updated
+bug (CLAUDE.md / README.md / architecture.md updated
 10〜15 → 10〜19, but STYLE_GUIDE.md L232 was missed).
 
 Detection logic:
@@ -37,7 +37,6 @@ TRACKED_DOCS = [
     "CLAUDE.md",
     "README.md",
     "docs/architecture.md",
-    "docs/01_concept/CONTENT_PLAN.md",
     "docs/03_quality/STYLE_GUIDE.md",
 ]
 
