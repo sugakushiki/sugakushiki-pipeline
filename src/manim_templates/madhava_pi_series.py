@@ -322,7 +322,7 @@ class MadhavaPiSeries(Scene):
 # -----------------------------------------------------------------------
 # SCENES dict for template auto-discovery
 # -----------------------------------------------------------------------
-# B-10 / B-24: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 # Numerical constants like 3.141592653 are math literals, not factual claims.
 LINT_FACTUAL_CLAIMS = {
     "arctan_derivation": {

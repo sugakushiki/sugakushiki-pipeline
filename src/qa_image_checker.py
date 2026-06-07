@@ -126,7 +126,7 @@ def evaluate_single_scene(scene: dict, image_path: str) -> dict:
 3. 雰囲気・構図 [info]
    oil painting style, academic realism が実現されているか。
 
-4. ナレーションとの整合性（B-18: 以下の各サブ観点で評価）
+4. ナレーションとの整合性
 
    4-1. 主要人物の有無 [critical: 完全欠落 / warning: 一部欠落]
         source_prompt または narration が固有名・続柄・年齢で言及する主要人物

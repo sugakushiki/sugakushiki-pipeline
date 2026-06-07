@@ -516,7 +516,7 @@ class Brachistochrone(Scene):
 # ---------------------------------------------------------------------------
 # SCENES registry (used by pipeline auto-discovery)
 # ---------------------------------------------------------------------------
-# B-10 / B-24: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "challenge": {"people": [], "years": ["1696"]},
     "race": {"people": [], "years": []},

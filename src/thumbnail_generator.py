@@ -418,7 +418,7 @@ def validate_explicit_source_image(
     subject_label: str,
     threshold: int = 8,
 ) -> tuple[bool, int]:
-    """明示指定された source_image を Vision 採点で妥当性チェック (B-16)。
+    """明示指定された source_image を Vision 採点で妥当性チェック。
 
     既存 `_vision_score_candidates()` の Vision プロンプトは clarity を
     「後ろ姿・シルエット・群衆は1点」と判定するため、過去のケースのような
@@ -675,7 +675,7 @@ def load_thumbnail_config(config_path: str, images_dir: str, args) -> dict:
         source_image = args.source_image
     elif thumb.get("source_image"):
         source_image = thumb["source_image"]
-        # B-16: 明示指定 source_image を Vision 採点で妥当性チェック。
+        # 明示指定 source_image を Vision 採点で妥当性チェック。
         # 過去のケースで `person_03.png` (グループシーン、主役不在) を指定して
         # サムネイルが「主役不在」状態で生成された事故の予防。
         # 既存ファイルが見つかる場合のみチェック（不在なら経路 4 で recovery）。
@@ -782,12 +782,7 @@ def main():
         "--source-image", default=None, help="Override source image filename (in images/)"
     )
     parser.add_argument("--symbol", default=None, help="Override math_symbol")
-    parser.add_argument(
-        "--strict-source-validation",
-        action="store_true",
-        help="B-16: 明示指定 source_image の Vision 採点が閾値未満の場合に "
-        "auto-select に強制 fallback する。default は warning のみで採用続行。",
-    )
+    parser.add_argument
     args = parser.parse_args()
 
     config_path = os.path.abspath(args.config_json)

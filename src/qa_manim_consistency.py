@@ -1,7 +1,7 @@
 """qa_manim_consistency.py - Lint check that warns when narration is missing
 factual claims (people / years) hardcoded in Manim templates.
 
-Implements B-10 (case 丙-3): each Manim template can declare a module-level
+Implements (case 丙-3): each Manim template can declare a module-level
 LINT_FACTUAL_CLAIMS dict mapping mode -> {"people": [...], "years": [...]}.
 Templates without this metadata are silently skipped (gradual rollout).
 
@@ -88,7 +88,7 @@ def _scene_narration_text(scene):
 
 
 def lint_manim_factual_claims(scene_def, manim_dir):
-    """B-10: warn when narration is missing factual claims (people / years)
+    """warn when narration is missing factual claims (people / years)
     hardcoded in Manim templates' LINT_FACTUAL_CLAIMS metadata.
 
     Templates without LINT_FACTUAL_CLAIMS now emit a WARN (no silent skip):
@@ -178,7 +178,7 @@ def _main():
     import argparse
     import json
 
-    parser = argparse.ArgumentParser(description="Lint Manim factual-claim consistency (B-10)")
+    parser = argparse.ArgumentParser(description="Lint Manim factual-claim consistency")
     parser.add_argument("scene_definition", help="path to scene_definition.json")
     parser.add_argument(
         "--manim-templates",

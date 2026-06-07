@@ -209,7 +209,7 @@ class PowerSetHierarchy(Scene):
 # -----------------------------------------------------------------------
 # SCENES dict for template auto-discovery
 # -----------------------------------------------------------------------
-# B-10 / B-24: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "finite_power": {"people": [["Cantor", "カントール"]], "years": []},
     "alef_tower": {"people": [["Cantor", "カントール"]], "years": []},

@@ -1172,7 +1172,7 @@ def _load_geojson_polygons(cache_file: str) -> list:
 def _check_route_map_collisions(
     fig, title_artist, route_label_artists, legend, city_label_artists=None
 ) -> list[dict]:
-    """Detect title/route_label/legend/city_label bbox overlaps after layout (B-11).
+    """Detect title/route_label/legend/city_label bbox overlaps after layout.
 
     Calls fig.canvas.draw() to materialize layout, gets pixel-space bboxes via
     get_window_extent(renderer), and checks pairwise overlap. Returns a list of
@@ -1187,7 +1187,7 @@ def _check_route_map_collisions(
         "suggestion": "<concrete fix proposal>",
     }
 
-    B-11 E: city_label vs route_label and city_label vs city_label
+    E: city_label vs route_label and city_label vs city_label
     were previously unchecked — a displaced route label could land on a city name
     (or two clustered city names overlap) and slip past preflight. Now covered.
     """
@@ -1265,7 +1265,7 @@ def _check_route_map_collisions(
                 }
             )
 
-    # B-11 D: route_label vs route_label (pairwise) — closes preflight gap
+    # D: route_label vs route_label (pairwise) — closes preflight gap
     # where two adjacent route labels cluster around a shared pivot city.
     for i in range(len(route_bboxes)):
         for j in range(i + 1, len(route_bboxes)):
@@ -1287,7 +1287,7 @@ def _check_route_map_collisions(
                 }
             )
 
-    # B-11 E: city_label vs route_label / city_label vs city_label.
+    # E: city_label vs route_label / city_label vs city_label.
     # A displaced route label can land on a city name, or two clustered city
     # names can overlap — both previously slipped past preflight.
     # Require a meaningful 2D overlap (>=4px each way). bbox edges that merely
@@ -1350,7 +1350,7 @@ def generate_route_map(
 
     When preflight_only=True, the figure is built and collision-checked but not
     saved (no PNG, no Ken Burns). Returns the collision reports list. Use this
-    from B-11 preflight to detect title/label/legend overlaps before running
+    from preflight to detect title/label/legend overlaps before running
     expensive downstream steps.
 
     Returns:
@@ -1519,7 +1519,7 @@ def generate_route_map(
             zorder=3,
         )
 
-        # Place label ON the curve at varying t values (B-11 B fix).
+        # Place label ON the curve at varying t values.
         # Store curve params so placement loop can compute (Bx,By) at any t,
         # preserving visual correspondence between label and its own arc.
         year = step.get("year", "")
@@ -1575,7 +1575,7 @@ def generate_route_map(
     city_list = list(cities.items())
     placed_labels = []  # track (x, y) of placed label centers for collision avoidance
     placed_label_bboxes = []  # track (x0, y0, x1, y1) for tighter collision
-    city_label_artists = []  # B-11 E: track city-label artists for collision check
+    city_label_artists = []  # E: track city-label artists for collision check
     # Per-city label position override (Day 21 ある回 で追加 — auto-placement だと
     # 日本語長名 (ゲッティンゲン等) が canvas 端で clipping。scene_def の
     # visual.city_offsets = {city_name: [x_off_pts, y_off_pts, ha]} で固定 placement。
@@ -1754,9 +1754,9 @@ def generate_route_map(
     pts_per_lat = fig.get_size_inches()[1] * fig.dpi / lat_span
     label_h_data = 20 / pts_per_lat  # approx label height in data coords
     placed_route_labels = []
-    placed_route_label_bboxes = []  # B-11 C: bbox-aware overlap check for route labels
-    route_label_artists = []  # B-11: track artists for collision check
-    # B-11 auto-fix Stage 1: route_label upper exclusion zone (default 5%, raise to 18% to avoid title)
+    placed_route_label_bboxes = []  # C: bbox-aware overlap check for route labels
+    route_label_artists = []  # track artists for collision check
+    # auto-fix Stage 1: route_label upper exclusion zone (default 5%, raise to 18% to avoid title)
     _route_label_top_padding = visual.get("_route_label_top_padding", 0.05)
 
     def _bezier_point(sx, sy, cx, cy, ex, ey, t):
@@ -1795,7 +1795,7 @@ def generate_route_map(
             min_d = min(min_d, d)
         return cand_bbox, min_d
 
-    leader_lines = []  # B-11 A: (start_x, start_y, end_x, end_y, color) for displaced labels
+    leader_lines = []  # A: (start_x, start_y, end_x, end_y, color) for displaced labels
 
     for rl in route_labels:
         lt = rl["text"]
@@ -1805,7 +1805,7 @@ def generate_route_map(
         ex_r, ey_r = rl["ex"], rl["ey"]
         direction = rl["direction"]
 
-        # B-11 hybrid: estimate route label bbox for overlap detection.
+        # hybrid: estimate route label bbox for overlap detection.
         # Add 20% safety margin to width to account for boxstyle round padding
         # and font rendering variance (avoids false-pass on borderline overlaps).
         rl_w_data = _estimate_label_w_deg(lt, 16, pts_per_lon) * 1.20
@@ -1902,7 +1902,7 @@ def generate_route_map(
             )
             used_displacement = True
 
-        # B-11 A: if label is displaced from its curve, queue a leader line
+        # A: if label is displaced from its curve, queue a leader line
         # (will be drawn AFTER all labels placed so it appears below them).
         displacement = ((best_pos[0] - anchor_x) ** 2 + (best_pos[1] - anchor_y) ** 2) ** 0.5
         if used_displacement and displacement > label_h_data * 1.5:
@@ -1929,7 +1929,7 @@ def generate_route_map(
         )
         route_label_artists.append(_route_label_artist)
 
-    # B-11 A: draw queued leader lines (curve anchor → displaced label).
+    # A: draw queued leader lines (curve anchor → displaced label).
     # zorder=5 so they sit below route labels (6) but above arrows (3).
     for ax_x, ay, lx_end, ly_end, lc_line in leader_lines:
         ax.plot(
@@ -1943,7 +1943,7 @@ def generate_route_map(
         )
 
     # Title (inside plot area, top center)
-    title_artist = None  # B-11: track for collision check
+    title_artist = None  # track for collision check
     title_fontsize = visual.get("_title_fontsize", 28)  # auto-fix Stage 3 may override
     if title:
         title_y = lat_range[1] - lat_span * 0.06
@@ -1980,7 +1980,7 @@ def generate_route_map(
                 legend_items.append(mpatches.Patch(color=_ROUTE_CATEGORY_COLORS[cat], label=lbl))
                 seen_labels.add(lbl)
 
-    legend_artist = None  # B-11: track for collision check
+    legend_artist = None  # track for collision check
     if legend_items:
         legend_prop = FontProperties(fname=font_path, size=18) if font_path else {"size": 18}
         legend_artist = ax.legend(
@@ -2009,7 +2009,7 @@ def generate_route_map(
     SUBTITLE_SAFE_FRAC = 220 / 1080  # ≈ 0.2037
     fig.subplots_adjust(left=0.01, right=0.99, top=0.97, bottom=SUBTITLE_SAFE_FRAC)
 
-    # B-11 Layer 3: collision check (runs whether or not preflight ran).
+    # Layer 3: collision check (runs whether or not preflight ran).
     # Reports printed as WARN here; preflight is responsible for STOP/auto-fix.
     collision_reports = _check_route_map_collisions(
         fig, title_artist, route_label_artists, legend_artist, city_label_artists
@@ -2038,7 +2038,7 @@ def generate_route_map(
 
 
 def _apply_route_map_auto_fix_stage(visual: dict, stage: int) -> tuple[dict, str]:
-    """B-11 auto-fix: mutate visual for the given stage. Returns (new_visual, description)."""
+    """ auto-fix: mutate visual for the given stage. Returns (new_visual, description)."""
     import copy
 
     new_visual = copy.deepcopy(visual)
@@ -2092,7 +2092,7 @@ def _apply_route_map_auto_fix_stage(visual: dict, stage: int) -> tuple[dict, str
 
 
 def route_map_preflight(scene_def_path: str, allow: bool = False, auto_fix: bool = False) -> dict:
-    """B-11 Layer 2: pre-render collision check for all route_map visuals.
+    """ Layer 2: pre-render collision check for all route_map visuals.
 
     Loads scene_definition.json, iterates scenes whose visual.type == "route_map",
     calls generate_route_map(..., preflight_only=True) on each, and collects

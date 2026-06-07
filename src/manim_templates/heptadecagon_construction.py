@@ -277,7 +277,7 @@ class HeptadecagonConstruction(Scene):
 # ---------------------------------------------------------------------------
 # SCENES registry
 # ---------------------------------------------------------------------------
-# B-10: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "circle_and_polygon": {
         "people": [["ガウス", "Gauss"]],

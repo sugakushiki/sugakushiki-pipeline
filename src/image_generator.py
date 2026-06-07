@@ -290,7 +290,7 @@ def extract_image_tasks(scene_def: dict, images_dir: str) -> list:
                 # reference photo would contradict "no human in scene").
                 use_reference = False
 
-            # B-20 cliche scanner: visual.cliche_acks is an optional
+            # cliche scanner: visual.cliche_acks is an optional
             # list of cliche terms that the user has explicitly verified for
             # this scene — included in task dict for cliche_scanner opt-out.
             cliche_acks = v.get("cliche_acks", [])
@@ -1283,7 +1283,7 @@ def generate_all(
         qa_max_retries: Max number of QA-driven regeneration attempts (default 2).
         birth_year:    Birth year of the subject. Enables reference-based
                        age-aware generation using Wikimedia photos as identity anchor.
-        cliche_llm_review: B-20. If True, run Layer 2 LLM-based cliche
+        cliche_llm_review:. If True, run Layer 2 LLM-based cliche
                            review (Claude Sonnet) in addition to the always-on
                            Layer 1 dictionary scan.
     """
@@ -1293,7 +1293,7 @@ def generate_all(
     # Day 16 強化 A: source_prompt staleness 判定用 meta をロード。
     image_meta = _load_image_meta(images_dir)
 
-    # B-20 cliche scanner: scan all source_prompts for unverified
+    # cliche scanner: scan all source_prompts for unverified
     # period stereotypes BEFORE expensive image generation. WARN-only —
     # generation still proceeds. Layer 1 (dictionary) is always on; Layer 2
     # (LLM review) is opt-in via --cliche-llm-review.
@@ -1408,7 +1408,7 @@ def generate_all(
         narration = t.get("narration", "")
         output_path = t["img_path"]
 
-        # B-15 no_human flag: append explicit "no people in scene"
+        # no_human flag: append explicit "no people in scene"
         # suffix so Gemini Flash's bias toward populating scenes with people
         # is suppressed. Used for object-only or unclear-protagonist scenes (group shots
         # where the subject is unidentifiable, or pure object/place scenes).
@@ -1717,7 +1717,7 @@ def main():
     parser.add_argument(
         "--cliche-llm-review",
         action="store_true",
-        help="B-20: Run Layer 2 LLM-based cliche review"
+        help="Run Layer 2 LLM-based cliche review"
         " (Claude Sonnet) in addition to the always-on dictionary scan."
         " Default: off. Cost: 0 (Max subscription).",
     )
@@ -1750,7 +1750,7 @@ def main():
         if config.get("birth_year"):
             birth_year = int(config["birth_year"])
         elif isinstance(config.get("verified_facts"), dict):
-            # B-2: support both legacy str and new {fact, source} dict.
+            # support both legacy str and new {fact, source} dict.
             from config_validator import get_verified_fact_text
 
             birth_str = get_verified_fact_text(config["verified_facts"].get("birth", ""))
@@ -1814,7 +1814,7 @@ def main():
         # Default: list mode
         tasks = extract_image_tasks(scene_def, images_dir)
         list_tasks(tasks)
-        # Issue 3 (s96 fix, B-20): also run cliche scan in --list mode so
+        # Issue 3: also run cliche scan in --list mode so
         # users can verify source_prompt cliches without committing to a
         # full --generate (which costs API time + Vision QA retries).
         try:

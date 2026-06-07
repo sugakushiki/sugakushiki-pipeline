@@ -275,7 +275,7 @@ class ConstructibleUniverse(Scene):
 # -----------------------------------------------------------------------
 # SCENES dict for template auto-discovery
 # -----------------------------------------------------------------------
-# B-10 / B-24: no hardcoded people/years in display Text() (docstring only).
+# no hardcoded people/years in display Text() (docstring only).
 LINT_FACTUAL_CLAIMS = {
     "cumulative_hierarchy": {"people": [], "years": []},
     "constructible_L": {"people": [], "years": []},

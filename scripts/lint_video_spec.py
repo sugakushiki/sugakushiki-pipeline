@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""B-35: lint that all tracked docs mention the canonical video duration.
+"""lint that all tracked docs mention the canonical video duration.
 
 Reads the canonical duration from `docs/02_pipeline/VIDEO_SPEC.md` (the
 SSOT) and ensures that every tracked doc contains AT LEAST ONE mention of

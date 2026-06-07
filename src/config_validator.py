@@ -11,7 +11,7 @@ Usage (from pipeline.py):
     from config_validator import validate_config
     errors, warnings = validate_config(config, config_path)
 
-verified_facts schema (B-2, 2026-05-05):
+verified_facts schema:
     legacy: {"birth": "1802-08-05 Kragerø, Norway", ...}
     new:    {"birth": {"fact": "1802-08-05 Kragerø, Norway",
                         "source": "MacTutor / Abel Prize biography"}, ...}
@@ -25,7 +25,7 @@ import os
 import re
 import sys
 
-# ── verified_facts helpers (B-2) ────────────────────────────────────────────
+# ── verified_facts helpers ────────────────────────────────────────────
 
 
 def get_verified_fact_text(value) -> str:
@@ -132,7 +132,7 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
             "(過去にlist-vs-dictクラッシュが発生)"
         )
 
-    # verified_facts schema check (B-2): each entry should be either a scalar
+    # verified_facts schema check: each entry should be either a scalar
     # legacy form (str / int / float / bool — the historic format used in 21
     # existing eps) or the new dict form {"fact": <scalar>, "source": str}.
     # Aggregate counts to avoid spamming WARN per key.
@@ -162,7 +162,7 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
             warnings.append(
                 f"'verified_facts' に legacy scalar 形式が {len(legacy_keys)} 件あります "
                 f"({legacy_keys[:3]}{'...' if len(legacy_keys) > 3 else ''}). "
-                f"出典記録のため新形式 {{'fact': ..., 'source': '...'}} への移行を推奨 (B-2)"
+                f"出典記録のため新形式 {{'fact': ..., 'source': '...'}} への移行を推奨"
             )
         if missing_source_keys:
             warnings.append(
@@ -193,7 +193,7 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
         if not bgm_file:
             warnings.append("'bgm.file' が未設定です (BGMなしでビルドされます)")
 
-    # wikimedia_photo_urls schema check (B-9):
+    # wikimedia_photo_urls schema check:
     # Must be a flat list of URL strings. The dict form (e.g.
     # `{"person": [...]}`) crashes wikimedia_fetcher.py with KeyError: 0
     # because fallback_urls[i] is called assuming list semantics.

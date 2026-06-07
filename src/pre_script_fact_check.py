@@ -1,5 +1,5 @@
 """pre_script_fact_check.py - Verify factual claims in episode_config.json
-before script generation (B-17).
+before script generation.
 
 Three-layer check:
 - C: Claude Sonnet evaluates verified_facts / key_episodes / theme /
@@ -31,7 +31,7 @@ import urllib.request
 # Day 14 fix: Windows console is cp932 by default. When Sonnet's fact-check
 # response contains characters outside cp932 (e.g. en-dash U+2013), the
 # subsequent print() raises UnicodeEncodeError, which bubbles up and is
-# caught at a higher layer with a `[B-17] skipped due to error` message —
+# caught at a higher layer with a `[] skipped due to error` message —
 # the pipeline then bypasses CRITICAL/WARN handling silently. Forcing
 # stdout/stderr to UTF-8 makes the lint output robust on cp932 consoles.
 # (Same pattern as .claude/hooks/qa_report_reminder.py.)
@@ -777,7 +777,7 @@ def save_report(report: dict, episode_dir: str) -> str:
 def _main():
     parser = argparse.ArgumentParser(
         description=(
-            "Pre-script fact check for episode_config.json (B-17). "
+            "Pre-script fact check for episode_config.json. "
             "Layers: C=Claude Sonnet, D=arithmetic sanity. "
             "E=Wikidata is implemented in a separate phase."
         )

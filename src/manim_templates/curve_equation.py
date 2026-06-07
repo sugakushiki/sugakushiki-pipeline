@@ -320,7 +320,7 @@ class CurveEquation(Scene):
 
 
 # ---------------------------------------------------------------------------
-# B-10 / B-24: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 # "2000年の幾何学" caption refers to elapsed years from Greek geometry,
 # not a year — intentionally omitted from "years".
 LINT_FACTUAL_CLAIMS = {

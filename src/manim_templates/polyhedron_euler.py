@@ -612,7 +612,7 @@ class PolyhedronEuler(Scene):
 # -----------------------------------------------------------------------
 # SCENES dict for template auto-discovery
 # -----------------------------------------------------------------------
-# B-10 / B-24: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "solids": {"people": [], "years": []},
     "non_regular": {"people": [], "years": []},

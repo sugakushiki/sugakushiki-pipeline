@@ -241,7 +241,7 @@ class BernoulliNumbers(Scene):
 # ---------------------------------------------------------------------------
 # SCENES registry (used by pipeline auto-discovery)
 # ---------------------------------------------------------------------------
-# B-10: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "sum_of_powers": {"people": [], "years": []},
     "east_west": {

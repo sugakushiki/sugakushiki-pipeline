@@ -1,4 +1,4 @@
-"""B-14: cross-episode ターム整合性 lint (Wikidata Q-id ベース)。
+"""cross-episode ターム整合性 lint (Wikidata Q-id ベース)。
 
 全 episodes/*/scene_definition.json からカタカナ人名 + 数学概念を抽出し、
 Wikidata SPARQL で Q-id 正準化。同じ Q-id が複数の表記で出現した場合に
@@ -34,7 +34,7 @@ from typing import Any
 LEV_RATIO_THRESHOLD = 0.85  # SequenceMatcher.ratio()
 LEV_MIN_LEN = 6  # min(len(t1), len(t2)) >= 6 (短い term での FP 抑制)
 
-# Reuse B-17 Wikidata helpers
+# Reuse Wikidata helpers
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from pre_script_fact_check import (  # noqa: E402
     _WIKIDATA_API,
@@ -353,7 +353,7 @@ def main() -> int:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     lev_cross_ep = [f for f in lev_findings if f["cross_ep"]]
     lines = [
-        "# Cross-episode ターム整合性 lint (B-14)",
+        "# Cross-episode ターム整合性 lint",
         "",
         f"**実行日**: {today}",
         f"**対象 ep**: {len(ep_candidates)} episode ({', '.join(sorted(ep_candidates.keys()))})",

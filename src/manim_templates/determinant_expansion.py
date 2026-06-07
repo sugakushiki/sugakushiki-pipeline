@@ -387,7 +387,7 @@ class DeterminantExpansion(Scene):
 # ---------------------------------------------------------------------------
 # SCENES registry (used by visual_generator.py)
 # ---------------------------------------------------------------------------
-# B-10: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "two_by_two": {"people": [], "years": []},
     "seki_method": {"people": [], "years": []},

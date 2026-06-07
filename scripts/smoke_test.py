@@ -51,7 +51,7 @@ MIN_TEMPLATES = 50
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-# B-2: pipeline.py runs src/*.py as subprocess with src/ on path; mirror that
+# pipeline.py runs src/*.py as subprocess with src/ on path; mirror that
 # here so absolute intra-src imports (e.g. `from config_validator import ...`)
 # resolve during the smoke test.
 if str(SRC) not in sys.path:

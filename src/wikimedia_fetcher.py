@@ -592,7 +592,7 @@ def _extract_birth_year(config: dict) -> int | None:
     if config.get("birth_year"):
         return int(config["birth_year"])
 
-    # From verified_facts (B-2: support both legacy str and new {fact, source} dict)
+    # From verified_facts
     from config_validator import get_verified_fact_text
 
     vf = config.get("verified_facts", {})

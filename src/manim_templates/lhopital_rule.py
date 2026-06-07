@@ -287,7 +287,7 @@ class LHopitalRule(Scene):
 # ---------------------------------------------------------------------------
 # SCENES registry (used by pipeline auto-discovery)
 # ---------------------------------------------------------------------------
-# B-10: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "statement": {"people": [], "years": []},
     "example_sinx_x": {"people": [], "years": []},

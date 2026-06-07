@@ -263,7 +263,7 @@ class EquationHistoryFinal(Scene):
         # at video_assembler time, not inside Manim.
 
 
-# B-10: factual claims displayed in each mode. Aliases (list within list)
+# factual claims displayed in each mode. Aliases (list within list)
 # allow Latin/kana variants — narration only needs to mention one alias.
 LINT_FACTUAL_CLAIMS = {
     "timeline": {

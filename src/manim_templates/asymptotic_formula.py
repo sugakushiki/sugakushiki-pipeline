@@ -193,7 +193,7 @@ class AsymptoticComparison(Scene):
 # ---------------------------------------------------------------------------
 # SCENES registry
 # ---------------------------------------------------------------------------
-# B-10 / B-24: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "formula": {
         "people": [

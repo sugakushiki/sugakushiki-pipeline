@@ -460,7 +460,7 @@ def check_pronunciation_with_claude(entries: list, episode_dir: str) -> list:
         print(f"  [WARN] Pronunciation check failed: {e}")
         return cached_corrections
 
-    # B-45: normalize VOICEVOX-incompatible kana before persisting.
+    # normalize VOICEVOX-incompatible kana before persisting.
     # Claude occasionally returns u + 濁点 (multi-codepoint) for "vu"
     # which VOICEVOX splits into "u + i". Replace with single-char ヴ.
     for c in new_corrections:
@@ -468,7 +468,7 @@ def check_pronunciation_with_claude(entries: list, episode_dir: str) -> list:
         normalized, changed = _normalize_voicevox_kana(corrected)
         if changed:
             print(
-                f"  [B-45 normalize] {c.get('scene_id')}[{c.get('index')}]: "
+                f"  [ normalize] {c.get('scene_id')}[{c.get('index')}]: "
                 f"う゛/ゔ → ヴ (VOICEVOX compatibility)"
             )
             c["corrected_speech"] = normalized
@@ -870,7 +870,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
 }
 
 
-# VOICEVOX-incompatible kana patterns (B-45).
+# VOICEVOX-incompatible kana patterns.
 # Pronunciation_check (Claude) sometimes returns the combining-濁点 form
 # "う゛" (U+3046 + U+309B spacing or U+3099 combining) which VOICEVOX reads
 # as two phonemes "u + i" instead of "vu", producing 誤読 like ダウィト for
@@ -883,7 +883,7 @@ _VOICEVOX_KANA_FIXES: list[tuple[str, str]] = [
 
 
 def _normalize_voicevox_kana(text: str) -> tuple[str, bool]:
-    """Normalize kana patterns that VOICEVOX mis-reads (B-45).
+    """Normalize kana patterns that VOICEVOX mis-reads.
 
     Returns (normalized_text, changed) where changed=True iff any
     substitution was applied.
@@ -898,14 +898,14 @@ def _normalize_voicevox_kana(text: str) -> tuple[str, bool]:
     return text, changed
 
 
-# Patterns for narration_speech drift detection (B-8)
+# Patterns for narration_speech drift detection
 _KANJI_RE = re.compile(r"[一-鿿]")
 _DIGIT_SEQ_RE = re.compile(r"\d+")
 # narration containing math/ASCII content is intentionally rewritten to kana
 # in narration_speech by design (e.g. "x²" -> "xの2乗", "La Geometrie" ->
 # "ラ・ジェオメトリ"). The "kanji extra in speech" check would FP on these
 # (e.g. "乗" injected by kana correction), so such lines are skipped.
-# Trade-off: misses ASCII-side edits like "B-12 -> B-13"; judged acceptable
+# Trade-off: misses ASCII-side edits like " ->"; judged acceptable
 # in 21-episode dry-run survey.
 _FORMULA_OR_ASCII_RE = re.compile(
     r"[A-Za-z]"
@@ -916,7 +916,7 @@ _FORMULA_OR_ASCII_RE = re.compile(
 
 
 def _check_narration_speech_drift(narration_clean: str, speech: str) -> list[str]:
-    """Detect drift between narration[i] and narration_speech[i] (B-8).
+    """Detect drift between narration[i] and narration_speech[i].
 
     pronunciation_check leaves user-managed narration_speech untouched, so
     when narration is edited the speech may go stale (過去のケース "ittsai ->
@@ -929,14 +929,14 @@ def _check_narration_speech_drift(narration_clean: str, speech: str) -> list[str
     2. digit-sequence mismatch when both sides contain digits (year /
        count edit not propagated to speech).
 
-    Out of scope (BACKLOG): pure-kana speech (~0.7%), edits sharing all
+    Out of scope: pure-kana speech (~0.7%), edits sharing all
     kanji, punctuation/particle-only edits. See sessionNN commit notes.
 
     Returns: list of reason strings; empty = no drift detected.
     """
     if not speech or not narration_clean or speech == narration_clean:
         return []
-    # Pure-kana speech: drift undetectable here (BACKLOG follow-up)
+    # Pure-kana speech: drift undetectable here
     if not _KANJI_RE.search(speech):
         return []
 
@@ -1191,7 +1191,7 @@ def lint_narration_markers(scene_def: dict) -> int:
                     warn_count += 1
 
             # Check: long lines without enough | markers
-            #        + narration_speech drift (B-8)
+            #        + narration_speech drift
             for i, line in enumerate(narration):
                 clean = line.replace("|", "")
                 if len(clean) > 80:
@@ -1205,7 +1205,7 @@ def lint_narration_markers(scene_def: dict) -> int:
                         )
                         warn_count += 1
 
-                # B-8: narration_speech drift detection
+                # narration_speech drift detection
                 if narration_speech is not None and i < len(narration_speech):
                     speech = narration_speech[i]
                     reasons = _check_narration_speech_drift(clean, speech)
@@ -1218,7 +1218,7 @@ def lint_narration_markers(scene_def: dict) -> int:
                         print(f"     reasons: {'; '.join(reasons)}")
                         warn_count += 1
 
-                    # B-45: detect VOICEVOX-incompatible kana already on disk
+                    # detect VOICEVOX-incompatible kana already on disk
                     _, voicevox_bad = _normalize_voicevox_kana(speech)
                     if voicevox_bad:
                         sp_disp = speech[:60] + ("..." if len(speech) > 60 else "")

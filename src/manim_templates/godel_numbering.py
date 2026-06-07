@@ -345,7 +345,7 @@ class GodelNumbering(Scene):
 # -----------------------------------------------------------------------
 # SCENES dict for template auto-discovery
 # -----------------------------------------------------------------------
-# B-10 / B-24: no hardcoded people/years in display Text() (docstring only).
+# no hardcoded people/years in display Text() (docstring only).
 LINT_FACTUAL_CLAIMS = {
     "symbol_codes": {"people": [], "years": []},
     "formula_encoding": {"people": [], "years": []},

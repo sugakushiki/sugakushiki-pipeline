@@ -2,7 +2,7 @@
   "_meta": {
     "version": 1,
     "created": "2026-05-04",
-    "purpose": "B-20 cliche scanner dictionary. Detects period-stereotype phrases in source_prompt that may have no historical basis (e.g. 'stereotype phrases were added without verification in past sessions). WARN-level only; user opt-out via visual.cliche_acks.",
+    "purpose": " cliche scanner dictionary. Detects period-stereotype phrases in source_prompt that may have no historical basis (e.g. 'stereotype phrases were added without verification in past sessions). WARN-level only; user opt-out via visual.cliche_acks.",
     "doc_ref": "docs/04_assets/image-generation.md (cliche scanner section)",
     "categories": [
       "period_accessory: period-stereotype clothing/accessories",

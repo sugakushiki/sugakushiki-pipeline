@@ -161,7 +161,7 @@ def evaluate_thumbnail(thumbnail_path: str, subject: str, debug: bool = False) -
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Thumbnail Vision QA (B-50)")
+    parser = argparse.ArgumentParser(description="Thumbnail Vision QA")
     parser.add_argument("episode_config", help="Path to episode_config.json")
     parser.add_argument(
         "--thumbnails-dir",

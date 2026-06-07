@@ -51,7 +51,7 @@ ALL_STEPS = [
     "bgm",
 ]
 
-# Output filenames (B-19 atomic rename: assemble -> intermediate, bgm -> final)
+# Output filenames
 # Why: prior layout wrote output.mp4 from assemble, then overwrote into output_final.mp4
 # from bgm. A failed bgm step left a stale output_final.mp4 from the previous run,
 # which was indistinguishable from a fresh successful build. Splitting the names
@@ -59,7 +59,7 @@ ALL_STEPS = [
 OUTPUT_ASSEMBLED = "output_assembled.mp4"
 OUTPUT_FINAL = "output_final.mp4"
 
-# Required sections in description.txt (B-12 / D-3 post-pipeline verification)
+# Required sections in description.txt
 _DESCRIPTION_REQUIRED_SECTIONS = [
     "【音声合成】",
     "【BGM】",
@@ -70,7 +70,7 @@ _DESCRIPTION_REQUIRED_SECTIONS = [
 
 
 def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> list[str]:
-    """Post-pipeline output verification (B-12 / D-3).
+    """Post-pipeline output verification.
 
     Each step that completed should have left specific artifacts behind.
     A successful exit code is not enough — a past run had a step return 0 but
@@ -873,20 +873,16 @@ def main():
         action="store_true",
         help="Skip pronunciation check even when --qa is active",
     )
-    parser.add_argument(
-        "--skip-fact-check",
-        action="store_true",
-        help="B-17: skip pre-script episode_config fact check",
-    )
+    parser.add_argument
     parser.add_argument(
         "--fact-check-allow-warn",
         action="store_true",
-        help="B-17: continue on WARNING (CRITICAL still aborts)",
+        help="continue on WARNING (CRITICAL still aborts)",
     )
     parser.add_argument(
         "--skip-qa-image-narration",
         action="store_true",
-        help="B-18: skip narration-image consistency check (Gate 2). Default: enabled with --qa.",
+        help="skip narration-image consistency check (Gate 2). Default: enabled with --qa.",
     )
     parser.add_argument(
         "--skip-portrait-lint",
@@ -903,37 +899,29 @@ def main():
     parser.add_argument(
         "--skip-route-preflight",
         action="store_true",
-        help="B-11: skip route_map collision preflight (Layer 2). "
+        help="skip route_map collision preflight (Layer 2). "
         "Layer 3 in-render WARN still runs.",
     )
     parser.add_argument(
         "--allow-route-collision",
         action="store_true",
-        help="B-11: continue pipeline even if route_map collision is detected. "
+        help="continue pipeline even if route_map collision is detected. "
         "Both preflight (Layer 2) and in-render (Layer 3) become advisory.",
     )
     parser.add_argument(
         "--auto-fix-route-collisions",
         action="store_true",
-        help="B-11: opt-in 3-stage auto-fix of route_map collisions "
+        help="opt-in 3-stage auto-fix of route_map collisions "
         "(label avoidance -> bounds expansion -> title fontsize). "
         "Mutates scene_definition.json with _route_map_auto_fix_log block.",
     )
     parser.add_argument("--skip-thumbnail", action="store_true", help="Skip thumbnail generation")
-    parser.add_argument(
-        "--rebuild-scene",
-        default=None,
-        metavar="SCENE_ID",
-        help="Partial rebuild: regenerate a single scene and re-run assembly+bgm. "
-        "Exclusive with --steps, --skip-* flags. "
-        "B-11: route_map preflight is NOT run in partial rebuild; "
-        "Layer 3 in-render WARN still fires.",
-    )
+    parser.add_argument
     parser.add_argument(
         "--log-file",
         default=None,
         metavar="PATH",
-        help="D1+B-25 Phase 1: write structured JSON line events to PATH "
+        help="D1+ Phase 1: write structured JSON line events to PATH "
         "(in addition to stdout text). One JSON object per line with fields "
         "ts/step/level/episode_id/scene_id/msg/metadata. Severity levels: "
         "critical/warning/info. Default: disabled (no JSONL output, baseline parity).",
@@ -997,7 +985,7 @@ def main():
         print(f"ERROR: Config not found: {config_path}")
         sys.exit(1)
 
-    # ─── Structured JSONL logger init (D1+B-25 Phase 1, opt-in) ──────────
+    # ─── Structured JSONL logger init ──────────
     # Initialized BEFORE preflight so startup failures (Claude CLI
     # 401 / system-Python module miss / VOICEVOX down) surface as critical
     # JSONL events rather than just stdout text.
@@ -1099,7 +1087,7 @@ def main():
         skip_images=bool(args.skip_images),
     )
 
-    # ─── B-17: Pre-script fact check (episode_config.json) ───────────────
+    # ─── Pre-script fact check (episode_config.json) ───────────────
     # C: Claude Sonnet knowledge-base check (verified_facts/key_episodes/theme)
     # D: arithmetic sanity (no LLM)
     # E: Wikidata cross-check (Phase 3, not yet wired)
@@ -1112,7 +1100,7 @@ def main():
                 save_report,
             )
 
-            print("\n[B-17] Pre-script fact check on episode_config.json")
+            print
             _report = run_pre_script_fact_check(
                 episode_config=config,
                 episode_dir=episode_dir,
@@ -1131,10 +1119,7 @@ def main():
                     warning=_warn,
                 )
                 pipeline_log.close()
-                print(
-                    "[B-17] CRITICAL detected -- aborting before script "
-                    "step. Fix episode_config.json and re-run."
-                )
+                print
                 sys.exit(1)
             if _warn > 0 and not args.fact_check_allow_warn:
                 pipeline_log.emit(
@@ -1145,10 +1130,7 @@ def main():
                     warning=_warn,
                 )
                 pipeline_log.close()
-                print(
-                    "[B-17] WARNING detected -- aborting before script "
-                    "step. Use --fact-check-allow-warn to continue."
-                )
+                print
                 sys.exit(1)
             if _warn > 0:
                 pipeline_log.emit(
@@ -1166,7 +1148,7 @@ def main():
                     critical=_crit,
                     warning=_warn,
                 )
-            print("[B-17] OK (no blocking issues)")
+            print("[] OK (no blocking issues)")
         except SystemExit:
             raise
         except Exception as _e:
@@ -1176,7 +1158,7 @@ def main():
                 "pre-script fact check skipped (exception)",
                 error=f"{type(_e).__name__}: {_e}",
             )
-            print(f"[B-17] pre-script fact check skipped due to error: {_e}")
+            print
 
     # ─── Step 1: Script generation ───────────────────────────────────────
     if "script" in steps:
@@ -1513,10 +1495,9 @@ def main():
             except Exception as _e:
                 print(f"  [WARN] portrait_prompt_lint skipped (env/api issue): {_e}")
 
-    # ─── QA Gate 2: Image Quality Check (B-18 narration consistency) ─────
+    # ─── QA Gate 2: Image Quality Check ─────
     # Runs AFTER image generation so freshly-produced images are evaluated.
-    # The prompt covers narration-image consistency (B-18: 主要人物の有無 /
-    # 性別 / 人数 / 活動・小道具 / 細部) plus the original time-place /
+    # The prompt covers narration-image consistency plus the original time-place /
     # subject / atmosphere checks.
     qa_img_narr_active = (
         (args.qa or args.qa_quick)
@@ -1534,7 +1515,7 @@ def main():
             qa_img_report,
         ]
         print(f"\n{'=' * 60}")
-        print("  QA Gate 2: Image Quality Check (B-18)")
+        print("  QA Gate 2: Image Quality Check")
         print(f"{'=' * 60}")
         print(f"  Command: {' '.join(cmd)}\n")
         pipeline_log.step_start("qa_image", command=" ".join(cmd))
@@ -1569,7 +1550,7 @@ def main():
             ]
             run_step("thumbnail", cmd, required=False)
 
-            # B-50: Thumbnail Vision QA — verify generated
+            # Thumbnail Vision QA — verify generated
             # thumbnails are single-person portraits (not group_scene /
             # landscape / abstract). Skippable with --skip-qa.
             thumbnails_dir = os.path.join(episode_dir, "thumbnails")
@@ -1600,7 +1581,7 @@ def main():
                 except OSError:
                     pass
 
-            # B-10: lint Manim factual-claim consistency (episode scope, γ).
+            # lint Manim factual-claim consistency (episode scope, γ).
             # Templates without LINT_FACTUAL_CLAIMS metadata are skipped.
             try:
                 from qa_manim_consistency import lint_manim_factual_claims
@@ -1608,9 +1589,9 @@ def main():
                 with open(scene_json, encoding="utf-8") as _f:
                     _scene_def_for_lint = json.load(_f)
                 _manim_dir = os.path.join(src_dir, "manim_templates")
-                print("\n[B-10] Manim factual-claim lint (episode scope):")
+                print("\n[] Manim factual-claim lint (episode scope):")
                 _warns = lint_manim_factual_claims(_scene_def_for_lint, _manim_dir)
-                print(f"[B-10] {_warns} warning(s)")
+                print(f"[] {_warns} warning(s)")
                 pipeline_log.emit(
                     pipeline_log.LEVEL_WARNING if _warns else pipeline_log.LEVEL_INFO,
                     "lint_b10",
@@ -1624,9 +1605,9 @@ def main():
                     "manim lint skipped (exception)",
                     error=f"{type(_e).__name__}: {_e}",
                 )
-                print(f"[B-10] lint skipped: {_e}")
+                print
 
-            # B-11 Layer 2: route_map collision preflight.
+            # Layer 2: route_map collision preflight.
             # Detects title/route_label/legend bbox overlaps before any expensive
             # rendering, with optional 3-stage auto-fix.
             if not args.skip_route_preflight:
@@ -1648,12 +1629,7 @@ def main():
                             else None,
                         )
                         pipeline_log.close()
-                        print(
-                            "\n[B-11] route_map preflight aborted pipeline. "
-                            "Fix collisions and re-run, or use "
-                            "--allow-route-collision / --auto-fix-route-collisions / "
-                            "--skip-route-preflight."
-                        )
+                        print
                         sys.exit(1)
                     pipeline_log.emit(
                         pipeline_log.LEVEL_WARNING if _unresolved else pipeline_log.LEVEL_INFO,
@@ -1674,7 +1650,7 @@ def main():
                         "route_map preflight skipped (exception)",
                         error=f"{type(_e).__name__}: {_e}",
                     )
-                    print(f"[B-11] route_map preflight skipped: {_e}")
+                    print
 
             cmd = [
                 sys.executable,
@@ -1771,7 +1747,7 @@ def main():
 
                 run_step("bgm", cmd)
 
-    # ─── Output verification (B-12 / D-3) ────────────────────────────────
+    # ─── Output verification ────────────────────────────────
     verify_warnings = verify_outputs(episode_dir, steps, scene_json)
     print(f"\n{'=' * 60}")
     print("  Output Verification")
@@ -1806,7 +1782,7 @@ def main():
 
     print(f"{'=' * 60}")
 
-    # ─── pipeline_end event + logger close (D1+B-25 Phase 1) ─────────────
+    # ─── pipeline_end event + logger close ─────────────
     _pipeline_end_level = (
         pipeline_log.LEVEL_WARNING if verify_warnings else pipeline_log.LEVEL_INFO
     )

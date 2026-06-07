@@ -1,4 +1,4 @@
-"""D1+B-25 Phase 1+1.5: Structured JSONL logging for pipeline events.
+"""D1+ Phase 1+1.5: Structured JSONL logging for pipeline events.
 
 Schema (one JSON line per event):
     {
@@ -34,8 +34,8 @@ Channel design (X3, two-channel):
 Phase 1 scope (parent path):
 - pipeline.py run_step + QA Gate 1/2 + pipeline start/end events.
 Phase 1.5 scope (parent inline lint + partial rebuild):
-- B-10 (Manim factual claim) / B-11 (route_map collision) /
-  B-17 (pre-script fact check)
+- (Manim factual claim) / (route_map collision) /
+  (pre-script fact check)
 - _run_partial_rebuild path (audio/visual inline + run_step subprocess steps)
 - preflight events (V4: claude CLI / VOICEVOX / module miss)
 Phase 2+ candidates (future, run after operational feedback):
@@ -43,7 +43,7 @@ Phase 2+ candidates (future, run after operational feedback):
   / image_generator / visual_generator / video_assembler / credits_generator
   / bgm_mixer / qa_checker / qa_image_checker / pre_script_fact_check /
   thumbnail_generator / wikimedia_fetcher / subtitle_generator)
-- B-14 / B-18 / B-20 (subprocess-based lint, wire via emit_stderr)
+- (subprocess-based lint, wire via emit_stderr)
 
 Environment variables (used by Phase 2 child emit_stderr; harmless if unset):
 - PIPELINE_LOG_FILE: parent-resolved log file path (informational; child

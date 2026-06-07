@@ -304,7 +304,7 @@ class ImitationGame(Scene):
         self.wait(max(duration - 7.0, 2.0))
 
 
-# B-10 / B-24: factual claims displayed in each mode.
+# factual claims displayed in each mode.
 LINT_FACTUAL_CLAIMS = {
     "original": {"people": [], "years": ["1950"]},
     "machine": {"people": [], "years": []},
