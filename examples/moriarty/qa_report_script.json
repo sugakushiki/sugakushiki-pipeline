@@ -1,0 +1,324 @@
+{
+  "episode": "moriarty",
+  "gate": "script",
+  "timestamp": "2026-05-15T02:50:47.165676",
+  "overall_status": "FAIL",
+  "summary": {
+    "total_issues": 12,
+    "critical": 1,
+    "warning": 4,
+    "info": 7
+  },
+  "agents": {
+    "fact": {
+      "status": "WARN",
+      "issues": [
+        {
+          "severity": "warning",
+          "scene_id": "person_01",
+          "claim": "イギリスの名門大学の数学教授に就任したとされています",
+          "finding": "原作 'The Final Problem' でのホームズの台詞は 'On the strength of it he won the mathematical chair at one of our smaller universities' であり、「小さな大学の一つ」と明記されている。「名門大学」は原作の記述と正反対であり、ドイルの設定を誤って伝えている。",
+          "suggestion": "「イギリスのある大学の数学教授に就任した」または原作に忠実に「イギリスの小さな大学の数学教授に就任した」に修正",
+          "confidence": 0.95
+        },
+        {
+          "severity": "warning",
+          "scene_id": "person_02",
+          "claim": "この主著が書かれたのはモリアーティが35歳から40歳の頃、1870年代後半から1880年代前半のことです",
+          "finding": "ベアリング=グールドの推定生年1846年に基づくと、35歳=1881年、40歳=1886年であり、対応する年代は「1880年代前半から後半」となる。一方「1870年代後半」(1876-1879年) はモリアーティ30〜33歳に相当し、スクリプト内で年齢と年代が整合しない。同一文中の二つの表現が矛盾している。",
+          "suggestion": "年齢基準なら「35歳から40歳の頃、|1880年代前半から|1880年代後半のことです」に修正。または年代基準なら「30代から40歳にかけて、|1870年代後半から|1880年代後半のことです」に修正",
+          "confidence": 0.97
+        },
+        {
+          "severity": "info",
+          "scene_id": "person_01",
+          "claim": "サイモン・ニューカムは、19歳の1854年に二項定理の新たな証明を発表し",
+          "finding": "ニューカム (1835年生) の年齢計算は正しい (1854年に19歳)。シャーロキアン文献ではニューカムの若年期の二項定理論文がモリアーティとの類似点として繰り返し言及されるが、1854年という具体的な出版年は一次資料での独立検証が困難。シェーファー (1993) 等の二次文献に依拠した記述と思われる。",
+          "suggestion": null,
+          "confidence": 0.55
+        },
+        {
+          "severity": "info",
+          "scene_id": "math_01",
+          "claim": "ニュートン自身はこの級数を確率や物理の計算に自在に使いましたが",
+          "finding": "ニュートンが一般化二項級数を物理・数学の計算に広く活用したことは正確。ただし「確率」への言及はやや不正確で、一般化二項級数 (無限級数) の主な用途は面積計算・流率法・物理計算であり、確率計算に直結するのはむしろ有限の二項定理 (二項係数) の方。文脈上の混同の可能性があるが、「確率」を完全に否定する根拠も薄い。",
+          "suggestion": "「確率や物理の計算に」を「物理や数学の計算に」に変更すると、一般化二項級数の用途としてより正確になる",
+          "confidence": 0.65
+        }
+      ],
+      "verified_facts_count": 28,
+      "summary": "数学史・文学史の主要な事実記述は概ね正確だが、原作 'The Final Problem' での大学の描写を「名門大学」と誤認している点と、ベアリング=グールド推定の生年1846年に基づく年齢・年代の算術的不整合の2件が修正を要する。",
+      "_agent": "fact",
+      "_model": "opus",
+      "_duration_sec": 230.4
+    },
+    "style": {
+      "status": "PASS",
+      "exclamation_count": 0,
+      "issues": [
+        {
+          "severity": "info",
+          "category": "tone",
+          "location": "驚くべき発見をしました",
+          "detail": "「驚くべき」は禁止語ではないが軽微な強調表現。ニュートンの成果を修飾する文脈では許容範囲内。直後に「収束の厳密な証明は後の世代に委ねられました」と限界を示す記述があるためバランスは取れている",
+          "suggestion": "「1664年から1665年にかけて、ニュートンは重要な発見をしました」など中性的な表現も検討可"
+        },
+        {
+          "severity": "info",
+          "category": "tone",
+          "location": "モリアーティの設定と驚くほど重なります",
+          "detail": "「驚くほど」はseverityルール上info相当の軽微な強調表現。直後にシェーファーの1993年学術論文という具体的裏付けが来るためバランスは取れている",
+          "suggestion": "「モリアーティの設定と顕著に重なります」など抑制した表現も検討可"
+        },
+        {
+          "severity": "info",
+          "category": "deification",
+          "location": "天体力学の分野で輝かしい業績を残しています",
+          "detail": "「輝かしい」は軽微な賞賛語。person_01シーンはニューカム紹介が主眼でありモデル候補提示に留まっており、神格化が連続するシーン展開にはなっていないためinfo範囲",
+          "suggestion": "「天体力学の分野で多くの業績を残しています」など中性的な表現も検討可"
+        }
+      ],
+      "positive_notes": [
+        "感嘆符が0個と完全に抑制されており、スタイルガイドの上限（2〜3回）を余裕で下回っている",
+        "ニュートンが収束の厳密な証明を後世に委ねたことを明示し、また論文の公刊が草稿から42年後だったことも示すなど、神格化を避けた人間的な弱さ・限界の描写が適切に盛り込まれている",
+        "冒頭の「本動画はフィクションです」宣言と各所の「とされています」「とされている」「推定しました」「のではないかと推定しました」により、架空と史実の境界が一貫して丁寧に示されており、サイモン・シン的な誠実さが徹底されている"
+      ],
+      "summary": "禁止表現・感嘆符過多・である調混在のいずれも検出されず、全体を通じて抑制的で品のある語り口を維持している。「驚くべき」「驚くほど」「輝かしい」の3箇所が軽微な強調表現としてinfo扱いだが修正は任意であり、現状のままでも問題ない水準。",
+      "_agent": "style",
+      "_model": "sonnet",
+      "_duration_sec": 80.4
+    },
+    "source": {
+      "status": "WARN",
+      "references": {
+        "books": [
+          {
+            "author": "Arthur Conan Doyle",
+            "title": "The Final Problem（最後の事件）in The Memoirs of Sherlock Holmes",
+            "year": "1893",
+            "relevance": "モリアーティが21歳で二項定理論文を書きヨーロッパ中で評判になったという設定の一次資料。ホームズの台詞の直接出典"
+          },
+          {
+            "author": "Arthur Conan Doyle",
+            "title": "The Valley of Fear（恐怖の谷）",
+            "year": "1914",
+            "relevance": "『小惑星の力学』への言及の一次資料。ホームズがマクドナルド警部に「純粋数学の希薄な高み」と紹介する場面の出典"
+          },
+          {
+            "author": "W.S. Baring-Gould",
+            "title": "Sherlock Holmes of Baker Street: A Life of the World's First Consulting Detective",
+            "year": "1962",
+            "relevance": "モリアーティの生年をOctober 31, 1846と推定した根拠。論文執筆年1867年・主著執筆年代1870年代後半〜1880年代前半の計算基礎"
+          },
+          {
+            "author": "Isaac Newton",
+            "title": "De Analysi per Aequationes Numero Terminorum Infinitas",
+            "year": "1669年草稿 / 1711年刊行",
+            "relevance": "ニュートンの一般化二項定理の着想を記した草稿。1664〜65年の発見の記録として[math_01]の直接根拠"
+          },
+          {
+            "author": "Augustin-Louis Cauchy",
+            "title": "Cours d'analyse de l'École Royale Polytechnique",
+            "year": "1821",
+            "relevance": "二項級数が|x|<1のとき収束することの厳密証明を含む主著。[math_02]のコーシーの業績の直接根拠"
+          },
+          {
+            "author": "Carl Friedrich Gauss",
+            "title": "Theoria Motus Corporum Coelestium in Sectionibus Conicis Solem Ambientium",
+            "year": "1809",
+            "relevance": "最小二乗法による天体軌道計算をまとめた主著。ケレス再発見手法の記録として[math_03]の根拠"
+          }
+        ],
+        "websites": [
+          {
+            "name": "Niels Henrik Abel, \"Untersuchungen über die Reihe 1 + mx/1 + ...\" — Crelle's Journal (Journal für die reine und angewandte Mathematik), Band 1",
+            "url": "（推定）https://www.degruyter.com/journal/key/crll/html",
+            "relevance": "複素数指数を含む場合への二項級数拡張。[math_02]のアーベル1826年業績の根拠"
+          },
+          {
+            "name": "Daniel Kirkwood, 小惑星帯の隙間（カークウッドギャップ）に関する論文（1866年）",
+            "url": "（推定）Astronomical Journal または Smithsonian Report 掲載",
+            "relevance": "[math_03]カークウッドの1866年指摘への言及の根拠"
+          },
+          {
+            "name": "Jenkins et al., arXiv (2013) — モリアーティ著作とヴィクトリア朝力学教科書の系譜",
+            "url": "（推定）https://arxiv.org/ （著者名・arXiv識別子は要確認）",
+            "relevance": "『小惑星の力学』をヴィクトリア朝力学教科書の系譜に位置づけた現代研究"
+          }
+        ],
+        "data_sources": [
+          {
+            "data": "肖像・挿絵（ストランドマガジン掲載のシドニー・パジェット挿絵等）",
+            "source": "Wikimedia Commons（パブリックドメイン）"
+          },
+          {
+            "data": "地図データ",
+            "source": "Natural Earth（パブリックドメイン）"
+          }
+        ]
+      },
+      "youtube_description_text": "【主要参考文献】\n\n■ 一次資料（シャーロック・ホームズ原典）\n- Arthur Conan Doyle, \"The Final Problem\" (1893)（邦題：最後の事件）\n- Arthur Conan Doyle, \"The Valley of Fear\" (1914)（邦題：恐怖の谷）\n\n■ シャーロキアン研究\n- W.S. Baring-Gould, \"Sherlock Holmes of Baker Street\" (1962)\n- B.E. Schaefer, シャーロック・ホームズと天文学的関連に関する論文 (1993)（掲載誌要確認）\n- R. Anderson, モリアーティの数学に関するシャーロキアン論文 (1955)（掲載誌要確認）\n\n■ 数学・天文学文献\n- Isaac Newton, \"De Analysi per Aequationes Numero Terminorum Infinitas\" (1669草稿 / 1711刊行)\n- Augustin-Louis Cauchy, \"Cours d'analyse\" (1821)\n- Niels Henrik Abel, Crelle's Journal 掲載論文 (1826)\n- Carl Friedrich Gauss, \"Theoria Motus Corporum Coelestium\" (1809)\n- Daniel Kirkwood, 小惑星帯の隙間に関する論文 (1866)\n\n■ 現代研究\n- Jenkins et al., arXiv (2013)\n\n【データ出典】\n- 肖像・挿絵：Wikimedia Commons（パブリックドメイン）\n\n【映像素材】\n- 地図データ：Natural Earth（パブリックドメイン）\n- 音声合成：VOICEVOX:青山龍星",
+      "unsourced_claims": [
+        {
+          "claim": "サイモン・ニューカムは19歳の1854年に二項定理の新たな証明を発表した",
+          "suggestion": "Newcomb自伝 'Reminiscences of an Astronomer' (1903) またはNational Academy of Sciences伝記記録を一次確認。1854年当時の発表媒体（Astronomical Journal / Smithsonian Contributionsなど）の原文を要調査",
+          "severity": "warning"
+        },
+        {
+          "claim": "Schaefer（1993）がニューカムこそモリアーティのモデルではないかと提案した学術論文",
+          "suggestion": "B.E. Schaefer の1993年論文の正確なタイトル・掲載誌（Journal of the British Astronomical Association / Sky & Telescope等の可能性）を要確認。著者・タイトルの一次資料検索が必要",
+          "severity": "warning"
+        },
+        {
+          "claim": "Anderson（1955）がモリアーティの「二項定理論文」はニュートンの一般化や収束理論に関するものだったと推定した",
+          "suggestion": "シャーロキアン学術誌（The Baker Street Journal / The Sherlock Holmes Journal）の1955年前後の号を要確認。著者名の正式表記・掲載誌の一次確認が困難",
+          "severity": "warning"
+        },
+        {
+          "claim": "Jenkins（2013 arXiv）がモリアーティの著作をヴィクトリア朝の力学教科書の系譜に位置づけた",
+          "suggestion": "arXivで著者名「Jenkins」および「Moriarty」「Victorian mechanics」等のキーワードで2013年前後の論文を検索し、arXiv識別子を一次確認する必要あり",
+          "severity": "warning"
+        },
+        {
+          "claim": "ニューカムは1858年から1860年にかけて小惑星群全体の軌道の長期的変動と相互関係を研究した",
+          "suggestion": "米国海軍天文台報告書や Astronomical Journal の1858〜1860年掲載論文を確認。Newcomb伝記資料（NAS memoir等）から初期キャリア研究の詳細を要照合",
+          "severity": "warning"
+        }
+      ],
+      "summary": "コナン・ドイル原典・数学史の主要文献（Newton, Cauchy, Gauss, Abel等）は信頼性が高くcritical問題なし。ただしシャーロキアン研究論文（Schaefer 1993, Anderson 1955, Jenkins 2013 arXiv）およびニューカムの初期業績に関する具体的主張（計5件、すべてwarning）が一次資料未確認のため、総合ステータスはWARN。",
+      "_agent": "source",
+      "_model": "sonnet",
+      "_duration_sec": 132.6
+    },
+    "content": {
+      "status": "PASS",
+      "ratings": {
+        "hook": {
+          "grade": "A",
+          "comment": "冒頭の「本動画はフィクションです」が逆説的フックとして機能し、直後のホームズの台詞引用で一気に引き込む。『架空の犯罪王が扱った数学を覗いてみましょう』という問い立ても明確で、視聴者に7分間付き合う理由を与えている"
+        },
+        "narrative_arc": {
+          "grade": "B",
+          "comment": "フィクション→実在の人物との類似→数学の中身→現代への接続という4段構成が明快。person_01でニューカムとの類似を示す『驚き』、math_01-03で知的好奇心を満たす『深掘り』、closingで現代技術へ着地する『回収』と、感情の流れが設計されている。ただしmath_01→math_02→math_03の3連続数学シーンは感情的にやや平坦になるリスクがある"
+        },
+        "math_density": {
+          "grade": "A",
+          "comment": "各数学シーンが1トピックに絞られており、二項定理の拡張→収束問題→天体力学と論理的に連鎖する。数式の説明は具体例（α=1/2や-1、ケレスの41日分のデータ）を交えて直感的。専門用語の密度も適切で、エンジニア層なら無理なく追える水準"
+        },
+        "target_appeal": {
+          "grade": "A",
+          "comment": "シャーロック・ホームズ×実在の数学史という切り口は、数学好き・エンジニア層にとって新鮮かつ知的好奇心を刺激する。シェーファー(1993)やジェンキンズ(2013)のarXiv論文など学術的裏付けへの言及が、ターゲット層の信頼感と『自分でも読んでみたい』という欲求を喚起する"
+        },
+        "retention": {
+          "grade": "B",
+          "comment": "モリアーティという縦糸が全シーンを貫いており、数学パートでも『モリアーティが論じたとされる』というフレーズで物語に引き戻す工夫がある。ただしmath_02の中盤（コーシー→アーベルの証明史）は歴史的事実の羅列感がやや強く、ここが最も離脱リスクが高い"
+        }
+      },
+      "overall_grade": "B",
+      "strengths": [
+        "ホームズ/モリアーティという広く知られたフィクションを入口にすることで、数学史への心理的障壁を大幅に下げている。フィクションと実在の数学が交互に照応する構成は、チャンネルの既存エピソードとも差別化できる独自性がある",
+        "ニューカム＝モリアーティモデル説（シェーファー1993）やジェンキンズ2013のarXiv論文など、シャーロキアン研究と数学史研究の双方から学術的裏付けを引いており、知的誠実さと発見の面白さを両立している",
+        "二項定理→収束理論→天体力学という数学的連鎖が、モリアーティの経歴（21歳の論文→『小惑星の力学』）と自然に対応しており、物語と数学が乖離しない構成になっている"
+      ],
+      "improvements": [
+        {
+          "severity": "warning",
+          "category": "pacing",
+          "detail": "math_01→math_02→math_03の3シーン連続（計1090字、全体の52%）は、数学パートだけで約3分40秒続く計算になる。math_02の冒頭でモリアーティや19世紀の学問的背景に一瞬戻るなど、物語パートへの『息継ぎ』を挟むとリズムが改善する可能性がある",
+          "scene_id": "math_02"
+        },
+        {
+          "severity": "warning",
+          "category": "narrative",
+          "detail": "person_02のベアリング=グールドの年代推定（35歳〜40歳、1870年代後半〜1880年代前半）はperson_01と情報の性質が重複しており、このシーン単体の『発見』がやや弱い。『小惑星の力学』の内容への期待感をもう少し煽る方向に振ると、math_03への橋渡しが強化される",
+          "scene_id": "person_02"
+        },
+        {
+          "severity": "info",
+          "category": "retention",
+          "detail": "closing_01の現代応用（NASA、人工衛星）は事実として正しいが、7分間モリアーティと19世紀の世界に浸った視聴者にとって唐突感がある。『モリアーティが生きていたら、今日のNASAの小惑星追跡をどう見るだろうか』のような一文で、フィクションの枠組みを最後まで維持する手もある",
+          "scene_id": "closing_01"
+        },
+        {
+          "severity": "info",
+          "category": "hook",
+          "detail": "冒頭の『本動画はフィクションです』は免責として必要だが、やや事務的。『これからお話しするのは、実在しない数学者の物語です』のように物語調にすると、免責とフックを兼ねられる",
+          "scene_id": "intro_01"
+        }
+      ],
+      "estimated_viewer_retention_curve": "序盤（intro〜person_01）90%前後: ホームズの引用とニューカム類似説で強く引き込む。中盤（person_02〜math_02）75-80%: 数学パート3連続で緩やかに低下するが、モリアーティへの言及で繋ぎ止める。終盤（math_03〜closing）78-82%: 天体力学の具体性と現代応用で持ち直し、最終視聴率は78%程度と推定",
+      "summary": "ホームズ/モリアーティという強力なフレーミングデバイスにより、数学史ドキュメンタリーとしての敷居を下げつつ知的深度を確保した良作。二項定理から天体力学への数学的連鎖がモリアーティの経歴と自然に対応する構成は秀逸。数学パート3連続のペーシングとperson_02の情報密度にやや改善余地があるが、全体として公開に向けた軽微な調整で十分な品質に達している。",
+      "_agent": "content",
+      "_model": "opus",
+      "_duration_sec": 71.5
+    },
+    "consistency": {
+      "status": "FAIL",
+      "terminology_map": {
+        "コナン・ドイル": [
+          "コナン・ドイル"
+        ],
+        "モリアーティ": [
+          "モリアーティ教授",
+          "モリアーティ"
+        ],
+        "ホームズ": [
+          "シャーロック・ホームズ",
+          "ホームズ"
+        ],
+        "ベアリング=グールド": [
+          "ベアリング=グールド"
+        ],
+        "ニューカム": [
+          "サイモン・ニューカム",
+          "ニューカム"
+        ],
+        "ニュートン": [
+          "ニュートン"
+        ],
+        "コーシー": [
+          "コーシー"
+        ],
+        "アーベル": [
+          "アーベル"
+        ],
+        "ガウス": [
+          "ガウス"
+        ],
+        "二項定理関連": [
+          "二項定理",
+          "一般化二項定理",
+          "一般化二項級数",
+          "二項級数"
+        ],
+        "天体力学": [
+          "天体力学"
+        ],
+        "最小二乗法": [
+          "最小二乗法"
+        ],
+        "小惑星の力学": [
+          "『小惑星の力学』"
+        ]
+      },
+      "issues": [
+        {
+          "severity": "critical",
+          "category": "timeline",
+          "detail": "[person_02] で「35歳から40歳の頃、1870年代後半から1880年代前半」と記述されているが、[person_01] で示されたベアリング=グールドの推定生年1846年に基づくと、35歳=1881年、40歳=1886年となり、正しい年代は「1880年代前半から後半」である。「1870年代後半」(≈1876年) は29〜30歳に相当し、記述された年齢範囲と矛盾する。年齢・生年・年代の3つの数値が同一段落内で算術的に整合しない。",
+          "location": "[person_02] 「ベアリング=グールドの推定に従えば、この主著が書かれたのはモリアーティが35歳から40歳の頃、1870年代後半から1880年代前半のことです。」",
+          "suggestion": "「1870年代後半から1880年代前半」→「1880年代前半から半ばにかけて」に修正（1846年生+35歳=1881年、+40歳=1886年）。または年齢側を「30歳から38歳の頃」に修正して年代範囲に合わせる。"
+        }
+      ],
+      "timeline_check": "intro_01(1893)→person_01(生年1846, 21歳=1867, ニューカム1854)→person_02(1914『恐怖の谷』, 主著の年代)→math_01(1664-1665 Newton, 1669草稿, 1711公刊)→math_02(1821 Cauchy, 1826 Abel)→math_03(1801 Gauss/Ceres, 1809『天体運動論』, 1858-1860 Newcomb, 1866 Kirkwood, 2013 Jenkins) の順序は正しい。ただし person_02 内の年齢-年代対応に算術矛盾あり（上記 critical 参照）。",
+      "summary": "エピソード全体のトーン・呼称・用語は高い一貫性を保っているが、[person_02] でモリアーティの生年(1846)・年齢(35-40歳)・年代(1870年代後半〜1880年代前半)の算術が合わない critical な時系列矛盾が1件あり、修正が必要。",
+      "_agent": "consistency",
+      "_model": "opus",
+      "_duration_sec": 220.9
+    }
+  },
+  "total_duration_sec": 736.1,
+  "notes": [
+    "WARNING: description.intro（YouTube概要欄の紹介文）にも同様の事実誤認がないか確認してください。 ナレーションを修正した場合、description.intro の内容も整合性を保つ必要があります。"
+  ]
+}

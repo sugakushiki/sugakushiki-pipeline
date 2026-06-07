@@ -1,0 +1,211 @@
+{
+  "episode_id": "999_moriarty",
+  "mathematician": "Professor James Moriarty (fictional)",
+  "mathematician_ja": "ジェームズ・モリアーティ教授（架空）",
+  "subject_en": "Professor James Moriarty",
+  "birth_year": 1846,
+  "theme": "コナン・ドイル世界の架空数学者と19世紀の実在の数学（二項定理 + 天体力学）",
+  "title_draft": "モリアーティ教授 ── 二項定理と小惑星の力学（フィクション）",
+  "target_duration_minutes": 7,
+  "hook": "本動画はフィクションです。19世紀末、コナン・ドイルが描いた架空の数学者モリアーティ教授は、21歳で二項定理に関する論文を書きヨーロッパで名声を得たとされます。彼が扱ったとされる二項定理と小惑星の力学を、当時の実在の数学から覗いてみましょう。",
+  "key_topics": [
+    "Newton の一般化二項定理 (1+x)^α と任意実数指数への拡張",
+    "Cauchy・Abel による二項級数の収束理論 (収束半径 |x|<1)",
+    "Gauss・Newcomb の系譜にある小惑星軌道の最小二乗推定",
+    "シャーロック・ホームズ正典 (Conan Doyle 原作) における数学的描写"
+  ],
+  "modern_connection": "Newton の一般化二項定理は今日も解析学・数値計算の基礎として広く使われ、Cauchy・Abel の収束理論は複素関数論の出発点となった。Gauss が始めた最小二乗法と天体軌道計算は、現代の人工衛星追跡・小惑星地球衝突予測 (NASA NEO Surveillance) に直結する技法。",
+  "key_episodes": [
+    "1893年、コナン・ドイル「最後の事件」(*The Final Problem*) でホームズがワトソンに、モリアーティが21歳で『二項定理に関する論文』を執筆し「ヨーロッパ大陸でもてはやされた」(has had a European vogue) と語る (フィクション設定)",
+    "1914-15年、コナン・ドイル『恐怖の谷』(*The Valley of Fear*) 第1部第2章で、ホームズが MacDonald 警部にモリアーティを「『小惑星の力学』(*The Dynamics of an Asteroid*) の高名な著者」「純粋数学の希薄な高みに到達し、批評できる者がいなかったとされる」と紹介 (フィクション設定)",
+    "Baring-Gould (1967) のシャーロキアン推定でモリアーティの生年は1846年10月31日。21歳の論文は1867年頃、『小惑星の力学』は中年期 (1870年代後半〜80年代前半、35-40歳前後) の主著",
+    "Schaefer (1993) は J. Br. Astron. Assoc. 誌でモリアーティのモデル候補として米国天文学者 Simon Newcomb (1835-1909) を学術論文で提案。Newcomb は19歳で *New Demonstration of the Binomial Theorem* を執筆、後に小惑星軌道に関する論文を多数発表",
+    "Anderson (1955, Baker Street Journal) は二項定理論文の数学的内容として Newton 一般化形 + 解析学的拡張を Sherlockian の立場から推定。Hara (2015) も同じ立場",
+    "Jenkins (2013, arXiv:1302.5855) は『小惑星の力学』をヴィクトリア朝の *Dynamics of a Particle* 教科書ジャンルの延長と読解、Eubanks 補強で Poincaré 以前のカオス理論萌芽 (Kirkwood gap の動力学的説明) の可能性を指摘"
+  ],
+  "math_content": [
+    "【柱1：Newton 一般化二項定理】(1+x)^α (任意実数指数) を Newton (1665) が発見。整数 α では有限項の展開だが、実数・複素数指数では無限級数となる。formula_display で公式 (1+x)^α = Σ C(α,k) x^k を表示し、Newton の発見の歴史的意義を解説",
+    "【柱2：Cauchy・Abel の二項級数収束】Cauchy (1821) が収束半径 |x|<1 を厳密化、Abel (1826) が複素指数を扱った。series_convergence で部分和が x の値ごとに収束/発散する様子を可視化 (mode 設定値変更で対応、不可なら formula_display 単独 fallback)",
+    "【柱3：Gauss-Newcomb 軌道計算】Gauss (1801) がケレスの軌道を最小二乗法で再発見した手法を、Newcomb (1858/1860) が小惑星全般に拡張。least_squares_orbit (既存テンプレ、fitting + orbit モード) で観測点群と推定軌道の関係を可視化。モリアーティ『小惑星の力学』をこの系譜の延長として位置付け、ナレーションで Schaefer Newcomb モデル説に言及",
+    "数式は最小限。フィクション人物の業績ではなく、実在の数学 (Newton / Cauchy / Abel / Gauss / Newcomb) を正確に解説することに徹する"
+  ],
+  "verified_facts": {
+    "_note": "本エピソードはフィクション。Moriarty 関連の伝記事実は Conan Doyle 原作 を出典に、数学的内容は実在の数学者業績を出典に明示。fact-check はフィクション設定のため --fact-check-allow-warn または --skip-fact-check を推奨",
+    "_fictional_setting": "本エピソードの主人公 Moriarty 教授は Arthur Conan Doyle 創作のフィクション人物。彼の業績は原作小説内の設定に基づくフィクションであり、扱う数学 (Newton 二項定理 / Cauchy 収束 / Gauss 軌道) のみ実在の数学を正確に解説する",
+    "moriarty_first_paper_age": {
+      "fact": "Moriarty は21歳で『二項定理に関する論文』(a treatise upon the binomial theorem) を執筆し「ヨーロッパ大陸でもてはやされた」(has had a European vogue)。これにより英国の小規模大学の数学講座 (the Mathematical Chair at one of our smaller universities) を得た (フィクション設定)",
+      "source": "Doyle, A. C. \"The Final Problem\" (Strand Magazine, December 1893)"
+    },
+    "moriarty_dynamics_book": {
+      "fact": "Moriarty は『小惑星の力学』(*The Dynamics of an Asteroid*) を執筆、ホームズはこれを「純粋数学の希薄な高みに到達し、科学誌で批評できる者がいなかったとされる」(ascends to such rarefied heights of pure mathematics that it is said that there was no man in the scientific press capable of criticizing it) と評する (フィクション設定)",
+      "source": "Doyle, A. C. *The Valley of Fear* (1914-1915), 第1部第2章"
+    },
+    "moriarty_birth_estimate": {
+      "fact": "Baring-Gould (1967) のシャーロキアン推定でモリアーティの生年は1846年10月31日。21歳の論文は1867年頃、『小惑星の力学』は中年期 (35-40歳前後、1870年代後半〜80年代前半) の主著",
+      "source": "Baring-Gould, W. S. *The Annotated Sherlock Holmes* (Clarkson N. Potter, 1967)"
+    },
+    "newton_binomial_theorem": {
+      "fact": "Newton は1664-1665年の annus mirabilis (Woolsthorpe で疫病避難中) に一般化二項定理 (1+x)^α を着想・発見。1669年に De Analysi 草稿として書き上げ、Barrow を通じて Collins へ送付。任意実数指数 α への拡張で、α が非整数の場合は無限級数となる。Wallis の補間法から発展",
+      "source": "Newton, I. *De Analysi per Aequationes Numero Terminorum Infinitas* (草稿 1669年、刊行 1711年 by William Jones). 着想は1664-1665年の annus mirabilis。標準史料: Westfall, R. S. *Never at Rest* (1980); Wikipedia: De analysi per aequationes numero terminorum infinitas"
+    },
+    "cauchy_convergence_theory": {
+      "fact": "Cauchy は1821年に二項級数 (1+x)^α の収束半径 |x|<1 を厳密化、収束理論を整備",
+      "source": "Cauchy, A.-L. *Cours d'analyse de l'École Royale Polytechnique* (1821)"
+    },
+    "abel_complex_binomial": {
+      "fact": "Abel は1826年に複素指数の二項級数の収束を厳密証明",
+      "source": "Abel, N. H. \"Recherches sur la série 1 + (m/1)x + ...\" *Crelle's Journal für die reine und angewandte Mathematik* 1, 311-339 (1826)"
+    },
+    "gauss_ceres_orbit": {
+      "fact": "Gauss は1801年にケレス (1 Ceres) の軌道を最小二乗法で計算し再発見に貢献、1809年に *Theoria motus* で軌道計算法を体系化",
+      "source": "Gauss, C. F. *Theoria motus corporum coelestium in sectionibus conicis solem ambientium* (1809)"
+    },
+    "newcomb_asteroid_papers": {
+      "fact": "Newcomb は1858年に \"Elements and Ephemeris of the Fifty-Fourth Asteroid\" を、1860年に \"On the Secular Variations and Mutual Relations of the Orbits of Asteroids\" を発表、Gauss の手法を拡張",
+      "source": "Newcomb, S. *Smithsonian Contributions to Knowledge* 12 (1860)"
+    },
+    "schaefer_newcomb_model": {
+      "fact": "Schaefer (1993) はモリアーティのモデル候補として米国天文学者 Simon Newcomb (1835-1909) を提案。19歳で二項定理論文を書き、後に小惑星軌道論文を発表、威圧的人格でも知られた",
+      "source": "Schaefer, B. E. \"Sherlock Holmes and Some Astronomical Connections\" *Journal of the British Astronomical Association* 103(1), 30-34 (1993)"
+    },
+    "anderson_binomial_essay": {
+      "fact": "Anderson (1955) はモリアーティの二項定理論文の数学的内容として Newton 一般化形 + 解析学的拡張 (収束論を含む) を Sherlockian の立場から推定。Newton 系解釈の嚆矢",
+      "source": "Anderson, P. \"A Treatise on the Binomial Theorem\" *Baker Street Journal* 5(1), 13-18 (1955)"
+    },
+    "jenkins_dynamics_essay": {
+      "fact": "Jenkins (2013) はモリアーティ『小惑星の力学』をヴィクトリア朝の *Dynamics of a Particle* 教科書ジャンルの延長と読解、Poincaré 以前のカオス理論萌芽 (Kirkwood gap の動力学的説明) の可能性を Eubanks 示唆と共に指摘",
+      "source": "Jenkins, A. \"On the Title of Moriarty's *Dynamics of an Asteroid*\" arXiv:1302.5855v2 (2014)"
+    },
+    "kirkwood_gap_discovery": {
+      "fact": "Kirkwood は1866年に小惑星帯の Kirkwood gap (木星との平均運動共鳴による空隙) を発見",
+      "source": "Kirkwood, D. \"On the Theory of Meteors\" *Proceedings of the American Association for the Advancement of Science* 15, 8-14 (1866)"
+    },
+    "moriarty_canonical_description": {
+      "fact": "Conan Doyle のモリアーティ描写: 「背が高く痩せた男、ドーム状の額、深く窪んだ目、髭を剃り、青白く禁欲的な顔つき。両肩は研究のために丸まり、顔は前に突き出して、奇妙に爬虫類のようにゆっくりと左右に揺れている」",
+      "source": "Doyle, A. C. \"The Final Problem\" (1893)"
+    }
+  },
+  "common_errors_to_avoid": [
+    "Moriarty は架空の人物。実在の数学者として扱わない。冒頭・概要欄でフィクション宣言を必須",
+    "扱う数学 (Newton 一般化二項定理 / Cauchy 収束 / Abel 複素指数 / Gauss 軌道計算 / Newcomb 拡張) はすべて実在の数学・実在の数学者の業績として正確に",
+    "Conan Doyle 自身はモリアーティの論文の数学的内容には触れていない。Anderson (1955) や Jenkins (2013) の解釈は事後の Sherlockian 推定であり、Doyle 直接記述ではないことを明確に",
+    "Schaefer (1993) Newcomb モデル説は仮説の一つで、Doyle が Newcomb を直接モデルにしたという一次資料は確認されていない。「〜という説がある」と表現すること",
+    "Newton の一般化二項定理は1665年、Cauchy 収束論は1821年、Abel 複素指数は1826年、Gauss ケレス軌道は1801年、Kirkwood gap は1866年、Newcomb 小惑星論文は1858/1860年。年号は正確に",
+    "「ヨーロッパ大陸でもてはやされた」は原文 \"has had a European vogue\" の意訳。Doyle 原文を尊重",
+    "21歳論文と『小惑星の力学』は別物。前者は青年期 (21歳)、後者は中年期 (Baring-Gould 推定で35-40歳前後) の主著",
+    "ナレーションでは「フィクション」「架空」「コナン・ドイルの設定」等の語で実在/架空を明示する",
+    "「前回」「次回」「続編」等の連続性を示す語は使わない (各回独立完結が方針)"
+  ],
+  "references": [
+    "Doyle, A. C. \"The Final Problem\" *The Strand Magazine* (December 1893)",
+    "Doyle, A. C. *The Valley of Fear* (Smith, Elder & Co., 1915, serialized 1914-1915)",
+    "Baring-Gould, W. S. *The Annotated Sherlock Holmes* (Clarkson N. Potter, 1967)",
+    "Klinger, L. S. *The New Annotated Sherlock Holmes*, Vol. III: The Novels (W. W. Norton, 2005)",
+    "Schaefer, B. E. \"Sherlock Holmes and Some Astronomical Connections\" *Journal of the British Astronomical Association* 103(1), 30-34 (1993)",
+    "Jenkins, A. \"On the Title of Moriarty's *Dynamics of an Asteroid*\" arXiv:1302.5855v2 (2014)",
+    "Anderson, P. \"A Treatise on the Binomial Theorem\" *Baker Street Journal* 5(1), 13-18 (1955); reprinted in Shreffler, P. A. (ed.) *Sherlock Holmes by Gas-Lamp* (Fordham UP, 1989)",
+    "Asimov, I. \"The Ultimate Crime\" in *More Tales of the Black Widowers* (Doubleday, 1976)",
+    "Newton, I. *De Analysi per Aequationes Numero Terminorum Infinitas* (草稿 1669, 刊行 1711 by William Jones)",
+    "Cauchy, A.-L. *Cours d'analyse de l'École Royale Polytechnique* (1821)",
+    "Abel, N. H. \"Recherches sur la série...\" *Crelle's Journal* 1 (1826), 311-339",
+    "Gauss, C. F. *Theoria motus corporum coelestium* (1809)",
+    "Newcomb, S. \"On the Secular Variations and Mutual Relations of the Orbits of Asteroids\" *Smithsonian Contributions to Knowledge* 12 (1860)",
+    "Kirkwood, D. \"On the Theory of Meteors\" *Proc. AAAS* 15, 8-14 (1866)",
+    "MacTutor History of Mathematics: Newton, Cauchy, Abel, Gauss, Newcomb"
+  ],
+  "chronology": [
+    {"year": "1665", "event": "Newton が一般化二項定理 (1+x)^α を発見 (実在)"},
+    {"year": "1801", "event": "Gauss が小惑星ケレス (1 Ceres) の軌道を最小二乗法で計算 (実在)"},
+    {"year": "1809", "event": "Gauss *Theoria motus* で軌道計算法を体系化 (実在)"},
+    {"year": "1821", "event": "Cauchy *Cours d'analyse* で二項級数の収束理論を厳密化 (実在)"},
+    {"year": "1826", "event": "Abel が複素指数の二項級数収束を厳密証明 (実在)"},
+    {"year": "1846", "event": "モリアーティ誕生 (フィクション、Baring-Gould 1967 推定)"},
+    {"year": "1858-1860", "event": "Newcomb が小惑星軌道に関する論文を発表 (実在、Schaefer Newcomb モデル説の根拠)"},
+    {"year": "1866", "event": "Kirkwood が Kirkwood gap を発見 (実在、Jenkins 説の背景)"},
+    {"year": "1867", "event": "モリアーティ21歳、『二項定理に関する論文』を執筆 (フィクション、Doyle 1893)"},
+    {"year": "1870s後半-80s前半", "event": "モリアーティ中年期、『小惑星の力学』を執筆 (フィクション、Doyle 1914-15)"},
+    {"year": "1893", "event": "Doyle 「最後の事件」発表、モリアーティの21歳論文設定が登場"},
+    {"year": "1914-15", "event": "Doyle 『恐怖の谷』発表、『小惑星の力学』設定が登場"},
+    {"year": "1955", "event": "Anderson が Baker Street Journal にモリアーティ二項定理論文の Sherlockian 解釈を発表"},
+    {"year": "1993", "event": "Schaefer が J. Br. Astron. Assoc. に Newcomb モデル説を学術論文で提示"},
+    {"year": "2013-14", "event": "Jenkins が arXiv で『小惑星の力学』のカオス理論萌芽説を発表"}
+  ],
+  "available_manim_templates": [
+    "formula_display: LaTeX 数式の static/highlight 表示 (Newton 一般化二項定理 (1+x)^α と二項係数の表示に使用)",
+    "series_convergence: 級数の部分和収束可視化 (既存テンプレ、二項級数 (1+x)^α の部分和収束に転用、mode 設定値変更で対応、不可なら formula_display 単独 fallback)",
+    "least_squares_orbit: 観測点群からの最小二乗法軌道推定 (既存テンプレ、moriarty では Gauss-Newcomb 系譜の小惑星軌道計算に使用、fitting + orbit モード)",
+    "text_overlay: フィクション宣言・Doyle 引用・章タイトル等の表示 (title_card / quote / definition / fact スタイル)"
+  ],
+  "image_strategy": {
+    "portrait_reference": "モリアーティは架空人物のため Wikimedia 写真なし。auto-search はゼロヒットを想定し、Gemini Flash で直接生成 (リファレンスなし)。Doyle canonical description (背が高く痩せた、ドーム状の額、深く窪んだ目、清潔な髭剃り、青白い禁欲的な顔、丸まった肩) を image prompt に活用",
+    "scenes": "person シーンはビクトリア朝ロンドン雰囲気の Wikimedia PD 画像 (Tower Bridge / Greenwich Observatory / 1880s 大学講義室 / ガス灯通り 等) を Ken Burns で表示し、その上に Gemini 直接生成のモリアーティ肖像を重ねる構成。ビクトリア朝雰囲気は auto-search または wikimedia_photo_urls 手動指定で取得",
+    "note": "PUBLIC_RELEASE_SCOPE.md セクション 8 で確定: Wikimedia 検索ヒットなし → Gemini fallback の検証も兼ねる。M1 戦略 (ビクトリア朝雰囲気 Wikimedia + フィクション人物 Gemini 直接生成) で確定"
+  },
+  "appearance": {
+    "note": "Doyle canonical description: 背が高く痩せた、ドーム状の額、深く窪んだ目、清潔な髭剃り、青白く禁欲的な顔つき。両肩は研究のために丸まり、顔は前に突き出している。フィクション人物のため写真リファレンスなし、Gemini Flash で直接生成",
+    "young": "Tall thin build, slender frame, domed forehead, deeply sunken eyes, clean-shaven, pale complexion, dark hair, scholarly expression, late Victorian academic dress (1860s style), age 21",
+    "middle": "Tall thin build, slender frame, domed forehead, deeply sunken eyes, clean-shaven, pale ascetic complexion, dark hair with hint of grey, rounded shoulders from much study, intense scholarly expression, late Victorian professor attire (1880s style), age 35-40"
+  },
+  "subject_appearance": "Tall thin build, slender frame, domed forehead, deeply sunken eyes, clean-shaven, pale ascetic complexion, rounded shoulders, scholarly Victorian male",
+  "description": {
+    "intro_guidance": "本動画はフィクションです。コナン・ドイル創作の架空数学者モリアーティ教授を題材に、彼が扱ったとされる二項定理 (Newton 一般化形 + Cauchy/Abel 収束論) と小惑星の力学 (Gauss-Newcomb 系譜の軌道計算) を、19世紀の実在の数学を通して紹介します。出典: Doyle 「最後の事件」(1893) + 『恐怖の谷』(1914-15)。Sherlockian 解釈: Anderson (1955) / Schaefer (1993) Newcomb モデル説 / Jenkins (2013) を参考。",
+    "tags_guidance": [
+      "モリアーティ教授",
+      "シャーロック・ホームズ",
+      "コナン・ドイル",
+      "二項定理",
+      "Newton",
+      "Cauchy",
+      "Abel",
+      "小惑星の力学",
+      "Gauss",
+      "Newcomb",
+      "天体力学",
+      "数学史",
+      "ヴィクトリア朝",
+      "フィクション",
+      "ドキュメンタリー"
+    ]
+  },
+  "thumbnail": {
+    "name": "モリアーティ教授",
+    "phrase": "二項定理と小惑星の力学（フィクション）",
+    "math_symbol": "(1+x)^\\alpha"
+  },
+  "pronunciation_high_risk": [
+    "Moriarty → 「モリアーティ」",
+    "Conan Doyle → 「コナン・ドイル」",
+    "Cauchy → 「コーシー」（「コーチー」「カウチー」ではない）",
+    "Abel → 「アーベル」（「アベル」「エイベル」ではない）",
+    "Gauss → 「ガウス」",
+    "Newcomb → 「ニューカム」（「ニューカムブ」ではない）",
+    "Schaefer → 「シェーファー」（「シェイファー」ではない）",
+    "Newton → 「ニュートン」",
+    "Wallis → 「ウォリス」",
+    "Kirkwood → 「カークウッド」",
+    "Jenkins → 「ジェンキンス」",
+    "Baring-Gould → 「ベアリング・グールド」",
+    "Reichenbach → 「ライヘンバッハ」",
+    "binomial → 「二項」（日本語）または「バイノミアル」（英語、文脈による）",
+    "asteroid → 「小惑星」または「アステロイド」",
+    "vogue → 「ヴォーグ」",
+    "ヨーロッパ大陸 → 「ヨーロッパたいりく」",
+    "二項定理 → 「にこうていり」",
+    "二項級数 → 「にこうきゅうすう」",
+    "収束半径 → 「しゅうそくはんけい」",
+    "天体力学 → 「てんたいりきがく」",
+    "最小二乗法 → 「さいしょうにじょうほう」"
+  ],
+  "additional_instructions": "【ナラティブ構成】(D) フィクション伝記 + 史実の数学を等比重で並列。7分尺、7シーン (intro 1 + person 2 + math 3 + closing 1)、約2030字 (290字/分)。4章構成: 0:00 はじめに (intro_01) / 0:20 若き日の二項定理論文 (person_01 + math_01 + math_02) / 3:20 中年期の小惑星の力学 (person_02 + math_03) / 6:10 おわりに (closing_01)。\n\n【フィクション宣言の徹底】intro_01 シーン冒頭で「本動画はフィクションです」を明示、description.intro_guidance でも明示。本文では「Conan Doyle の設定では」「フィクションでは」「Sherlockian 解釈では」等の語で架空/実在を明確化。Moriarty を実在の数学者のように扱わない。\n\n【数学コンテンツの正確性】扱う数学 (Newton / Cauchy / Abel / Gauss / Newcomb / Kirkwood) はすべて実在の数学者の業績で、年号 (1665 / 1801 / 1809 / 1821 / 1826 / 1858-1860 / 1866) を正確に。verified_facts に記載した出典を尊重し、Doyle 原文 \"has had a European vogue\" \"ascends to such rarefied heights of pure mathematics\" の引用は原典通り。\n\n【二項定理「論文」の数学的内容】math_01 で Newton 一般化二項定理 (1+x)^α (任意実数指数) を formula_display で公式表示し、Newton (1664-1665 着想、1669 De Analysi 草稿、1711 William Jones 刊行) の業績として歴史的意義を解説。math_02 で Cauchy (1821) と Abel (1826) の収束理論 (収束半径 |x|<1) を series_convergence で部分和収束を可視化。これは Anderson (1955) Sherlockian 解釈に基づくモリアーティ論文の推定内容で、Doyle 直接記述ではないことを明示。\n\n【小惑星の力学】math_03 で Gauss (1801) のケレス軌道計算手法を least_squares_orbit で可視化、Newcomb (1858-1860) の拡張に言及、モリアーティ『小惑星の力学』をこの系譜の延長として位置付け。Schaefer (1993) Newcomb モデル説 を verified_facts の出典として narration で「〜という説がある」表現で言及。Jenkins (2013) のカオス理論萌芽説を1-2文 gesture (詳細は深入りしない)。\n\n【中年期の主著】person_02 では『小惑星の力学』の執筆を中年期 (35-40歳前後、1870s後半-80s前半) の主著として扱う。21歳論文 (math_01-02 文脈) との時期的区別を明示。Doyle 原文 \"純粋数学の希薄な高みに到達し、批評できる者がいなかった\" を引用。\n\n【画像戦略 M1】person_01/02 ではビクトリア朝ロンドン雰囲気 Wikimedia 画像 (Tower Bridge / Greenwich Observatory / 1880s 大学講義室 / ガス灯通り) を Ken Burns で背景に、Gemini Flash 直接生成のモリアーティ肖像 (リファレンスなし、subject_appearance / appearance を image prompt に) を重ねる。fictional 人物なので use_reference: false 必須 (リファレンス汚染防止)。\n\n【B-21 narration_description sync】intro narration の数学的精度の前提条件 (例: 「Newton 一般化二項定理は |x|<1 で収束、α が非整数の場合は無限級数」「最小二乗法は誤差の二乗和を最小化する観測値推定法」等の限定詞) を description.intro_guidance と同期させること。\n\n【B-20 cliche scanner 注意】ビクトリア朝題材で典型的な cliche (霧の倫敦 / ガス灯のもと... 等) は cliche_dictionary.json で WARN される可能性あり、必要な雰囲気描写は per-scene cliche_acks で承認、不要な紋切り型は除去すること。\n\n【B-15 no_human フラグ活用】math シーンでは人物が写らないため visual block で has_person を false に。intro_01 / closing_01 もテーマ提示・結語のため機械的に no_human を適用可。\n\n【narration_speech 指示】数式記号 ((1+x)^α / |x|<1 / Σ 等) を含む narration には narration_speech を設定 (例: 「(1+x) のアルファ乗」「絶対値 x が 1 未満」「シグマ」等の音声読み替え)。\n\n【description ブロック生成指示】scene_definition.json に description ブロック (intro / chapter_subtitles / tags) を含めること。chapter_subtitles は credits_generator が時間配分して生成するため、scene 構造を 4 章 (0:00 / 0:20 / 3:20 / 6:10) に対応させる。\n\n【トーン】既存21epと同じ「ですます調」「煽り禁止」「各回独立完結」を継続。フィクション題材だが文体は淡々と、エンタメ調や扇情的トーンは避ける。Doyle 原作引用は敬意を持って。",
+  "bgm": {
+    "file": "bgm/angels_dream.mp3",
+    "title": "Angel's Dream",
+    "artist": "Aakash Gandhi",
+    "source": "YouTube Audio Library",
+    "volume_db": -20,
+    "intro_pause": 1.0,
+    "outro_hold": 2.0,
+    "outro_fade": 3.0,
+    "bgm_fadein": 2.0
+  }
+}

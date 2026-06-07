@@ -1,0 +1,266 @@
+{
+  "episode_id": "999_moriarty",
+  "title": "モリアーティ教授 ── 二項定理と小惑星の力学（フィクション）",
+  "version": "1.0",
+  "metadata": {
+    "target_duration_minutes": 7,
+    "mathematician": "Professor James Moriarty (fictional)",
+    "theme": "コナン・ドイル世界の架空数学者と19世紀の実在の数学（二項定理 + 天体力学）"
+  },
+  "sections": [
+    {
+      "section_id": "intro",
+      "section_type": "intro",
+      "label": "導入（フック）",
+      "scenes": [
+        {
+          "scene_id": "intro_01",
+          "narration": [
+            "本動画はフィクションです。",
+            "19世紀末のイギリス、|アーサー・コナン・ドイルは|シャーロック・ホームズの物語の中で、|名探偵最大の宿敵として|ある人物を創り出しました。",
+            "ジェームズ・モリアーティ教授。|21歳で二項定理に関する論文を書き、|ヨーロッパ中の評判を得たとされる|架空の天才です。",
+            "彼が扱ったとされる|二項定理と天体力学は、|すべて実在の理論に基づいています。|当時の数学を手がかりに、|その中身を覗いてみましょう。"
+          ],
+          "visual": {
+            "type": "ken_burns",
+            "source_prompt": "A dimly lit Victorian-era study in 1890s London, heavy mahogany desk covered with mathematical papers and leather-bound books, an inkwell and quill pen beside a stack of academic journals, gaslight casting warm amber glow on dark wood paneling, a small chalkboard in the corner with faint chalk marks of mathematical series, tall window with heavy velvet curtains partially drawn, bookshelves lining the walls from floor to ceiling filled with volumes on mathematics and astronomy, scattered celestial charts and correspondence, the atmosphere of a serious scholar's private workspace, wide establishing shot, oil painting style, academic realism, warm muted tones",
+            "effect": "zoom_in"
+          },
+          "transition": "fade",
+          "pause_after": 1.0,
+          "notes": "フィクション宣言 + 導入の掴み",
+          "narration_speech": [
+            "本動画はフィクションです。",
+            "19世紀末のイギリス、アーサー・コナン・ドイルはシャーロック・ホームズの物語の中で、名探偵最大の宿敵としてある人物を創り出しました。",
+            "ジェームズ・モリアーティ教授。21歳で二項定理に関する論文を書き、ヨーロッパじゅうの評判を得たとされる架空の天才です。",
+            "彼が扱ったとされる二項定理と天体力学は、すべて実在の理論に基づいています。当時の数学を手がかりに、その中身を覗いてみましょう。"
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "person",
+      "section_type": "person",
+      "label": "人物パート",
+      "scenes": [
+        {
+          "scene_id": "person_01",
+          "narration": [
+            "1893年、コナン・ドイルの短編|『最後の事件』で、|ホームズはワトソンに|モリアーティの経歴を語ります。",
+            "「彼は21歳にして|二項定理に関する論文を書き、|ヨーロッパ大陸で|もてはやされた」。",
+            "ドイルの設定では|モリアーティは1846年生まれとされ、|21歳での論文は|1867年頃にあたります。",
+            "架空の人物ではありますが、|シャーロキアンと呼ばれる|ホームズ愛好家たちは、|この論文の数学的内容を|真剣に考察してきました。",
+            "当時は二項定理をめぐる|解析学がまさに発展を遂げていた|時代でもありました。",
+            "アンダーソンは1955年の|ベイカー・ストリート・ジャーナル誌で、|この論文がニュートンの|一般化二項定理の解析的拡張を|扱ったのではないかと|推定しています。"
+          ],
+          "visual": {
+            "type": "ken_burns",
+            "source_prompt": "A young British professor in his early twenties, tall and thin with a high domed forehead and sharp intelligent eyes, clean-shaven with pale complexion, wearing a dark Victorian academic gown over a white shirt with high collar and dark cravat, standing before a large chalkboard covered with mathematical series expansions and binomial coefficients, in a wood-paneled university lecture hall of 1860s England, warm lamplight from brass wall fixtures, scattered chalk dust and papers on the wooden lectern, no other people visible, portrait composition, oil painting style, academic realism, warm muted tones",
+            "effect": "zoom_in"
+          },
+          "transition": "fade",
+          "pause_after": 0.5,
+          "notes": "若きモリアーティの二項定理論文（フィクション設定）とシャーロキアン考察"
+        },
+        {
+          "scene_id": "person_02",
+          "narration": [
+            "モリアーティにはもうひとつ、有名な著作があります。",
+            "1914年から翌年にかけて|連載された長編『恐怖の谷』で、|ホームズはマクドナルド警部に|こう語ります。",
+            "「『小惑星の力学』の著者であり、|純粋数学の希薄な高みに到達し、|批評できる者がいなかったとされる」。",
+            "この著作は21歳の論文から十数年後、|35歳から40歳前後の中年期に|書かれた主著とされます。|二項定理から天体力学へ、|研究の幅が大きく広がったという設定です。",
+            "シェーファーは1993年の論文で、|モリアーティのモデルとして|アメリカの天文学者|サイモン・ニューカムを挙げました。|ニューカムも若くして|二項定理の論文を書き、|後に小惑星軌道の研究を|多数残した人物です。",
+            "では、コナン・ドイルが|モリアーティに与えた|二つの業績の背景にある、|実在の数学を見ていきましょう。"
+          ],
+          "visual": {
+            "type": "ken_burns",
+            "source_prompt": "A thin British professor in his late thirties, tall with a high domed forehead and slightly receding dark hair, sharp penetrating eyes with an intense scholarly gaze, wearing a dark tweed suit with waistcoat and pocket watch chain in late 1870s fashion, seated at a large oak desk in a Victorian astronomical observatory study, a brass telescope visible through an arched window showing the night sky, celestial charts and orbital calculation papers spread across the desk, a globe and astronomical instruments arranged on nearby shelves, dim evening light mixing with warm oil lamp glow, no other people visible, medium shot with depth, oil painting style, academic realism, warm muted tones",
+            "effect": "zoom_out"
+          },
+          "transition": "fade",
+          "pause_after": 1.5,
+          "notes": "中年期モリアーティの『小惑星の力学』+ Schaefer Newcomb モデル説",
+          "narration_speech": [
+            "モリアーティにはもうひとつ、有名な著作があります。",
+            "1914年から翌年にかけて連載された長編『恐怖の谷』で、ホームズはマクドナルド警部にこう語ります。",
+            "「『小惑星の力学』の著者であり、純粋数学の希薄な高みに到達し、批評できる者がいなかったとされる」。",
+            "この著作は21歳の論文から十数ねんご、35歳から40歳前後の中年期に書かれた主著とされます。二項定理から天体力学へ、研究の幅が大きく広がったという設定です。",
+            "シェーファーは1993年の論文で、モリアーティのモデルとしてアメリカの天文学者サイモン・ニューカムを挙げました。ニューカムも若くして二項定理の論文を書き、後に小惑星軌道の研究を多数残した人物です。",
+            "では、コナン・ドイルがモリアーティに与えた二つの業績の背景にある、実在の数学を見ていきましょう。"
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "math",
+      "section_type": "math",
+      "label": "数学パート",
+      "scenes": [
+        {
+          "scene_id": "math_01",
+          "narration": [
+            "まず、二項定理の論文の背景です。",
+            "1665年頃、|22歳のアイザック・ニュートンは|ペスト禍のため|ケンブリッジ大学を離れ、|故郷ウールスソープで|独自の研究に没頭していました。",
+            "そこで彼は画期的な発見をします。|(1+x)のn乗は、|nが正の整数のとき|有限の項で展開できます。",
+            "たとえばnが2なら、1+2x+x^2の3項で終わります。",
+            "しかしニュートンは、|nを2分の1や3分の1といった|実数に置き換えても、|同じ形式の展開が成り立つことを|発見しました。|この場合、項は無限に続きます。",
+            "この着想は1669年の草稿に|記されましたが、|刊行は1711年を|待つことになります。",
+            "整数の指数では|有限で終わる展開が、|実数に広げると|無限に続くようになります。|この発見は解析学の|出発点のひとつとなりました。"
+          ],
+          "narration_speech": [
+            "まず、二項定理の論文の背景です。",
+            "1665年頃、22歳のアイザック・ニュートンはペスト禍のためケンブリッジ大学を離れ、故郷ウールスソープで独自の研究に没頭していました。",
+            "そこで彼は画期的な発見をします。1たすxのn乗は、nが正の整数のとき有限の項で展開できます。",
+            "たとえばnが2なら、1たす2xたすxの2乗の3項で終わります。",
+            "しかしニュートンは、nをにぶんのいちやさんぶんのいちといった実数に置き換えても、同じ形式の展開が成り立つことを発見しました。この場合、項は無限に続きます。",
+            "この着想は1669年の草稿に記されましたが、刊行は1711年を待つことになります。",
+            "整数の指数では有限で終わる展開が、実数に広げると無限に続くようになります。この発見は解析学の出発点のひとつとなりました。"
+          ],
+          "visual": {
+            "type": "manim",
+            "template": "formula_display",
+            "params": {
+              "formula": "(1+x)^{\\alpha} = \\sum_{k=0}^{\\infty} \\binom{\\alpha}{k} x^k",
+              "title": "ニュートンの一般化二項定理",
+              "description": "\\binom{\\alpha}{k} = \\frac{\\alpha(\\alpha-1)\\cdots(\\alpha-k+1)}{k!}"
+            }
+          },
+          "transition": "fade",
+          "pause_after": 0.5,
+          "notes": "Newton 一般化二項定理 (1665) の公式表示と歴史的意義"
+        },
+        {
+          "scene_id": "math_02",
+          "narration": [
+            "ニュートンの発見から|約150年後、|重要な問いが浮上します。",
+            "この無限級数は、|どんなxの値でも|正しい答えに|収束するのでしょうか。",
+            "1821年、コーシーは著書|『解析教程』で|明確な答えを出しました。",
+            "xの絶対値が1未満のとき|級数は収束し、|1以上では発散する場合があります。|厳密な証明によって|この限界が示されました。",
+            "さらに1826年、|ノルウェーの若き数学者|アーベルが複素数の指数にまで|理論を拡張し、|収束条件をより精密に|整理しました。",
+            "モリアーティが論文を書いたとされる|1867年頃、|この理論はすでに|確立された知識でした。",
+            "アンダーソンの推定に従えば、|架空のモリアーティ論文は|こうした成果の延長線上に|あったことになります。"
+          ],
+          "narration_speech": [
+            "ニュートンの発見から約150ねんご、重要な問いが浮上します。",
+            "この無限級数は、どんなxのあたいでも正しい答えに収束するのでしょうか。",
+            "1821年、コーシーは著書『解析教程』で明確な答えを出しました。",
+            "xのぜったいちが1未満のとき級数は収束し、1以上では発散する場合があります。厳密な証明によってこの限界が示されました。",
+            "さらに1826年、ノルウェーの若き数学者アーベルが複素数の指数にまで理論を拡張し、収束条件をより精密に整理しました。",
+            "モリアーティが論文を書いたとされる1867年頃、この理論はすでに確立された知識でした。",
+            "アンダーソンの推定に従えば、架空のモリアーティ論文はこうした成果の延長線上にあったことになります。"
+          ],
+          "visual": {
+            "type": "manim",
+            "template": "formula_display",
+            "params": {
+              "formula": "(1+x)^{\\alpha} = \\sum_{k=0}^{\\infty} \\binom{\\alpha}{k} x^{k} \\quad (|x| < 1)",
+              "subtitle": "コーシーの収束条件 (1821年)"
+            }
+          },
+          "transition": "fade",
+          "pause_after": 0.5,
+          "notes": "Cauchy (1821) 収束半径 |x|<1 + Abel (1826) 複素指数拡張"
+        },
+        {
+          "scene_id": "math_03",
+          "narration": [
+            "次に、『小惑星の力学』の背景です。",
+            "1801年、小惑星ケレスが|発見直後に太陽の背後に|見えなくなったとき、|ガウスはわずかな観測データから|軌道を予測し、|再発見を可能にしました。",
+            "彼が用いた手法が最小二乗法です。|観測値と理論値のずれの|二乗和を最小にして、|最適な軌道を求めるもので、|1809年の著書で体系化されました。",
+            "ニューカムは1858年から60年にかけて、|ガウスの手法を小惑星全般の|軌道相互関係の計算に|応用しました。",
+            "ジェンキンスは2013年の論考で、|モリアーティの著作を|この天体力学の系譜の延長として|読み解いています。",
+            "カークウッドが1866年に発見した|小惑星帯の隙間の力学的説明など、|当時の未解決問題との関連も|指摘されました。"
+          ],
+          "narration_speech": [
+            "次に、『小惑星の力学』の背景です。",
+            "1801年、小惑星ケレスが発見直後に太陽の背後に見えなくなったとき、ガウスはわずかな観測データから軌道を予測し、再発見を可能にしました。",
+            "彼が用いた手法が最小二乗法です。かんそくちとりろんちのずれの二乗和を最小にして、最適な軌道を求めるもので、1809年の著書で体系化されました。",
+            "ニューカムは1858年から60年にかけて、ガウスの手法を小惑星全般の軌道相互関係の計算に応用しました。",
+            "ジェンキンスは2013年の論考で、モリアーティの著作をこの天体力学の系譜の延長として読み解いています。",
+            "カークウッドが1866年に発見した小惑星帯の隙間の力学的説明など、当時の未解決問題との関連も指摘されました。"
+          ],
+          "visual": {
+            "type": "manim",
+            "template": "least_squares_orbit",
+            "params": {
+              "mode": "fitting"
+            }
+          },
+          "transition": "fade",
+          "pause_after": 1.0,
+          "notes": "Gauss (1801) ケレス軌道計算 + Newcomb (1858-60) 小惑星軌道拡張 + Jenkins 読解"
+        }
+      ]
+    },
+    {
+      "section_id": "closing",
+      "section_type": "closing",
+      "label": "締め",
+      "scenes": [
+        {
+          "scene_id": "closing_01",
+          "narration": [
+            "コナン・ドイルが|架空の犯罪王に与えた業績は、|いずれも実在の数学に|深く根ざしていました。",
+            "二項定理と小惑星の力学。|この二つの主題は、|19世紀の数学と天文学の中で|確かにつながっていました。",
+            "ニュートンの一般化二項定理は|現代でも解析学や|数値計算の基礎であり、|コーシーとアーベルの収束理論は|複素関数論の出発点です。",
+            "ガウスの最小二乗法は、|現代の人工衛星追跡や|NASAの小惑星地球衝突予測にまで|直結する技法として|使われ続けています。",
+            "フィクションの中の数学教授が|扱ったとされる理論は、|現実の世界で|なお生き続けているのです。"
+          ],
+          "visual": {
+            "type": "ken_burns",
+            "source_prompt": "A modern space operations center control room with rows of computer monitors displaying orbital trajectory calculations and asteroid tracking data, large wall screens showing near-Earth object positions around a detailed Earth model, clean contemporary lighting with subtle blue accent tones from the glowing screens, scientific papers and coffee cups on operator desks, the legacy of centuries of mathematical tradition visible in modern computational displays, a quiet night shift atmosphere of diligent astronomical surveillance, wide establishing shot, oil painting style, academic realism, warm muted tones",
+            "effect": "zoom_in"
+          },
+          "transition": "fade",
+          "pause_after": 2.0,
+          "notes": "現代への接続: 一般化二項定理・収束理論・最小二乗法の現在",
+          "narration_speech": [
+            "コナン・ドイルが架空の犯罪王に与えた業績は、いずれも実在の数学に深く根ざしていました。",
+            "二項定理と小惑星の力学。この二つの主題は、19世紀の数学と天文学の中で確かにつながっていました。",
+            "ニュートンの一般化二項定理は現代でも解析学やすうち計算の基礎であり、コーシーとアーベルの収束理論は複素関数論の出発点です。",
+            "ガウスの最小二乗法は、現代の人工衛星追跡やNASAの小惑星地きゅう衝突予測にまで直結する技法として使われ続けています。",
+            "フィクションの中の数学教授が扱ったとされる理論は、現実の世界でなお生き続けているのです。"
+          ]
+        }
+      ]
+    }
+  ],
+  "credits": {
+    "voicevox": "VOICEVOX:青山龍星",
+    "references": [
+      "Doyle, A. C. \"The Final Problem\" The Strand Magazine (December 1893)",
+      "Doyle, A. C. The Valley of Fear (Smith, Elder & Co., 1915, serialized 1914-1915)",
+      "Baring-Gould, W. S. The Annotated Sherlock Holmes (Clarkson N. Potter, 1967)",
+      "Klinger, L. S. The New Annotated Sherlock Holmes, Vol. III: The Novels (W. W. Norton, 2005)",
+      "Schaefer, B. E. \"Sherlock Holmes and Some Astronomical Connections\" Journal of the British Astronomical Association 103(1), 30-34 (1993)",
+      "Jenkins, A. \"On the Title of Moriarty's Dynamics of an Asteroid\" arXiv:1302.5855v2 (2014)",
+      "Anderson, P. \"A Treatise on the Binomial Theorem\" Baker Street Journal 5(1), 13-18 (1955)",
+      "Asimov, I. \"The Ultimate Crime\" in More Tales of the Black Widowers (Doubleday, 1976)",
+      "Newton, I. De Analysi per Aequationes Numero Terminorum Infinitas (草稿 1669, 刊行 1711)",
+      "Cauchy, A.-L. Cours d'analyse de l'École Royale Polytechnique (1821)",
+      "Abel, N. H. \"Recherches sur la série...\" Crelle's Journal 1 (1826), 311-339",
+      "Gauss, C. F. Theoria motus corporum coelestium (1809)",
+      "Newcomb, S. \"On the Secular Variations and Mutual Relations of the Orbits of Asteroids\" Smithsonian Contributions to Knowledge 12 (1860)",
+      "Kirkwood, D. \"On the Theory of Meteors\" Proc. AAAS 15, 8-14 (1866)",
+      "MacTutor History of Mathematics: Newton, Cauchy, Abel, Gauss, Newcomb"
+    ]
+  },
+  "description": {
+    "intro": "本動画はフィクションです。\nシャーロック・ホームズの宿敵モリアーティ教授は、\n21歳で二項定理に関する論文を書き、\n後に『小惑星の力学』を著したとされる架空の数学者です。\nニュートンが発見した一般化二項定理（実数指数への拡張、|x|<1で収束する無限級数）と、\nガウスの最小二乗法（観測値と理論値の二乗和最小化）による小惑星軌道計算という、\n架空の数学者の業績の背景にある実在の数学を紹介します。",
+    "chapter_subtitles": {
+      "intro": "導入",
+      "person": "コナン・ドイルが描いた数学者",
+      "math": "二項定理から天体軌道計算へ",
+      "closing": "現代に生きる理論"
+    },
+    "tags": [
+      "モリアーティ教授",
+      "シャーロック・ホームズ",
+      "コナン・ドイル",
+      "二項定理",
+      "ニュートン",
+      "最小二乗法",
+      "小惑星の力学"
+    ]
+  }
+}

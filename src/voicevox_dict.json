@@ -1,0 +1,485 @@
+{
+  "_comment": "VOICEVOX読み仮名辞書（数学史記プロジェクト用）。surface=表記、pronunciation=カタカナ読み、accent_type=アクセント位置（0始まり）",
+  "words": [
+    {
+      "surface": "数論",
+      "pronunciation": "スウロン",
+      "accent_type": 0
+    },
+    {
+      "surface": "整数論",
+      "pronunciation": "セイスウロン",
+      "accent_type": 3
+    },
+    {
+      "surface": "初等",
+      "pronunciation": "ショトウ",
+      "accent_type": 0
+    },
+    {
+      "surface": "群論",
+      "pronunciation": "グンロン",
+      "accent_type": 0
+    },
+    {
+      "surface": "代数",
+      "pronunciation": "ダイスウ",
+      "accent_type": 0
+    },
+    {
+      "surface": "解析",
+      "pronunciation": "カイセキ",
+      "accent_type": 0
+    },
+    {
+      "surface": "幾何",
+      "pronunciation": "キカ",
+      "accent_type": 1
+    },
+    {
+      "surface": "素数",
+      "pronunciation": "ソスウ",
+      "accent_type": 0
+    },
+    {
+      "surface": "超越数",
+      "pronunciation": "チョウエツスウ",
+      "accent_type": 4
+    },
+    {
+      "surface": "無理数",
+      "pronunciation": "ムリスウ",
+      "accent_type": 2
+    },
+    {
+      "surface": "有理数",
+      "pronunciation": "ユウリスウ",
+      "accent_type": 2
+    },
+    {
+      "surface": "自然数",
+      "pronunciation": "シゼンスウ",
+      "accent_type": 2
+    },
+    {
+      "surface": "実数",
+      "pronunciation": "ジッスウ",
+      "accent_type": 0
+    },
+    {
+      "surface": "虚数",
+      "pronunciation": "キョスウ",
+      "accent_type": 1
+    },
+    {
+      "surface": "複素数",
+      "pronunciation": "フクソスウ",
+      "accent_type": 2
+    },
+    {
+      "surface": "公理",
+      "pronunciation": "コウリ",
+      "accent_type": 1
+    },
+    {
+      "surface": "定理",
+      "pronunciation": "テイリ",
+      "accent_type": 1
+    },
+    {
+      "surface": "補題",
+      "pronunciation": "ホダイ",
+      "accent_type": 0
+    },
+    {
+      "surface": "仮説",
+      "pronunciation": "カセツ",
+      "accent_type": 0
+    },
+    {
+      "surface": "証明",
+      "pronunciation": "ショウメイ",
+      "accent_type": 0
+    },
+    {
+      "surface": "共著",
+      "pronunciation": "キョウチョ",
+      "accent_type": 0
+    },
+    {
+      "surface": "共著者",
+      "pronunciation": "キョウチョシャ",
+      "accent_type": 3
+    },
+    {
+      "surface": "論文",
+      "pronunciation": "ロンブン",
+      "accent_type": 0
+    },
+    {
+      "surface": "数学者",
+      "pronunciation": "スウガクシャ",
+      "accent_type": 2
+    },
+    {
+      "surface": "等差数列",
+      "pronunciation": "トウサスウレツ",
+      "accent_type": 4
+    },
+    {
+      "surface": "組合せ論",
+      "pronunciation": "クミアワセロン",
+      "accent_type": 4
+    },
+    {
+      "surface": "確率論",
+      "pronunciation": "カクリツロン",
+      "accent_type": 3
+    },
+    {
+      "surface": "グラフ理論",
+      "pronunciation": "グラフリロン",
+      "accent_type": 4
+    },
+    {
+      "surface": "彩色数",
+      "pronunciation": "サイショクスウ",
+      "accent_type": 3
+    },
+    {
+      "surface": "ラムゼー理論",
+      "pronunciation": "ラムゼーリロン",
+      "accent_type": 5
+    },
+    {
+      "surface": "エルデシュ",
+      "pronunciation": "エルデシュ",
+      "accent_type": 0
+    },
+    {
+      "surface": "ベルトラン",
+      "pronunciation": "ベルトラン",
+      "accent_type": 3
+    },
+    {
+      "surface": "チェビシェフ",
+      "pronunciation": "チェビシェフ",
+      "accent_type": 3
+    },
+    {
+      "surface": "ガロア",
+      "pronunciation": "ガロア",
+      "accent_type": 1
+    },
+    {
+      "surface": "オイラー",
+      "pronunciation": "オイラー",
+      "accent_type": 0
+    },
+    {
+      "surface": "リウヴィル",
+      "pronunciation": "リウヴィル",
+      "accent_type": 0
+    },
+    {
+      "surface": "ラマヌジャン",
+      "pronunciation": "ラマヌジャン",
+      "accent_type": 3
+    },
+    {
+      "surface": "語る上で",
+      "pronunciation": "カタルウエデ",
+      "accent_type": 4
+    },
+    {
+      "surface": "する上で",
+      "pronunciation": "スルウエデ",
+      "accent_type": 0
+    },
+    {
+      "surface": "彩色",
+      "pronunciation": "サイショク",
+      "accent_type": 0
+    },
+    {
+      "surface": "他の国",
+      "pronunciation": "ホカノクニ",
+      "accent_type": 0
+    },
+    {
+      "surface": "共著者の数",
+      "pronunciation": "キョウチョシャノカズ",
+      "accent_type": 5
+    },
+    {
+      "surface": "フーリエ",
+      "pronunciation": "フーリエ",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "ラプラス",
+      "pronunciation": "ラプラス",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "ラグランジュ",
+      "pronunciation": "ラグランジュ",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "オーセール",
+      "pronunciation": "オーセール",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "イゼール",
+      "pronunciation": "イゼール",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "ポアソン",
+      "pronunciation": "ポアソン",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "ディリクレ",
+      "pronunciation": "ディリクレ",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "ギブス",
+      "pronunciation": "ギブス",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "熱伝導",
+      "pronunciation": "ネツデンドウ",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "三角級数",
+      "pronunciation": "サンカクキュウスウ",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "矩形波",
+      "pronunciation": "クケイハ",
+      "accent_type": 0,
+      "priority": 5
+    },
+    {
+      "surface": "異を唱え",
+      "pronunciation": "イヲトナエ",
+      "accent_type": 0,
+      "priority": 8
+    },
+    {
+      "surface": "MP3",
+      "pronunciation": "エムピースリー",
+      "accent_type": 5,
+      "priority": 8
+    },
+    {
+      "surface": "フーリエ変換",
+      "pronunciation": "フーリエヘンカン",
+      "accent_type": 0,
+      "priority": 8
+    },
+    {
+      "surface": "後の数学者",
+      "pronunciation": "ノチノスウガクシャ",
+      "accent_type": 5,
+      "priority": 8
+    },
+    {
+      "surface": "JPEG",
+      "pronunciation": "ジェイペグ",
+      "accent_type": 3,
+      "priority": 8
+    },
+    {
+      "surface": "MRI",
+      "pronunciation": "エムアールアイ",
+      "accent_type": 5,
+      "priority": 8
+    },
+    {
+      "surface": "根",
+      "pronunciation": "コン",
+      "priority": 5
+    },
+    {
+      "surface": "秘密裏",
+      "pronunciation": "ヒミツリ",
+      "priority": 5
+    },
+    {
+      "surface": "他の",
+      "pronunciation": "ホカノ",
+      "priority": 5
+    },
+    {
+      "surface": "弦理論",
+      "pronunciation": "ゲンリロン",
+      "priority": 5
+    },
+    {
+      "surface": "共形場理論",
+      "pronunciation": "キョウケイバリロン",
+      "priority": 5
+    },
+    {
+      "surface": "負の",
+      "pronunciation": "フノ",
+      "accent_type": 0
+    },
+    {
+      "_section": "B-33: compound 値 → ち (低層 VOICEVOX 防御。単独「値」は default あたい のまま、複合語のみここで上書き)"
+    },
+    {
+      "surface": "絶対値",
+      "pronunciation": "ゼッタイチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "観測値",
+      "pronunciation": "カンソクチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "理論値",
+      "pronunciation": "リロンチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "実測値",
+      "pronunciation": "ジッソクチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "計算値",
+      "pronunciation": "ケイサンチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "推定値",
+      "pronunciation": "スイテイチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "予測値",
+      "pronunciation": "ヨソクチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "初期値",
+      "pronunciation": "ショキチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "最大値",
+      "pronunciation": "サイダイチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "最小値",
+      "pronunciation": "サイショウチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "平均値",
+      "pronunciation": "ヘイキンチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "期待値",
+      "pronunciation": "キタイチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "中央値",
+      "pronunciation": "チュウオウチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "固有値",
+      "pronunciation": "コユウチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "関数値",
+      "pronunciation": "カンスウチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "中間値",
+      "pronunciation": "チュウカンチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "境界値",
+      "pronunciation": "キョウカイチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "限界値",
+      "pronunciation": "ゲンカイチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "極値",
+      "pronunciation": "キョクチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "真値",
+      "pronunciation": "シンチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "許容値",
+      "pronunciation": "キョヨウチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "設計値",
+      "pronunciation": "セッケイチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "近似値",
+      "pronunciation": "キンジチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "極限値",
+      "pronunciation": "キョクゲンチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "三角関数値",
+      "pronunciation": "サンカクカンスウチ",
+      "accent_type": 0
+    },
+    {
+      "surface": "数値解析",
+      "pronunciation": "スウチカイセキ",
+      "accent_type": 0
+    },
+    {
+      "surface": "数値",
+      "pronunciation": "スウチ",
+      "accent_type": 0
+    }
+  ]
+}

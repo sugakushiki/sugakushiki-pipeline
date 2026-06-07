@@ -1,0 +1,56 @@
+{
+  "_meta": {
+    "version": 1,
+    "created": "2026-05-04",
+    "purpose": "B-20 cliche scanner dictionary. Detects period-stereotype phrases in source_prompt that may have no historical basis (e.g. 'stereotype phrases were added without verification in past sessions). WARN-level only; user opt-out via visual.cliche_acks.",
+    "doc_ref": "docs/04_assets/image-generation.md (cliche scanner section)",
+    "categories": [
+      "period_accessory: period-stereotype clothing/accessories",
+      "smoking: tobacco-stereotyped scenes (often added without historical basis)",
+      "atmosphere: atmospheric stereotypes (gas lamps, candle-lit, etc.)",
+      "pose: stereotyped poses (gesturing animatedly, posing for portrait)",
+      "anachronism: items/settings inappropriate to the era",
+      "academic_stereotype: 'intellectual' visual cliches"
+    ]
+  },
+
+  "entries": [
+    {"category": "period_accessory", "term": "top hat",                    "rationale": "Victorian-era stereotype; verify the subject would actually wear one in this scene"},
+    {"category": "period_accessory", "term": "monocle",                     "rationale": "Stage-prop stereotype, rare in actual historical use; verify."},
+    {"category": "period_accessory", "term": "pince-nez",                   "rationale": "Specific eyewear; verify subject actually wore one in the depicted period."},
+    {"category": "period_accessory", "term": "powdered wig",                "rationale": "18th c. stereotype; out of period for 19th-20th c. mathematicians."},
+    {"category": "period_accessory", "term": "white wig",                   "rationale": "Rococo / Baroque stereotype; verify period fit."},
+    {"category": "period_accessory", "term": "tricorn hat",                 "rationale": "18th c. military/aristocrat stereotype; rare for academics."},
+
+    {"category": "smoking", "term": "smoking pipe",                         "rationale": "'Intellectual = pipe smoker' stereotype; verify the subject actually smoked. Source for a past stereotyped-prompt error."},
+    {"category": "smoking", "term": "smoking pipes",                        "rationale": "Same as 'smoking pipe' — group form."},
+    {"category": "smoking", "term": "pipe smoke",                           "rationale": "Atmospheric pipe-smoke is a stage convention; verify historicity."},
+    {"category": "smoking", "term": "tobacco pipe",                         "rationale": "Same family of stereotype."},
+    {"category": "smoking", "term": "cigar",                                "rationale": "'Wealthy intellectual' stereotype; verify."},
+    {"category": "smoking", "term": "cigarette holder",                     "rationale": "Early 20th c. stereotype; verify period fit."},
+
+    {"category": "atmosphere", "term": "gas lamp",                          "rationale": "19th c. stereotype; verify the scene's actual lighting situation."},
+    {"category": "atmosphere", "term": "candle-lit",                        "rationale": "'Mysterious scholar' stereotype; verify time-of-day and venue."},
+    {"category": "atmosphere", "term": "candlelit",                         "rationale": "Same as candle-lit."},
+    {"category": "atmosphere", "term": "leather-bound volumes",             "rationale": "'Antique library' stereotype; verify."},
+    {"category": "atmosphere", "term": "leather-bound books",               "rationale": "Same family."},
+    {"category": "atmosphere", "term": "oil lamp",                          "rationale": "Atmospheric stereotype; verify period and indoor venue."},
+    {"category": "atmosphere", "term": "fog",                               "rationale": "Victorian-era 'gloomy London' stereotype; verify scene fits."},
+    {"category": "atmosphere", "term": "cobblestone street",                "rationale": "'Old Europe' stereotype; verify city and period."},
+
+    {"category": "pose", "term": "gesturing animatedly",                    "rationale": "Stage convention for 'lively discussion'; verify the depicted activity matches."},
+    {"category": "pose", "term": "posing for portrait",                     "rationale": "Posed-painting stereotype; verify whether the scene depicts an actual portrait sitting."},
+    {"category": "pose", "term": "frantically writing",                     "rationale": "'Mad scholar' stereotype; verify the depicted activity."},
+    {"category": "pose", "term": "deep in thought",                         "rationale": "Cliche pose; specify what the subject is actually doing."},
+    {"category": "pose", "term": "stroking beard",                          "rationale": "'Wise old scholar' stereotype; verify the subject actually had a beard at the depicted age."},
+
+    {"category": "anachronism", "term": "modern laboratory",                "rationale": "Verify the era's lab actually looked like this; pre-20th c. labs were very different."},
+    {"category": "anachronism", "term": "pocket watch",                     "rationale": "Common but verify the period (pre-1700 verifies poorly)."},
+    {"category": "anachronism", "term": "fountain pen",                     "rationale": "19th c. invention; do not place in earlier scenes (would use quill)."},
+
+    {"category": "academic_stereotype", "term": "ivy-covered walls",        "rationale": "American university stereotype; verify the actual venue."},
+    {"category": "academic_stereotype", "term": "intellectual gathering",   "rationale": "Generic stereotype; specify the actual event being depicted."},
+    {"category": "academic_stereotype", "term": "scholar in robes",         "rationale": "Medieval/early-modern stereotype; verify period and institution."},
+    {"category": "academic_stereotype", "term": "wood-paneled study",       "rationale": "'Dark academia' stereotype; verify whether the actual venue was paneled."}
+  ]
+}

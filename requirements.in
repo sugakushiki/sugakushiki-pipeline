@@ -1,0 +1,33 @@
+# requirements.in - top-level direct dependencies
+#
+# Generated 2026-05-04.
+# Edit this file when adding/removing top-level deps. Then regenerate the
+# lock file (requirements.txt) by:
+#   source venv/Scripts/activate
+#   pip install --upgrade -r requirements.in
+#   pip freeze > requirements.txt
+# (Optionally use pip-tools: `pip-compile requirements.in` produces a comment-
+# annotated lock file, but is not required.)
+#
+# Python: 3.11.0 (see .python-version)
+# Platform: Windows 11 (no GPU). FFmpeg / VOICEVOX / Blender are out-of-band.
+
+# Core animation engine
+manim==0.19.2
+
+# Numerical / scientific
+numpy==2.4.2
+scipy==1.17.0
+sympy==1.14.0
+matplotlib==3.10.8
+
+# Image / font processing
+pillow==12.1.1
+fonttools==4.61.1  # transitive via matplotlib, pinned for direct use in check_font_coverage.py
+
+# HTTP / config
+requests==2.32.5
+python-dotenv==1.2.1
+
+# AI APIs (Gemini Flash for image generation; Claude is invoked via Claude Code CLI, no SDK)
+google-genai==1.64.0

@@ -1,0 +1,19 @@
+# requirements-dev.txt - development dependencies
+#
+# Generated 2026-05-04. Install on top of requirements.txt:
+#   source venv/Scripts/activate
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# These are NOT needed to run the pipeline. They are linters / formatters /
+# testing tools used during development. Keep separate so that production
+# environments (e.g. an M3 public consumer running the pipeline) do not
+# install them.
+#
+# Python: 3.11.0 (see .python-version)
+
+# Lint + format (replaces black/isort/flake8 — single tool, fast, Rust-based)
+ruff==0.15.12
+
+# Path matching (gitignore-compatible glob, used by scripts/sync_to_public.py)
+# Day 9 (2026-05-04, T1) added: handles WHITELIST/EXCLUDE with !-exception patterns
+pathspec==0.12.1

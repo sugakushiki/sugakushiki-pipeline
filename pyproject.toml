@@ -1,0 +1,61 @@
+# pyproject.toml - tool configuration for sugakushiki
+#
+# Configures ruff (lint + format). Added 2026-05-04.
+#
+# Usage:
+#   ruff check src/ scripts/                 # lint (read-only)
+#   ruff check --fix src/ scripts/            # lint + auto-fix safe issues
+#   ruff format src/ scripts/                 # format
+#   ruff format --check src/ scripts/         # verify formatting (CI use)
+#
+# Note: existing files are NOT auto-formatted as of 2026-05-04. Apply ruff
+# format incrementally to files you touch, or in bulk during M3 sanitize.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+# Files / directories ruff should look at by default
+include = ["src/**/*.py", "scripts/**/*.py"]
+
+# Excluded from lint + format
+extend-exclude = [
+    "venv",
+    ".venv",
+    "episodes/*/audio",
+    "episodes/*/visuals",
+    "episodes/*/images",
+    "episodes/*/thumbnails",
+    "temp_videos",
+    "prototypes",
+    "src/blender_templates",  # Blender bpy/bmesh APIs trip linters
+]
+
+[tool.ruff.lint]
+# Conservative starter rule set — pyflakes (F) + pycodestyle errors (E) + a few
+# bug-bear style checks. Excluded categories (W warnings, N naming, etc.) can be
+# turned on incrementally as the codebase is touched.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused imports, undefined names, etc.)
+    "I",   # isort (import sorting)
+    "B",   # flake8-bugbear (likely bugs / design issues)
+    "UP",  # pyupgrade (dated syntax)
+]
+ignore = [
+    "E501",  # line too long — many narration / prompt strings legitimately exceed 100 cols
+    "E731",  # lambda assignments — sometimes used for tiny helpers in scripts
+    "B008",  # function call in default arg — used by some Manim helpers
+]
+
+# Per-file overrides
+[tool.ruff.lint.per-file-ignores]
+"src/manim_templates/**/*.py" = [
+    "F405",  # `from manim import *` star imports — Manim convention
+    "F403",  # star import allowed
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

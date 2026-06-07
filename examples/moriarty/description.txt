@@ -1,0 +1,49 @@
+モリアーティ教授 ── 二項定理と小惑星の力学（フィクション）
+
+本動画はフィクションです。
+シャーロック・ホームズの宿敵モリアーティ教授は、
+21歳で二項定理に関する論文を書き、
+後に『小惑星の力学』を著したとされる架空の数学者です。
+ニュートンが発見した一般化二項定理（実数指数への拡張、|x|<1で収束する無限級数）と、
+ガウスの最小二乗法（観測値と理論値の二乗和最小化）による小惑星軌道計算という、
+架空の数学者の業績の背景にある実在の数学を紹介します。
+
+数学者の人生と業績を追うドキュメンタリーチャンネル「数学史記」。
+
+0:00 導入
+0:42 コナン・ドイルが描いた数学者
+2:58 二項定理から天体軌道計算へ
+6:21 現代に生きる理論
+
+【音声合成】
+VOICEVOX:青山龍星
+https://voicevox.hiroshiba.jp/
+
+【BGM】
+Angel's Dream - Aakash Gandhi（YouTube Audio Library）
+
+【映像素材】
+AI生成画像：Google Gemini
+数式アニメーション：Manim Community（https://www.manim.community/）
+
+【画像クレジット】
+本編およびサムネイルの肖像は、架空人物のため参照写真を用いず、AI（Google Gemini）で油絵風に生成しました。
+
+【主要参考文献】
+Doyle, A. C. "The Final Problem" *The Strand Magazine* (December 1893)
+Doyle, A. C. *The Valley of Fear* (Smith, Elder & Co., 1915, serialized 1914-1915)
+Baring-Gould, W. S. *The Annotated Sherlock Holmes* (Clarkson N. Potter, 1967)
+Klinger, L. S. *The New Annotated Sherlock Holmes*, Vol. III: The Novels (W. W. Norton, 2005)
+Schaefer, B. E. "Sherlock Holmes and Some Astronomical Connections" *Journal of the British Astronomical Association* 103(1), 30-34 (1993)
+Jenkins, A. "On the Title of Moriarty's *Dynamics of an Asteroid*" arXiv:1302.5855v2 (2014)
+Anderson, P. "A Treatise on the Binomial Theorem" *Baker Street Journal* 5(1), 13-18 (1955); reprinted in Shreffler, P. A. (ed.) *Sherlock Holmes by Gas-Lamp* (Fordham UP, 1989)
+Asimov, I. "The Ultimate Crime" in *More Tales of the Black Widowers* (Doubleday, 1976)
+Newton, I. *De Analysi per Aequationes Numero Terminorum Infinitas* (草稿 1669, 刊行 1711 by William Jones)
+Cauchy, A.-L. *Cours d'analyse de l'École Royale Polytechnique* (1821)
+Abel, N. H. "Recherches sur la série..." *Crelle's Journal* 1 (1826), 311-339
+Gauss, C. F. *Theoria motus corporum coelestium* (1809)
+Newcomb, S. "On the Secular Variations and Mutual Relations of the Orbits of Asteroids" *Smithsonian Contributions to Knowledge* 12 (1860)
+Kirkwood, D. "On the Theory of Meteors" *Proc. AAAS* 15, 8-14 (1866)
+MacTutor History of Mathematics: Newton, Cauchy, Abel, Gauss, Newcomb
+
+#数学 #数学史 #数学者 #ドキュメンタリー #教育 #モリアーティ教授 #シャーロック・ホームズ #コナン・ドイル #二項定理 #ニュートン #最小二乗法 #小惑星の力学

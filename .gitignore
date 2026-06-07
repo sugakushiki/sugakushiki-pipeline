@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual env
+venv/
+.venv/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pipeline outputs (not committed)
+episodes/
+
+# Manim cache
+media/
+_manim_media/
+
+# Temporary files
+*temp_*
+*tmp*.txt
+*_raw_attempt*.txt
+_proncheck_cache.json
+*.log
+
+# Test outputs
+test_output/
+
+# Build artifacts
+*.mp4
+*.wav
+*.mp3
+
+# Note: _font.ttc IS tracked (OFL 1.1 bundled with the project).
