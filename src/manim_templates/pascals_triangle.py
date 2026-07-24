@@ -44,7 +44,6 @@ from math import comb
 
 from manim import (
     Arrow,
-    Create,
     FadeIn,
     MathTex,
     Rectangle,
@@ -104,7 +103,7 @@ class PascalsTriangle(Scene):
     def _cell(self, value, n, k, color=ACCENT_CYAN, font_size=22):
         # Text(font=FONT) is rendered via cairo (no LaTeX subprocess), making
         # 28 cells × FadeIn complete in seconds instead of timing out at 240s.
-        # Day 20 ある回 fix: math_11/12 (binomial_highlight, probability_link)
+        # ある回 fix: math_11/12 (binomial_highlight, probability_link)
         # previously hit 240s timeout with MathTex(str(value)) × 28 cells.
         cell = Text(str(value), font=FONT, font_size=font_size, color=color)
         cell.move_to(_cell_position(n, k))
@@ -134,7 +133,8 @@ class PascalsTriangle(Scene):
 
         identity = MathTex(
             r"C(n,k) = C(n{-}1,k{-}1) + C(n{-}1,k)",
-            font_size=22, color=ACCENT_PINK,
+            font_size=22,
+            color=ACCENT_PINK,
         )
         identity.move_to([0, 2.65, 0])
         self.play(FadeIn(identity), run_time=0.5)
@@ -154,18 +154,24 @@ class PascalsTriangle(Scene):
                     a1 = Arrow(
                         start=[parent_left[0], parent_left[1] - 0.12, 0],
                         end=[target_pos[0] - 0.08, target_pos[1] + 0.12, 0],
-                        color=ACCENT_PINK, buff=0.04, stroke_width=2.0,
+                        color=ACCENT_PINK,
+                        buff=0.04,
+                        stroke_width=2.0,
                         max_tip_length_to_length_ratio=0.18,
                     )
                     a2 = Arrow(
                         start=[parent_right[0], parent_right[1] - 0.12, 0],
                         end=[target_pos[0] + 0.08, target_pos[1] + 0.12, 0],
-                        color=ACCENT_PINK, buff=0.04, stroke_width=2.0,
+                        color=ACCENT_PINK,
+                        buff=0.04,
+                        stroke_width=2.0,
                         max_tip_length_to_length_ratio=0.18,
                     )
                     arrows = [a1, a2]
             if arrows:
-                self.play(*[FadeIn(c) for c in new_cells], *[FadeIn(a) for a in arrows], run_time=0.55)
+                self.play(
+                    *[FadeIn(c) for c in new_cells], *[FadeIn(a) for a in arrows], run_time=0.55
+                )
             else:
                 self.play(*[FadeIn(c) for c in new_cells], run_time=0.45)
             for k, c in enumerate(new_cells):
@@ -190,7 +196,7 @@ class PascalsTriangle(Scene):
         # don't overlap with rows 5, 6.
         cells = self._full_triangle(color=TEXT_DIM, max_rows=5)
         # Use VGroup for one-shot FadeIn instead of 28 individual FadeIns
-        # (reduces Manim animation overhead). Day 20 ある回 fix.
+        # (reduces Manim animation overhead). ある回 fix.
         self.play(FadeIn(VGroup(*cells.values())), run_time=0.9)
 
         # Highlight row n = 4: cells (4,0)..(4,4) values 1, 4, 6, 4, 1.
@@ -199,15 +205,15 @@ class PascalsTriangle(Scene):
         # ValueError: operands could not be broadcast together (60,3) (0,)).
         target_row = 4
         self.play(
-            *[cells[(target_row, k)].animate.set_color(ACCENT_GOLD)
-              for k in range(target_row + 1)],
+            *[cells[(target_row, k)].animate.set_color(ACCENT_GOLD) for k in range(target_row + 1)],
             run_time=0.5,
         )
 
         # Below triangle, show binomial expansion
         expansion = MathTex(
             r"(x+y)^4 = x^4 + 4 x^3 y + 6 x^2 y^2 + 4 x y^3 + y^4",
-            font_size=26, color=TEXT_WHITE,
+            font_size=26,
+            color=TEXT_WHITE,
         )
         expansion.move_to([0, -1.20, 0])
         self.play(FadeIn(expansion), run_time=0.7)
@@ -215,7 +221,8 @@ class PascalsTriangle(Scene):
         # Coefficient labels colored gold
         coeffs_label = MathTex(
             r"C(4,0){=}1,\;C(4,1){=}4,\;C(4,2){=}6,\;C(4,3){=}4,\;C(4,4){=}1",
-            font_size=22, color=ACCENT_GOLD,
+            font_size=22,
+            color=ACCENT_GOLD,
         )
         coeffs_label.move_to([0, -1.85, 0])
         self.play(FadeIn(coeffs_label), run_time=0.6)
@@ -239,8 +246,7 @@ class PascalsTriangle(Scene):
         # Text(font=FONT).copy()+shift broadcast error on this Manim version).
         target_row = 4
         self.play(
-            *[cells[(target_row, k)].animate.set_color(ACCENT_GOLD)
-              for k in range(target_row + 1)],
+            *[cells[(target_row, k)].animate.set_color(ACCENT_GOLD) for k in range(target_row + 1)],
             run_time=0.5,
         )
 
@@ -256,8 +262,11 @@ class PascalsTriangle(Scene):
             value = comb(target_row, k)
             bar_h = value * bar_unit
             bar = Rectangle(
-                width=bar_width, height=bar_h,
-                color=ACCENT_CYAN, fill_color=ACCENT_CYAN, fill_opacity=0.65,
+                width=bar_width,
+                height=bar_h,
+                color=ACCENT_CYAN,
+                fill_color=ACCENT_CYAN,
+                fill_opacity=0.65,
                 stroke_width=1.4,
             )
             bar_x = (k - target_row / 2.0) * bar_spacing
@@ -267,11 +276,13 @@ class PascalsTriangle(Scene):
             lbl.move_to([bar_x, bar_base_y + bar_h + 0.20, 0])
             prob_labels.add(lbl)
 
-        self.play(*[FadeIn(b) for b in bars], *[FadeIn(l) for l in prob_labels], run_time=0.9)
+        self.play(*[FadeIn(b) for b in bars], *[FadeIn(lab) for lab in prob_labels], run_time=0.9)
 
         msg = Text(
             "k 回表が出る確率 = C(4,k) / 2^4",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.92, 0])
         self.play(FadeIn(msg), run_time=0.6)

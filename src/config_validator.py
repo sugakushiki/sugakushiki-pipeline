@@ -5,7 +5,7 @@ Validates required fields, types, value constraints, and warns about
 recommended-but-optional fields.
 
 Usage (standalone):
-    python config_validator.py episodes/006_shannon/episode_config.json
+    python config_validator.py examples/moriarty/episode_config.json
 
 Usage (from pipeline.py):
     from config_validator import validate_config
@@ -92,7 +92,6 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
     """
     errors = []
     warnings = []
-    label = os.path.basename(config_path) if config_path else "config"
 
     # ── 1. Required fields + type check ─────────────────────────────────
     for field, expected_type in REQUIRED_FIELDS.items():
@@ -119,10 +118,58 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
             )
 
     # target_duration_minutes range
+    # Regular episodes are 10-19 min (VIDEO_SPEC canonical). The ceiling here is
+    # 22, not 19, to accommodate the documented long-form exception. The format discipline
+    # for regular episodes is enforced by VIDEO_SPEC, not by this sanity bound.
     tdm = config.get("target_duration_minutes")
     if isinstance(tdm, (int, float)):
-        if not (5 <= tdm <= 20):
-            errors.append(f"'target_duration_minutes' が範囲外です: {tdm} (期待: 5〜20)")
+        if not (5 <= tdm <= 22):
+            errors.append(f"'target_duration_minutes' が範囲外です: {tdm} (期待: 5〜22)")
+
+    # optional per-episode 読み上げ速度 override (VOICEVOX speedScale)。
+    # 既定 0.87 (audio_generator.SPEED_SCALE)。実用域を外れた値は誤設定の可能性が
+    # 高い (極端だと聴取不能) ので advisory WARN。hard error にしないのは tuning 値だから。
+    ss = config.get("speed_scale")
+    if ss is not None:
+        if not isinstance(ss, (int, float)):
+            errors.append(f"'speed_scale' は数値である必要があります (実際: {type(ss).__name__})")
+        elif not (0.5 <= ss <= 1.5):
+            warnings.append(
+                f"'speed_scale' が実用域外です: {ss} (推奨 0.5〜1.5、既定 0.87)。"
+                "意図的でなければ確認してください"
+            )
+
+    # Optional TTS engine block (Cloud TTS support). Absent = VOICEVOX (default),
+    # so validate only when present (.get(), backward-compatible with every
+    # existing config). Shape: {"engine": "voicevox"|"cloud", "voice": str,
+    # "rate": float}. engine/voice are hard errors (misconfig -> wrong backend);
+    # rate is advisory (a tuning value) unless the type is wrong.
+    tts = config.get("tts")
+    if tts is not None:
+        if not isinstance(tts, dict):
+            errors.append(f"'tts' は dict である必要があります (実際: {type(tts).__name__})")
+        else:
+            engine = tts.get("engine")
+            if engine is not None and engine not in ("voicevox", "cloud"):
+                errors.append(
+                    f"'tts.engine' が不正です: '{engine}' (期待: 'voicevox' または 'cloud')"
+                )
+            voice = tts.get("voice")
+            if voice is not None and not isinstance(voice, str):
+                errors.append(
+                    f"'tts.voice' は文字列である必要があります (実際: {type(voice).__name__})"
+                )
+            rate = tts.get("rate")
+            if rate is not None:
+                if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+                    errors.append(
+                        f"'tts.rate' は数値である必要があります (実際: {type(rate).__name__})"
+                    )
+                elif not (0.25 <= rate <= 4.0):
+                    warnings.append(
+                        f"'tts.rate' が Cloud TTS の実用域外です: {rate} "
+                        "(speakingRate 有効域 0.25〜4.0、既定 0.90)。意図的でなければ確認してください"
+                    )
 
     # verified_facts must be dict (NOT list) — past crash prevention
     vf = config.get("verified_facts")
@@ -193,6 +240,18 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
         if not bgm_file:
             warnings.append("'bgm.file' が未設定です (BGMなしでビルドされます)")
 
+    # voicevox_dictionary_additions is a deprecated / dead field:
+    # no code in src/ or scripts/ consumes it. Pronunciations must be registered
+    # in src/voicevox_dict.json (the only DICT_FILE that register_user_dict reads).
+    # Authoring readings here is a silent no-op.
+    vda = config.get("voicevox_dictionary_additions")
+    if vda:
+        n = len(vda) if isinstance(vda, (list, dict)) else 1
+        warnings.append(
+            f"'voicevox_dictionary_additions' ({n} 件) は廃止フィールドで、どのコードからも"
+            f"読まれません (no-op)。読み辞書は src/voicevox_dict.json に登録してください"
+        )
+
     # wikimedia_photo_urls schema check:
     # Must be a flat list of URL strings. The dict form (e.g.
     # `{"person": [...]}`) crashes wikimedia_fetcher.py with KeyError: 0
@@ -216,11 +275,11 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
             non_str = [i for i, u in enumerate(wpu) if not isinstance(u, str)]
             if non_str:
                 errors.append(
-                    f"'wikimedia_photo_urls' に非文字列要素があります "
-                    f"(index: {non_str[:5]})"
+                    f"'wikimedia_photo_urls' に非文字列要素があります (index: {non_str[:5]})"
                 )
             non_url = [
-                i for i, u in enumerate(wpu)
+                i
+                for i, u in enumerate(wpu)
                 if isinstance(u, str) and u and not u.startswith(("http://", "https://"))
             ]
             if non_url:
@@ -260,6 +319,31 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
             actual = type(config[field]).__name__
             warnings.append(
                 f"'{field}' の型が想定と異なります: 期待={expected_type.__name__}, 実際={actual}"
+            )
+
+    # ── 実写参照 gate-off ガード ──────────────────────────────────
+    # image_generator gates reference-based portrait conditioning on birth_year:
+    #   use_reference = bool(ref_photos) and birth_year and backend == "flash"
+    # birth_year comes from config["birth_year"] OR a year parsed out of
+    # verified_facts["birth"]. If a real subject reference photo was supplied
+    # (wikimedia_photo_urls non-empty) but NO birth_year is resolvable, the gate
+    # is silently OFF and every subject portrait is generated TEXT-ONLY (the photo
+    # is fetched but never passed to Gemini -- less faithful). ある回 shipped this
+    # way until a user spotted it; the only signal was one buried log line. Cheap
+    # early WARN so the whole reason for fetching a reference photo is not defeated.
+    photo_urls = config.get("wikimedia_photo_urls")
+    if isinstance(photo_urls, list) and len(photo_urls) > 0:
+        birth_year_ok = bool(config.get("birth_year"))
+        if not birth_year_ok and isinstance(config.get("verified_facts"), dict):
+            birth_txt = get_verified_fact_text(config["verified_facts"].get("birth", ""))
+            if re.search(r"(1[89]\d{2}|20[0-3]\d)", birth_txt):
+                birth_year_ok = True
+        if not birth_year_ok:
+            warnings.append(
+                "実写参照 (wikimedia_photo_urls) があるのに birth_year が解決できません "
+                "→ 参照 gate OFF で主題肖像が全て text-only 生成されます (実写に紐づかず "
+                "忠実度低下)。top-level 'birth_year': YYYY を追加するか "
+                "verified_facts['birth'] に生年を含めてください (image_generator.py:1754)"
             )
 
     return errors, warnings

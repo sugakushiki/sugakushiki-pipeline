@@ -81,7 +81,9 @@ def main() -> int:
             f"       expected line like: **通常回の尺: 10〜19 分**"
         )
         return 1
-    print(f"[INFO] SSOT canonical: {canonical[0]}〜{canonical[1]} 分 (from {os.path.relpath(SSOT_PATH, REPO_ROOT)})")
+    print(
+        f"[INFO] SSOT canonical: {canonical[0]}〜{canonical[1]} 分 (from {os.path.relpath(SSOT_PATH, REPO_ROOT)})"
+    )
 
     failures: list[str] = []
     for rel in TRACKED_DOCS:
@@ -111,7 +113,9 @@ def main() -> int:
             print(f"  - {line}")
         return 1
 
-    print(f"[PASS] all {len(TRACKED_DOCS)} tracked docs mention canonical {canonical[0]}〜{canonical[1]} 分.")
+    print(
+        f"[PASS] all {len(TRACKED_DOCS)} tracked docs mention canonical {canonical[0]}〜{canonical[1]} 分."
+    )
     return 0
 
 

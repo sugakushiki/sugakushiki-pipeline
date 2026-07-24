@@ -112,7 +112,6 @@ class PartitionSmallN(Scene):
 
         # Arrange in rows
         cols = min(5, len(parts))
-        rows_needed = (len(parts) + cols - 1) // cols
         for i, (d, lbl) in enumerate(zip(diagrams, labels, strict=False)):
             row = i // cols
             col = i % cols
@@ -159,7 +158,7 @@ class PartitionGrowth(Scene):
 
         # Build entries one by one
         entries = VGroup()
-        for idx, (n, pn) in enumerate(pn_data):
+        for _idx, (n, pn) in enumerate(pn_data):
             if pn < 10000:
                 pn_str = str(pn)
             else:
@@ -227,11 +226,11 @@ class PartitionTable(Scene):
             entry = table.get_entries((i + 2, 2))
             entry.set_color(highlight_color)
 
-        title = Text("n", font=FONT, font_size=18, color=TEXT_DIM)
-
         self.play(FadeIn(table), run_time=1.5)
         wait_time = max(1.0, duration - 3)
         self.wait(wait_time)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -240,7 +239,6 @@ LINT_FACTUAL_CLAIMS = {
     "growth": {"people": [], "years": []},
     "table": {"people": [], "years": []},
 }
-
 
 
 # ---------------------------------------------------------------------------

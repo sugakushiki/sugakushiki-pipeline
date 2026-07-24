@@ -5,7 +5,7 @@ Generates description.txt with:
   - Episode title + intro text (from scene_definition.json description block)
   - Channel tagline
   - Auto-calculated chapter timestamps with subtitles (from timing.json + description block)
-  - Voice synthesis credit (VOICEVOX)
+  - Voice synthesis credit (VOICEVOX only -- required by its terms; Cloud TTS needs none)
   - BGM credit (from episode_config.json)
   - Visual asset credits (auto-detected from scene types)
   - Wikimedia photo attribution
@@ -18,11 +18,11 @@ Data priority (LLM-generated > legacy fallback):
   - Tags:                scene_def.description.tags > config.tags
 
 Usage:
-    python src/credits_generator.py episodes/001_erdos/episode_config.json
-    python src/credits_generator.py episodes/001_erdos/episode_config.json --intro-pause 1.0
+    python src/credits_generator.py examples/moriarty/episode_config.json
+    python src/credits_generator.py examples/moriarty/episode_config.json --intro-pause 1.0
 
 Output:
-    episodes/001_erdos/description.txt
+    examples/moriarty/description.txt
 
 Sources:
     - episode_config.json    : title, hook (fallback), BGM, tags (fallback)
@@ -41,6 +41,13 @@ def load_json(path: str) -> dict:
         return {}
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _reference_kind(death_year) -> str:
+    """Guard-C: 参照肖像の呼称。写真技術 (~1839) 以前に没した人物は肖像画/版画
+    しか存在しないので「肖像画」、以降は「肖像写真」。credit の「肖像写真」誤記を根絶
+。"""
+    return "肖像画" if isinstance(death_year, int) and death_year < 1840 else "肖像写真"
 
 
 def _extract_urls(text: str) -> list[str]:
@@ -107,9 +114,9 @@ def validate_reference_urls(text: str, timeout: float = 5.0) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Day 21 強化 H1: reference URL root-domain 検出 lint
+# 強化 H1: reference URL root-domain 検出 lint
 #
-# Day 21 ある回 で発覚した failure mode:
+# ある回 で発覚した failure mode:
 #   `https://www.iwanami.co.jp/` `https://www.japan-acad.go.jp/`
 #   `https://www.city.motosu.lg.jp/` の 3 件 root URL が `validate_reference_urls()`
 #   の HTTP 200 check を通って silent PASS。実際は Takagi 個別ページではなく
@@ -143,13 +150,13 @@ def _is_root_url(url: str) -> bool:
         parsed = _up.urlparse(url)
     except Exception:
         return False
-    # Day 21 強化 H1 (再 verify): URL 不完全形 (空文字 / scheme のみ "https://") を
+    # 強化 H1 (再 verify): URL 不完全形 (空文字 / scheme のみ "https://") を
     # root と誤判定しないため netloc を要求。_extract_urls regex 経由なら不要だが
     # 関数を public で使う caller に対する defensive guard。
     if not parsed.netloc:
         return False
     path = (parsed.path or "").strip()
-    # Day 21 強化 H1 (refined): query/fragment 含む URL は root とみなさない
+    # 強化 H1 (refined): query/fragment 含む URL は root とみなさない
     # (path="/" でも ?q=foo や #section は意味のある navigation)
     has_query = bool(parsed.query)
     has_fragment = bool(parsed.fragment)
@@ -173,7 +180,7 @@ def detect_root_urls(text: str) -> list[str]:
 
 
 def detect_root_urls_in_references(references: list[str]) -> list[str]:
-    """Day 21 H1 (refined): scope root URL lint to references list only.
+    """H1 (refined): scope root URL lint to references list only.
 
     Avoids false positive on tool homepages (VOICEVOX / Manim Community 等)
     which legitimately link to project home in 【音声合成】/【映像素材】
@@ -214,7 +221,7 @@ def calculate_chapters(
     Args:
         chapter_subtitles: Optional dict mapping section_type (intro/person/math/closing)
                           to subtitle string. From scene_def["description"]["chapter_subtitles"].
-        chapter_overrides: Day 21 強化 M1. Optional list of explicit chapters
+        chapter_overrides: 強化 M1. Optional list of explicit chapters
                           [{"scene_id": "math_07", "label": "..."}, ...] or
                           [{"timestamp": "9:47", "label": "..."}, ...].
                           When provided, fully replaces auto-section-based chapters.
@@ -255,7 +262,7 @@ def calculate_chapters(
         pause_after = st.get("pause_after", 0.5)
         current_time += duration + pause_after
 
-    # ── Day 21 強化 M1: chapter_overrides 優先処理 ──────────
+    # ── 強化 M1: chapter_overrides 優先処理 ──────────
     # 用途: section-1:1 chapter で表現できない sub-section 分割。
     # scene_id form: 該当 scene の start を timing から auto-resolve。
     #   audio 再生成で scene 開始がずれても自動追随。
@@ -281,7 +288,7 @@ def calculate_chapters(
             else:
                 continue
             ch_out.append({"timestamp": ts_val, "label": label})
-        # Day 21 強化 M1 (refined): 全 override が無効 / YouTube 最小 3 章未満の
+        # 強化 M1 (refined): 全 override が無効 / YouTube 最小 3 章未満の
         # 場合 auto-section に fallback。chapter_overrides が壊れて empty で
         # description silent 空 chapter block 出力する degradation を防ぐ。
         if len(ch_out) < 3:
@@ -292,7 +299,7 @@ def calculate_chapters(
             )
             # fall through to auto-section logic below
         else:
-            # Day 21 強化 M1 (再 verify): chronological order check
+            # 強化 M1 (再 verify): chronological order check
             # YouTube は chapter が time 順でないと reject する。out-of-order
             # 検出時は WARN のみ (auto-sort はしない、user の入力ミスを silent
             # masking しない方針)。
@@ -433,14 +440,29 @@ def generate_description(
             lines.append(f"{ch['timestamp']} {ch['label']}")
         lines.append("")
 
-    # ── 音声合成クレジット ────────────────────────────────
+    # ── 音声合成クレジット (engine-aware) ─────────────────
+    # VOICEVOX REQUIRES crediting the voice library/character per its terms of use,
+    # so a VOICEVOX build must show it. Google Cloud TTS is a paid API with NO
+    # output-attribution obligation, so a cloud build shows NOTHING here. Engine is read from timing.generation_mode (what was
+    # actually synthesized: "voicevox" / "cloud-tts-..."), falling back to
+    # config tts.engine, then voicevox for legacy episodes with neither.
     credits = scene_def.get("credits", {})
-    voicevox = credits.get("voicevox", "")
-    if voicevox:
-        lines.append("【音声合成】")
-        lines.append(voicevox)
-        lines.append("https://voicevox.hiroshiba.jp/")
-        lines.append("")
+    gen_mode = (timing or {}).get("generation_mode", "")
+    if gen_mode.startswith("cloud"):
+        engine = "cloud"
+    elif gen_mode == "voicevox":
+        engine = "voicevox"
+    else:
+        engine = config.get("tts", {}).get("engine", "voicevox")
+
+    if engine == "voicevox":
+        voicevox = credits.get("voicevox", "")
+        if voicevox:
+            lines.append("【音声合成】")
+            lines.append(voicevox)
+            lines.append("https://voicevox.hiroshiba.jp/")
+            lines.append("")
+    # engine == "cloud": no 音声合成 credit (Google Cloud TTS needs no attribution)
 
     # ── BGMクレジット ─────────────────────────────────────
     bgm_config = config.get("bgm", {})
@@ -468,7 +490,7 @@ def generate_description(
         lines.append("")
 
     # ── 画像クレジット（Wikimedia）────────────────────────
-    # Day 17 fix : only credit photos that were ACTUALLY ASSIGNED to
+    # fix: only credit photos that were ACTUALLY ASSIGNED to
     # a scene. wikimedia_fetcher writes photos with scene_id=null when they
     # were downloaded but not assigned during assign_photos_to_scenes(), and
     # downstream image_generator never uses such photos as references.
@@ -476,7 +498,7 @@ def generate_description(
     # produced misleading credits in ある回 (no scene assigned, but the 3
     # name-collision photos like 柳惠千 still credited).
     #
-    # Day 21 強化 H3 : scene_id=null AND usage=="reference" のケース
+    # 強化 H3: scene_id=null AND usage=="reference" のケース
     # を credit 対象に追加。近代人物 (高木・ヴァイエルシュトラス等) は
     # use_reference: true で wiki photo を Gemini reference として使うが
     # scene_id 直接割当はしない (= scene_id null + usage reference)。
@@ -510,21 +532,24 @@ def generate_description(
         )
     if kept_photos:
         lines.append("【画像クレジット】")
-        # Day 21 強化 H3: split scene-direct vs reference photos for
+        # 強化 H3: split scene-direct vs reference photos for
         # transparency. reference photos are not displayed verbatim; they
         # served as Gemini reference for AI-generated portraits.
-        direct_photos = [
-            p for p in kept_photos if p.get("scene_id") not in (None, "", "null")
-        ]
+        direct_photos = [p for p in kept_photos if p.get("scene_id") not in (None, "", "null")]
         ref_photos = [
-            p for p in kept_photos
+            p
+            for p in kept_photos
             if p.get("scene_id") in (None, "", "null")
             and (p.get("usage") or "").lower() == "reference"
         ]
         if ref_photos:
+            # Guard-C: credit the reference as 肖像画 for a pre-photography
+            # subject. The pre-photo
+            # WARN below is now a backstop, not the fix. See _reference_kind.
+            _ref_kind = _reference_kind(config.get("death_year"))
             lines.append(
-                "本編およびサムネイルの肖像は、以下のパブリックドメイン写真を参照として"
-                "AI（Google Gemini）で油絵風に生成しました。"
+                f"本編およびサムネイルの肖像画は、以下の{_ref_kind}を参照として、"
+                "AI（Google Gemini）で油絵風に生成しました（原著作者とライセンスは下記のとおり）。"
             )
             for photo in ref_photos:
                 credit = photo.get("credit_text", "")
@@ -532,7 +557,7 @@ def generate_description(
                     lines.append(f"- {credit}")
             if direct_photos:
                 lines.append("")
-                lines.append("以下の写真は本編で直接使用しました。")
+                lines.append("以下の画像は本編で直接使用しました。")
         for photo in direct_photos:
             credit = photo.get("credit_text", "")
             url = photo.get("commons_url", "")
@@ -544,6 +569,17 @@ def generate_description(
             if url:
                 lines.append(url)
         lines.append("")
+
+    # pre-photo クレジットガード: 写真技術 (1839 年~) 以前に
+    # 没した人物に「写真」表記が出ていないか検出。版画/肖像画を「写真」と
+    # 誤記する事故を防ぐ (テンプレは肖像/画像に是正済。これは再発防止の網)。
+    death_year = config.get("death_year")
+    if isinstance(death_year, int) and death_year < 1840:
+        if any("写真" in ln for ln in lines):
+            print(
+                f"  [WARN] death_year={death_year} は写真技術以前。credit に "
+                "'写真' が含まれます -- 版画/肖像画は '肖像' 等へ修正推奨"
+            )
 
     # ── 参考文献 ──────────────────────────────────────────
     # Priority: episode_config.references (human-curated, full bibliographic
@@ -573,6 +609,60 @@ def generate_description(
         lines.append(base_tags)
 
     return "\n".join(lines)
+
+
+def description_drift(
+    episode_dir: str,
+    config: dict,
+    scene_def: dict,
+    wiki_credits: dict,
+    timing: dict,
+    intro_pause: float | None = None,
+) -> str:
+    """Return a short summary if description.txt diverges from what
+    generate_description() would produce from source, else "" (in sync).
+
+    Content-level counterpart to the mtime staleness check (pipeline Output
+    Verification / post_build_verify G6). mtime only knows "source is newer";
+    this knows the shipped text actually differs -- catching stale title /
+    chapter / timestamp / credit content, hand-edits, and stale chapter
+    timestamps left after an audio re-timing.
+
+    intro_pause defaults to config bgm.intro_pause (what the build actually uses)
+    so chapter timestamps are compared at the real offset. Callers pass already-
+    loaded config/scene_def/timing/wiki_credits; any generate_description error
+    propagates to the caller (which treats the check as unavailable).
+    """
+    import contextlib
+    import difflib
+    import io
+
+    desc_path = os.path.join(episode_dir, "description.txt")
+    if not os.path.exists(desc_path):
+        return ""
+    if intro_pause is None:
+        intro_pause = config.get("bgm", {}).get("intro_pause", 1.0)
+
+    with open(desc_path, encoding="utf-8") as f:
+        current = f.read().rstrip().splitlines()
+    # Suppress generate_description's own advisory prints during this re-run.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        regenerated = (
+            generate_description(episode_dir, config, scene_def, wiki_credits, timing, intro_pause)
+            .rstrip()
+            .splitlines()
+        )
+    if current == regenerated:
+        return ""
+
+    changed = [
+        ln
+        for ln in difflib.unified_diff(current, regenerated, lineterm="")
+        if ln[:1] in ("+", "-") and not ln.startswith(("+++", "---"))
+    ]
+    shipped = next((ln[1:].strip() for ln in changed if ln.startswith("-")), "")
+    return f'{len(changed)} line(s) differ (e.g. shipped: "{shipped[:70]}")'
 
 
 def main():
@@ -657,11 +747,13 @@ def main():
             else:
                 print("[OK] all reachable")
 
-            # Day 21 強化 H1: root URL lint (HTTP 200 通っても内容不一致を防ぐ)
+            # 強化 H1: root URL lint (HTTP 200 通っても内容不一致を防ぐ)
             # Scope: 【主要参考文献】 のみ (tool homepage は credit 用途で許容)
-            references_for_lint = config.get("references", []) or scene_def.get(
-                "credits", {}
-            ).get("references", []) or []
+            references_for_lint = (
+                config.get("references", [])
+                or scene_def.get("credits", {}).get("references", [])
+                or []
+            )
             root_urls = detect_root_urls_in_references(references_for_lint)
             if root_urls:
                 print(

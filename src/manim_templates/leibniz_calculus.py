@@ -346,8 +346,11 @@ class LeibnizCalculus(Scene):
 
         # Integration arrow: f → F
         int_arrow = Arrow(
-            [-1.6, 1.5, 0], [1.0, 1.5, 0],
-            color=ACCENT_GOLD, stroke_width=4, buff=0.1,
+            [-1.6, 1.5, 0],
+            [1.0, 1.5, 0],
+            color=ACCENT_GOLD,
+            stroke_width=4,
+            buff=0.1,
         )
         int_label = MathTex(r"\int \cdots dx", font_size=26, color=ACCENT_GOLD)
         int_label.next_to(int_arrow, UP, buff=0.15)
@@ -355,8 +358,11 @@ class LeibnizCalculus(Scene):
 
         # Differentiation arrow: F → f
         diff_arrow = Arrow(
-            [1.0, 0.9, 0], [-1.6, 0.9, 0],
-            color=ACCENT_GOLD, stroke_width=4, buff=0.1,
+            [1.0, 0.9, 0],
+            [-1.6, 0.9, 0],
+            color=ACCENT_GOLD,
+            stroke_width=4,
+            buff=0.1,
         )
         diff_label = MathTex(r"\frac{d}{dx}", font_size=26, color=ACCENT_GOLD)
         diff_label.next_to(diff_arrow, DOWN, buff=0.15)

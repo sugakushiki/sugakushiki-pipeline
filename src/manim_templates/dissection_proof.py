@@ -86,8 +86,14 @@ class DissectionProof(Scene):
     # ------------------------------------------------------------------
     def _sq(self, x, y, s, color, op):
         """Axis-aligned square from bottom-left (x,y), side s."""
-        sq = Polygon([x, y, 0], [x + s, y, 0], [x + s, y + s, 0], [x, y + s, 0],
-                     color=color, stroke_width=2.0)
+        sq = Polygon(
+            [x, y, 0],
+            [x + s, y, 0],
+            [x + s, y + s, 0],
+            [x, y + s, 0],
+            color=color,
+            stroke_width=2.0,
+        )
         sq.set_fill(color, opacity=op)
         return sq
 
@@ -108,30 +114,40 @@ class DissectionProof(Scene):
         title = self._title("出入相補 ── 同じ正方形を 2 通りに分ける")
         self.play(FadeIn(title), run_time=0.6)
 
-        cap = Text("外側の (a＋b)² は同じ。 中の組み替えで a² ＋ b² ＝ c²",
-                   font=FONT, font_size=20, color=TEXT_DIM)
+        cap = Text(
+            "外側の (a＋b)² は同じ。 中の組み替えで a² ＋ b² ＝ c²",
+            font=FONT,
+            font_size=20,
+            color=TEXT_DIM,
+        )
         cap.move_to([0, 2.35, 0])
         self.play(FadeIn(cap), run_time=0.5)
 
         # Display sides
         a = 0.95
         b = 1.30
-        L = a + b   # outer square side
+        L = a + b  # outer square side
 
         # ----- LEFT diagram: (a+b)² = a² + b² + 4 right triangles -----
-        Lx, Ly = -3.85, -1.20    # bottom-left of left outer square
+        Lx, Ly = -3.85, -1.20  # bottom-left of left outer square
 
         left_outer = Polygon(
-            [Lx, Ly, 0], [Lx + L, Ly, 0],
-            [Lx + L, Ly + L, 0], [Lx, Ly + L, 0],
-            color=TEXT_WHITE, stroke_width=2.2,
+            [Lx, Ly, 0],
+            [Lx + L, Ly, 0],
+            [Lx + L, Ly + L, 0],
+            [Lx, Ly + L, 0],
+            color=TEXT_WHITE,
+            stroke_width=2.2,
         )
 
         # a² at bottom-left
         Lsq_a = Polygon(
-            [Lx, Ly, 0], [Lx + a, Ly, 0],
-            [Lx + a, Ly + a, 0], [Lx, Ly + a, 0],
-            color=ACCENT_PINK, stroke_width=1.8,
+            [Lx, Ly, 0],
+            [Lx + a, Ly, 0],
+            [Lx + a, Ly + a, 0],
+            [Lx, Ly + a, 0],
+            color=ACCENT_PINK,
+            stroke_width=1.8,
         )
         Lsq_a.set_fill(ACCENT_PINK, opacity=0.34)
         Lla = MathTex(r"a^2", font_size=26, color=ACCENT_PINK)
@@ -139,9 +155,12 @@ class DissectionProof(Scene):
 
         # b² at top-right
         Lsq_b = Polygon(
-            [Lx + a, Ly + a, 0], [Lx + L, Ly + a, 0],
-            [Lx + L, Ly + L, 0], [Lx + a, Ly + L, 0],
-            color=ACCENT_CYAN, stroke_width=1.8,
+            [Lx + a, Ly + a, 0],
+            [Lx + L, Ly + a, 0],
+            [Lx + L, Ly + L, 0],
+            [Lx + a, Ly + L, 0],
+            color=ACCENT_CYAN,
+            stroke_width=1.8,
         )
         Lsq_b.set_fill(ACCENT_CYAN, opacity=0.34)
         Llb = MathTex(r"b^2", font_size=26, color=ACCENT_CYAN)
@@ -149,37 +168,48 @@ class DissectionProof(Scene):
 
         # Bottom-right a×b rect split into 2 triangles by diagonal (a,0)-(a+b,a)
         Lt_br_lo = Polygon(
-            [Lx + a, Ly, 0], [Lx + L, Ly, 0], [Lx + L, Ly + a, 0],
-            color=ACCENT_GOLD, stroke_width=1.4,
+            [Lx + a, Ly, 0],
+            [Lx + L, Ly, 0],
+            [Lx + L, Ly + a, 0],
+            color=ACCENT_GOLD,
+            stroke_width=1.4,
         )
         Lt_br_lo.set_fill(ACCENT_GOLD, opacity=0.30)
         Lt_br_up = Polygon(
-            [Lx + a, Ly, 0], [Lx + L, Ly + a, 0], [Lx + a, Ly + a, 0],
-            color=ACCENT_GOLD, stroke_width=1.4,
+            [Lx + a, Ly, 0],
+            [Lx + L, Ly + a, 0],
+            [Lx + a, Ly + a, 0],
+            color=ACCENT_GOLD,
+            stroke_width=1.4,
         )
         Lt_br_up.set_fill(ACCENT_GOLD, opacity=0.18)
 
         # Top-left a×b rect split into 2 triangles by diagonal (0,a)-(a,a+b)
         Lt_tl_lo = Polygon(
-            [Lx, Ly + a, 0], [Lx + a, Ly + a, 0], [Lx + a, Ly + L, 0],
-            color=ACCENT_GOLD, stroke_width=1.4,
+            [Lx, Ly + a, 0],
+            [Lx + a, Ly + a, 0],
+            [Lx + a, Ly + L, 0],
+            color=ACCENT_GOLD,
+            stroke_width=1.4,
         )
         Lt_tl_lo.set_fill(ACCENT_GOLD, opacity=0.30)
         Lt_tl_up = Polygon(
-            [Lx, Ly + a, 0], [Lx + a, Ly + L, 0], [Lx, Ly + L, 0],
-            color=ACCENT_GOLD, stroke_width=1.4,
+            [Lx, Ly + a, 0],
+            [Lx + a, Ly + L, 0],
+            [Lx, Ly + L, 0],
+            color=ACCENT_GOLD,
+            stroke_width=1.4,
         )
         Lt_tl_up.set_fill(ACCENT_GOLD, opacity=0.18)
 
-        left_caption = Text("a² ＋ b² ＋ 4 直角三角形",
-                            font=FONT, font_size=16, color=TEXT_WHITE)
+        left_caption = Text("a² ＋ b² ＋ 4 直角三角形", font=FONT, font_size=16, color=TEXT_WHITE)
         left_caption.move_to([Lx + L / 2, Ly - 0.30, 0])
 
         self.play(FadeIn(left_outer), run_time=0.4)
-        self.play(FadeIn(Lsq_a), FadeIn(Lla),
-                  FadeIn(Lsq_b), FadeIn(Llb), run_time=0.7)
-        self.play(FadeIn(Lt_br_lo), FadeIn(Lt_br_up),
-                  FadeIn(Lt_tl_lo), FadeIn(Lt_tl_up), run_time=0.6)
+        self.play(FadeIn(Lsq_a), FadeIn(Lla), FadeIn(Lsq_b), FadeIn(Llb), run_time=0.7)
+        self.play(
+            FadeIn(Lt_br_lo), FadeIn(Lt_br_up), FadeIn(Lt_tl_lo), FadeIn(Lt_tl_up), run_time=0.6
+        )
         self.play(FadeIn(left_caption), run_time=0.35)
 
         # ----- Arrow in middle -----
@@ -190,20 +220,23 @@ class DissectionProof(Scene):
         self.play(FadeIn(arrow), FadeIn(cut), run_time=0.5)
 
         # ----- RIGHT diagram: (a+b)² = c² + 4 right triangles (windmill) -----
-        Rx, Ry = 1.40, Ly        # same baseline as left
+        Rx, Ry = 1.40, Ly  # same baseline as left
 
         right_outer = Polygon(
-            [Rx, Ry, 0], [Rx + L, Ry, 0],
-            [Rx + L, Ry + L, 0], [Rx, Ry + L, 0],
-            color=TEXT_WHITE, stroke_width=2.2,
+            [Rx, Ry, 0],
+            [Rx + L, Ry, 0],
+            [Rx + L, Ry + L, 0],
+            [Rx, Ry + L, 0],
+            color=TEXT_WHITE,
+            stroke_width=2.2,
         )
 
         # PQRS: marked points on each side, distance b from one corner
         # (each side split into segments of length b then a, going CCW from BL).
-        P = [Rx + b, Ry, 0]              # bottom
-        Q = [Rx + L, Ry + b, 0]          # right
-        R = [Rx + a, Ry + L, 0]          # top   (a from top-left going right -> (a, a+b))
-        S = [Rx, Ry + a, 0]              # left  (a from bottom-left going up -> (0, a))
+        P = [Rx + b, Ry, 0]  # bottom
+        Q = [Rx + L, Ry + b, 0]  # right
+        R = [Rx + a, Ry + L, 0]  # top   (a from top-left going right -> (a, a+b))
+        S = [Rx, Ry + a, 0]  # left  (a from bottom-left going up -> (0, a))
 
         # Tilted c² square in the middle
         tilted_c = Polygon(P, Q, R, S, color=ACCENT_GOLD, stroke_width=2.2)
@@ -213,29 +246,23 @@ class DissectionProof(Scene):
 
         # 4 corner right-triangles (same shape as the 4 in the left diagram)
         # Bottom-left: (0,0)-P-S    legs: b along bottom, a along left
-        Rt_bl = Polygon([Rx, Ry, 0], P, S,
-                        color=ACCENT_GOLD, stroke_width=1.4)
+        Rt_bl = Polygon([Rx, Ry, 0], P, S, color=ACCENT_GOLD, stroke_width=1.4)
         Rt_bl.set_fill(ACCENT_GOLD, opacity=0.18)
         # Bottom-right: P-(L,0)-Q   legs: a along bottom, b along right
-        Rt_br = Polygon(P, [Rx + L, Ry, 0], Q,
-                        color=ACCENT_GOLD, stroke_width=1.4)
+        Rt_br = Polygon(P, [Rx + L, Ry, 0], Q, color=ACCENT_GOLD, stroke_width=1.4)
         Rt_br.set_fill(ACCENT_GOLD, opacity=0.30)
         # Top-right: Q-(L,L)-R   legs: a along right, b along top
-        Rt_tr = Polygon(Q, [Rx + L, Ry + L, 0], R,
-                        color=ACCENT_GOLD, stroke_width=1.4)
+        Rt_tr = Polygon(Q, [Rx + L, Ry + L, 0], R, color=ACCENT_GOLD, stroke_width=1.4)
         Rt_tr.set_fill(ACCENT_GOLD, opacity=0.18)
         # Top-left: R-(0,L)-S    legs: b along top, a along left
-        Rt_tl = Polygon(R, [Rx, Ry + L, 0], S,
-                        color=ACCENT_GOLD, stroke_width=1.4)
+        Rt_tl = Polygon(R, [Rx, Ry + L, 0], S, color=ACCENT_GOLD, stroke_width=1.4)
         Rt_tl.set_fill(ACCENT_GOLD, opacity=0.30)
 
-        right_caption = Text("c² ＋ 同じ 4 直角三角形",
-                             font=FONT, font_size=16, color=TEXT_WHITE)
+        right_caption = Text("c² ＋ 同じ 4 直角三角形", font=FONT, font_size=16, color=TEXT_WHITE)
         right_caption.move_to([Rx + L / 2, Ry - 0.30, 0])
 
         self.play(FadeIn(right_outer), run_time=0.4)
-        self.play(FadeIn(Rt_bl), FadeIn(Rt_br),
-                  FadeIn(Rt_tr), FadeIn(Rt_tl), run_time=0.6)
+        self.play(FadeIn(Rt_bl), FadeIn(Rt_br), FadeIn(Rt_tr), FadeIn(Rt_tl), run_time=0.6)
         self.play(FadeIn(tilted_c), FadeIn(Rlc), run_time=0.6)
         self.play(FadeIn(right_caption), run_time=0.35)
 
@@ -243,24 +270,31 @@ class DissectionProof(Scene):
         concl.move_to([0, -1.92, 0])
         self.play(FadeIn(concl), run_time=0.7)
 
-        anim = (0.6 + 0.5
-                + 0.4 + 0.7 + 0.6 + 0.35
-                + 0.5
-                + 0.4 + 0.6 + 0.6 + 0.35
-                + 0.7)
+        anim = 0.6 + 0.5 + 0.4 + 0.7 + 0.6 + 0.35 + 0.5 + 0.4 + 0.6 + 0.6 + 0.35 + 0.7
         self.wait(max(1.5, duration - anim))
 
     # ------------------------------------------------------------------
     def _iso_box(self, x, y, w, h, dx, dy, color, op=0.22):
         """A schematic isometric cuboid (front + top + right faces)."""
-        front = Polygon([x, y, 0], [x + w, y, 0], [x + w, y + h, 0], [x, y + h, 0],
-                        color=color, stroke_width=2)
-        top = Polygon([x, y + h, 0], [x + w, y + h, 0],
-                      [x + w + dx, y + h + dy, 0], [x + dx, y + h + dy, 0],
-                      color=color, stroke_width=2)
-        side = Polygon([x + w, y, 0], [x + w + dx, y + dy, 0],
-                       [x + w + dx, y + h + dy, 0], [x + w, y + h, 0],
-                       color=color, stroke_width=2)
+        front = Polygon(
+            [x, y, 0], [x + w, y, 0], [x + w, y + h, 0], [x, y + h, 0], color=color, stroke_width=2
+        )
+        top = Polygon(
+            [x, y + h, 0],
+            [x + w, y + h, 0],
+            [x + w + dx, y + h + dy, 0],
+            [x + dx, y + h + dy, 0],
+            color=color,
+            stroke_width=2,
+        )
+        side = Polygon(
+            [x + w, y, 0],
+            [x + w + dx, y + dy, 0],
+            [x + w + dx, y + h + dy, 0],
+            [x + w, y + h, 0],
+            color=color,
+            stroke_width=2,
+        )
         for f in (front, top, side):
             f.set_fill(color, opacity=op)
         return VGroup(top, side, front)
@@ -286,7 +320,7 @@ class DissectionProof(Scene):
         B2 = [x + w, y, 0]
         B3 = [x + w + dx, y + dy, 0]
         B4 = [x + dx, y + dy, 0]
-        ap = [x, y + h, 0]                       # apex directly above corner B1
+        ap = [x, y + h, 0]  # apex directly above corner B1
         base = Polygon(B1, B2, B3, B4, color=color, stroke_width=2)
         f1 = Polygon(B1, B2, ap, color=color, stroke_width=2)
         f2 = Polygon(B2, B3, ap, color=color, stroke_width=2)
@@ -330,7 +364,7 @@ class DissectionProof(Scene):
         T1 = [x, y, 0]
         T2 = [x + w, y, 0]
         T3 = [x + w * 0.5 + dx, y + dy, 0]
-        T4 = [x + w * 0.45, y + h, 0]            # apex
+        T4 = [x + w * 0.45, y + h, 0]  # apex
         base = Polygon(T1, T2, T3, color=color, stroke_width=1.5)
         fa = Polygon(T1, T2, T4, color=color, stroke_width=2)
         fb = Polygon(T2, T3, T4, color=color, stroke_width=2)
@@ -430,9 +464,9 @@ class DissectionProof(Scene):
         self.play(FadeIn(box), FadeIn(bl), run_time=0.8)
 
         rows = [
-            (self._iso_prism,   "塹堵 (三角柱)", r"\tfrac12", ACCENT_CYAN, 1.6),
+            (self._iso_prism, "塹堵 (三角柱)", r"\tfrac12", ACCENT_CYAN, 1.6),
             (self._iso_pyramid, "陽馬 (四角錐)", r"\tfrac13", ACCENT_GOLD, 0.45),
-            (self._iso_tetra,   "鱉臑 (四面体)", r"\tfrac16", ACCENT_PINK, -0.7),
+            (self._iso_tetra, "鱉臑 (四面体)", r"\tfrac16", ACCENT_PINK, -0.7),
         ]
         for shape, name, frac, col, y in rows:
             ic = shape(-2.0, y - 0.34, 0.85, 0.7, 0.34, 0.26, col, 0.24)
@@ -469,7 +503,9 @@ class DissectionProof(Scene):
 
         cap = Text(
             "各段: 3/4 (陽馬:鱉臑=2:1) 確定 + 1/4 ピンクは 1 段小さい同じ塹堵 (自相似)",
-            font=FONT, font_size=18, color=TEXT_DIM,
+            font=FONT,
+            font_size=18,
+            color=TEXT_DIM,
         )
         cap.move_to([0, 2.35, 0])
         self.play(FadeIn(cap), run_time=0.5)
@@ -486,7 +522,8 @@ class DissectionProof(Scene):
                 [x_left + cell_w - gap, cy - h / 2, 0],
                 [x_left + cell_w - gap, cy + h / 2, 0],
                 [x_left, cy + h / 2, 0],
-                color=ACCENT_GOLD, stroke_width=1.6,
+                color=ACCENT_GOLD,
+                stroke_width=1.6,
             )
             g1.set_fill(ACCENT_GOLD, opacity=0.45)
             g2 = Polygon(
@@ -494,7 +531,8 @@ class DissectionProof(Scene):
                 [x_left + 2 * cell_w, cy - h / 2, 0],
                 [x_left + 2 * cell_w, cy + h / 2, 0],
                 [x_left + cell_w + gap, cy + h / 2, 0],
-                color=ACCENT_GOLD, stroke_width=1.6,
+                color=ACCENT_GOLD,
+                stroke_width=1.6,
             )
             g2.set_fill(ACCENT_GOLD, opacity=0.45)
             cyan = Polygon(
@@ -502,7 +540,8 @@ class DissectionProof(Scene):
                 [x_left + 3 * cell_w, cy - h / 2, 0],
                 [x_left + 3 * cell_w, cy + h / 2, 0],
                 [x_left + 2 * cell_w, cy + h / 2, 0],
-                color=ACCENT_CYAN, stroke_width=1.6,
+                color=ACCENT_CYAN,
+                stroke_width=1.6,
             )
             cyan.set_fill(ACCENT_CYAN, opacity=0.45)
             pink = Polygon(
@@ -510,7 +549,8 @@ class DissectionProof(Scene):
                 [x_left + 4 * cell_w, cy - h / 2, 0],
                 [x_left + 4 * cell_w, cy + h / 2, 0],
                 [x_left + 3 * cell_w, cy + h / 2, 0],
-                color=ACCENT_PINK, stroke_width=1.6,
+                color=ACCENT_PINK,
+                stroke_width=1.6,
             )
             pink.set_fill(ACCENT_PINK, opacity=0.45)
 
@@ -537,8 +577,8 @@ class DissectionProof(Scene):
         label_x = 3.95
         levels = [
             # (cy, w,  h,  label_tex, with_legend)
-            (1.55, 6.0, 0.55, r"= 1",            True),
-            (0.30, 3.0, 0.40, r"= \tfrac{1}{4}",  False),
+            (1.55, 6.0, 0.55, r"= 1", True),
+            (0.30, 3.0, 0.40, r"= \tfrac{1}{4}", False),
             (-0.60, 1.5, 0.28, r"= \tfrac{1}{16}", False),
             (-1.30, 0.75, 0.18, r"= \tfrac{1}{64}", False),
         ]
@@ -557,20 +597,34 @@ class DissectionProof(Scene):
             pink_br = [w_n * 0.50, cy_n - h_n / 2, 0]
             next_tl = [-w_next / 2, cy_next + h_next / 2, 0]
             next_tr = [w_next / 2, cy_next + h_next / 2, 0]
-            sim_leaders.add(DashedLine(
-                pink_bl, next_tl,
-                color=ACCENT_PINK, stroke_width=1.0, stroke_opacity=0.55,
-                dash_length=0.07,
-            ))
-            sim_leaders.add(DashedLine(
-                pink_br, next_tr,
-                color=ACCENT_PINK, stroke_width=1.0, stroke_opacity=0.55,
-                dash_length=0.07,
-            ))
+            sim_leaders.add(
+                DashedLine(
+                    pink_bl,
+                    next_tl,
+                    color=ACCENT_PINK,
+                    stroke_width=1.0,
+                    stroke_opacity=0.55,
+                    dash_length=0.07,
+                )
+            )
+            sim_leaders.add(
+                DashedLine(
+                    pink_br,
+                    next_tr,
+                    color=ACCENT_PINK,
+                    stroke_width=1.0,
+                    stroke_opacity=0.55,
+                    dash_length=0.07,
+                )
+            )
         self.play(FadeIn(sim_leaders), run_time=0.7)
 
-        concl = Text("残差 → 0  で  陽馬 ： 鱉臑 ＝ 2 ： 1  が成立",
-                     font=FONT, font_size=22, color=ACCENT_GOLD)
+        concl = Text(
+            "残差 → 0  で  陽馬 ： 鱉臑 ＝ 2 ： 1  が成立",
+            font=FONT,
+            font_size=22,
+            color=ACCENT_GOLD,
+        )
         concl.move_to([0, -1.92, 0])
         self.play(FadeIn(concl), run_time=0.7)
 
@@ -587,31 +641,30 @@ class DissectionProof(Scene):
         repetition makes the recursion (residue = 同じ塹堵 with same 2:1
         inside) directly visible.
         """
+
         def sub_pos(i, j, k):
-            return (px + i * (su + gap) + j * sdx,
-                    py + k * (su + gap) + j * sdy)
+            return (px + i * (su + gap) + j * sdx, py + k * (su + gap) + j * sdy)
 
         pieces = []
         labels = []
 
         # (0,1,1): CYAN wedge (all 鱉臑) -- furthest back, drawn first
         x, y = sub_pos(0, 1, 1)
-        pieces.append(self._iso_prism(x, y, su, su, sdx, sdy,
-                                      ACCENT_CYAN, op=0.65))
+        pieces.append(self._iso_prism(x, y, su, su, sdx, sdy, ACCENT_CYAN, op=0.65))
         lbl = MathTex(r"\tfrac12", font_size=16, color=ACCENT_CYAN)
         lbl.move_to([x - 0.22, y + su * 0.55, 0])
         labels.append(lbl)
 
         # (1,1,0): PINK wedge (residue) + dividing line (small陽馬 vs 小鱉臑)
         x, y = sub_pos(1, 1, 0)
-        pieces.append(self._iso_prism(x, y, su, su, sdx, sdy,
-                                      ACCENT_PINK, op=0.55))
+        pieces.append(self._iso_prism(x, y, su, su, sdx, sdy, ACCENT_PINK, op=0.55))
         # Dividing plane inside this small 塹堵: triangle front-top → back-bottom edge.
         # Most visible edge = diagonal on the hypotenuse face (C → B2).
         split_line = Line(
-            [x, y + su, 0],                       # C: front-top corner
-            [x + su + sdx, y + sdy, 0],           # B2: back-bottom-right corner
-            color=TEXT_WHITE, stroke_width=1.8,
+            [x, y + su, 0],  # C: front-top corner
+            [x + su + sdx, y + sdy, 0],  # B2: back-bottom-right corner
+            color=TEXT_WHITE,
+            stroke_width=1.8,
             stroke_opacity=0.85,
         )
         pieces.append(split_line)
@@ -621,25 +674,24 @@ class DissectionProof(Scene):
 
         # (0,1,0): full cube split (front=GOLD, top=CYAN, right diagonal)
         x, y = sub_pos(0, 1, 0)
-        pieces.append(self._iso_box_split_diag(x, y, su, su, sdx, sdy,
-                                               ACCENT_GOLD, ACCENT_CYAN,
-                                               op=0.65))
+        pieces.append(
+            self._iso_box_split_diag(x, y, su, su, sdx, sdy, ACCENT_GOLD, ACCENT_CYAN, op=0.65)
+        )
         lbl_g = MathTex(r"\tfrac12", font_size=13, color=ACCENT_GOLD)
         lbl_g.move_to([x + su * 0.50, y + su * 0.50, 0])
         lbl_c = MathTex(r"\tfrac12", font_size=13, color=ACCENT_CYAN)
-        lbl_c.move_to([x + su * 0.65 + sdx * 0.5,
-                       y + su + sdy * 0.5, 0])
+        lbl_c.move_to([x + su * 0.65 + sdx * 0.5, y + su + sdy * 0.5, 0])
         labels.extend([lbl_g, lbl_c])
 
         # (0,0,1): PINK wedge (residue) + dividing line (small陽馬 vs 小鱉臑)
         x, y = sub_pos(0, 0, 1)
-        pieces.append(self._iso_prism(x, y, su, su, sdx, sdy,
-                                      ACCENT_PINK, op=0.55))
+        pieces.append(self._iso_prism(x, y, su, su, sdx, sdy, ACCENT_PINK, op=0.55))
         # Same dividing plane geometry: front-top corner → back-bottom edge.
         split_line = Line(
-            [x, y + su, 0],                       # C: front-top corner
-            [x + su + sdx, y + sdy, 0],           # B2: back-bottom-right corner
-            color=TEXT_WHITE, stroke_width=1.8,
+            [x, y + su, 0],  # C: front-top corner
+            [x + su + sdx, y + sdy, 0],  # B2: back-bottom-right corner
+            color=TEXT_WHITE,
+            stroke_width=1.8,
             stroke_opacity=0.85,
         )
         pieces.append(split_line)
@@ -649,16 +701,14 @@ class DissectionProof(Scene):
 
         # (1,0,0): GOLD wedge
         x, y = sub_pos(1, 0, 0)
-        pieces.append(self._iso_prism(x, y, su, su, sdx, sdy,
-                                      ACCENT_GOLD, op=0.65))
+        pieces.append(self._iso_prism(x, y, su, su, sdx, sdy, ACCENT_GOLD, op=0.65))
         lbl = MathTex(r"\tfrac12", font_size=16, color=ACCENT_GOLD)
         lbl.move_to([x + su + 0.20, y + su * 0.30, 0])
         labels.append(lbl)
 
         # (0,0,0): GOLD cube -- the unique full-unit piece
         x, y = sub_pos(0, 0, 0)
-        pieces.append(self._iso_box(x, y, su, su, sdx, sdy,
-                                    ACCENT_GOLD, op=0.65))
+        pieces.append(self._iso_box(x, y, su, su, sdx, sdy, ACCENT_GOLD, op=0.65))
         lbl = MathTex(r"1", font_size=20, color=ACCENT_GOLD)
         lbl.move_to([x + su / 2, y - 0.20, 0])
         labels.append(lbl)
@@ -694,7 +744,9 @@ class DissectionProof(Scene):
 
         cap = Text(
             "中身の 6 ピースを色分け。 残差は元の塹堵の 1/2 サイズ → 中も同じ 6 ピース",
-            font=FONT, font_size=16, color=TEXT_DIM,
+            font=FONT,
+            font_size=16,
+            color=TEXT_DIM,
         )
         cap.move_to([0, 2.50, 0])
         self.play(FadeIn(cap), run_time=0.4)
@@ -708,7 +760,12 @@ class DissectionProof(Scene):
         # ----- LEFT pane: the big 塹堵 -----
         L_px, L_py = -5.40, -0.90
         L_pieces, L_labels = self._draw_6piece_subdivision(
-            L_px, L_py, su, sdx, sdy, gap,
+            L_px,
+            L_py,
+            su,
+            sdx,
+            sdy,
+            gap,
         )
         L_caption = Text("元の塹堵 (8 等分)", font=FONT, font_size=15, color=TEXT_DIM)
         L_caption.move_to([L_px + su + sdx * 0.5, L_py - 0.45, 0])
@@ -716,51 +773,63 @@ class DissectionProof(Scene):
         # ----- RIGHT pane: ONE residue, zoomed (same 6-piece pattern) -----
         R_px, R_py = -0.50, -0.90
         R_pieces, R_labels = self._draw_6piece_subdivision(
-            R_px, R_py, su, sdx, sdy, gap,
+            R_px,
+            R_py,
+            su,
+            sdx,
+            sdy,
+            gap,
         )
-        R_caption = Text("residue 拡大 ＝ 同じ 6 ピース構造 (1 段小さい塹堵)",
-                         font=FONT, font_size=15, color=TEXT_DIM)
+        R_caption = Text(
+            "residue 拡大 ＝ 同じ 6 ピース構造 (1 段小さい塹堵)",
+            font=FONT,
+            font_size=15,
+            color=TEXT_DIM,
+        )
         R_caption.move_to([R_px + su + sdx * 0.5, R_py - 0.45, 0])
 
         # Show LEFT first, then arrow, then RIGHT
-        self.play(FadeIn(L_pieces), FadeIn(L_labels), FadeIn(L_caption),
-                  run_time=0.9)
+        self.play(FadeIn(L_pieces), FadeIn(L_labels), FadeIn(L_caption), run_time=0.9)
 
         # Arrow from left pink residue → right pane (visually:
         # "this small residue, expanded, is the right pane").
         arrow = Arrow(
-            start=[-2.55, 0.10, 0], end=[-0.95, 0.10, 0],
-            color=ACCENT_PINK, stroke_width=3.0, buff=0.05,
+            start=[-2.55, 0.10, 0],
+            end=[-0.95, 0.10, 0],
+            color=ACCENT_PINK,
+            stroke_width=3.0,
+            buff=0.05,
             max_tip_length_to_length_ratio=0.10,
         )
         arrow_lbl = Text("residue 拡大", font=FONT, font_size=15, color=ACCENT_PINK)
-        arrow_lbl.move_to([(arrow.get_start()[0] + arrow.get_end()[0]) / 2,
-                           0.42, 0])
+        arrow_lbl.move_to([(arrow.get_start()[0] + arrow.get_end()[0]) / 2, 0.42, 0])
         self.play(FadeIn(arrow), FadeIn(arrow_lbl), run_time=0.4)
 
-        self.play(FadeIn(R_pieces), FadeIn(R_labels), FadeIn(R_caption),
-                  run_time=0.9)
+        self.play(FadeIn(R_pieces), FadeIn(R_labels), FadeIn(R_caption), run_time=0.9)
 
         # ----- Bottom: counting summary (BOTH panes share the same count) -----
         cnt_y = -1.70
         yg_lbl = Text("陽馬", font=FONT, font_size=18, color=ACCENT_GOLD)
-        yg_eq = MathTex(r"= 1 + \tfrac12 + \tfrac12 = 2",
-                        font_size=22, color=ACCENT_GOLD)
+        yg_eq = MathTex(r"= 1 + \tfrac12 + \tfrac12 = 2", font_size=22, color=ACCENT_GOLD)
         sep1 = Text("、", font=FONT, font_size=18, color=TEXT_DIM)
         bb_lbl = Text("鱉臑", font=FONT, font_size=18, color=ACCENT_CYAN)
-        bb_eq = MathTex(r"= \tfrac12 + \tfrac12 = 1",
-                        font_size=22, color=ACCENT_CYAN)
+        bb_eq = MathTex(r"= \tfrac12 + \tfrac12 = 1", font_size=22, color=ACCENT_CYAN)
         sep2 = Text("、", font=FONT, font_size=18, color=TEXT_DIM)
         zr_lbl = Text("residue", font=FONT, font_size=18, color=ACCENT_PINK)
         zr_eq = MathTex(r"= 1", font_size=22, color=ACCENT_PINK)
-        count_grp = VGroup(yg_lbl, yg_eq, sep1, bb_lbl, bb_eq, sep2,
-                           zr_lbl, zr_eq).arrange(buff=0.08)
+        count_grp = VGroup(yg_lbl, yg_eq, sep1, bb_lbl, bb_eq, sep2, zr_lbl, zr_eq).arrange(
+            buff=0.08
+        )
         count_grp.move_to([0, cnt_y, 0])
         self.play(FadeIn(count_grp), run_time=0.6)
 
         # ----- Conclusion -----
-        concl = Text("⇒ residue 内も同じ 2:1。 全体で 陽馬 ： 鱉臑 ＝ 2 ： 1",
-                     font=FONT, font_size=22, color=ACCENT_GOLD)
+        concl = Text(
+            "⇒ residue 内も同じ 2:1。 全体で 陽馬 ： 鱉臑 ＝ 2 ： 1",
+            font=FONT,
+            font_size=22,
+            color=ACCENT_GOLD,
+        )
         concl.move_to([0, -2.05, 0])
         self.play(FadeIn(concl), run_time=0.6)
 

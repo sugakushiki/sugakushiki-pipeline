@@ -33,7 +33,6 @@ Duration-aware: reads target duration from _manim_params.json.
 Used by: Episode 025 (Brahmagupta), math pillar — zero and negative numbers.
 """
 
-
 from manim import (
     FadeIn,
     Line,
@@ -142,7 +141,9 @@ class ZeroArithmeticRules(Scene):
         # Ticks and labels
         for n in range(-5, 6):
             x = x_left + (n + 5) * (x_right - x_left) / 10.0
-            tick = Line([x, line_y - 0.1, 0], [x, line_y + 0.1, 0], color=TEXT_WHITE, stroke_width=1.5)
+            tick = Line(
+                [x, line_y - 0.1, 0], [x, line_y + 0.1, 0], color=TEXT_WHITE, stroke_width=1.5
+            )
             self.play(FadeIn(tick), run_time=0.05)
             lbl_color = ACCENT_GOLD if n == 0 else (ACCENT_PINK if n < 0 else ACCENT_CYAN)
             lbl = MathTex(str(n), font_size=24, color=lbl_color)
@@ -206,7 +207,9 @@ class ZeroArithmeticRules(Scene):
         r1 = MathTex(r"\frac{0}{0} = 0", font_size=44, color=ACCENT_CYAN)
         r1.move_to([-3.0, row_y[0], 0])
         self.play(FadeIn(r1), run_time=0.5)
-        r1_note = Text("ブラフマグプタの定義 (現代では誤り)", font=FONT, font_size=20, color=TEXT_DIM)
+        r1_note = Text(
+            "ブラフマグプタの定義 (現代では誤り)", font=FONT, font_size=20, color=TEXT_DIM
+        )
         r1_note.move_to([2.0, row_y[0], 0])
         self.play(FadeIn(r1_note), run_time=0.4)
 

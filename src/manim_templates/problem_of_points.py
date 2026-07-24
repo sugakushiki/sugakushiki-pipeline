@@ -95,7 +95,6 @@ class ProblemOfPoints(Scene):
         Result: A wins 3/4, B wins 1/4.
         """
         duration = self._duration
-        highlight = self._highlight_color
 
         # Title
         title = Text("Problem of Points (1654)", font=FONT, font_size=26, color=TEXT_DIM)
@@ -302,7 +301,6 @@ class ProblemOfPoints(Scene):
         the fair share of the prize pot.
         """
         duration = self._duration
-        highlight = self._highlight_color
 
         # Title
         title = Text("Fair Division", font=FONT, font_size=26, color=TEXT_DIM)
@@ -424,22 +422,44 @@ class ProblemOfPoints(Scene):
         r1_a_label.move_to([-2.5, 0.6, 0])
         r1_b_label = Text("B wins", font=FONT, font_size=14, color=ACCENT_PINK)
         r1_b_label.move_to([-2.5, -0.2, 0])
-        arrow_r1a = Arrow(root.get_right(), r1_a_label.get_left(),
-                          color=TEXT_DIM, stroke_width=1.5, buff=0.1,
-                          max_tip_length_to_length_ratio=0.15)
-        arrow_r1b = Arrow(root.get_right(), r1_b_label.get_left(),
-                          color=TEXT_DIM, stroke_width=1.5, buff=0.1,
-                          max_tip_length_to_length_ratio=0.15)
-        self.play(FadeIn(arrow_r1a), FadeIn(r1_a_label),
-                  FadeIn(arrow_r1b), FadeIn(r1_b_label), run_time=0.5)
+        arrow_r1a = Arrow(
+            root.get_right(),
+            r1_a_label.get_left(),
+            color=TEXT_DIM,
+            stroke_width=1.5,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
+        arrow_r1b = Arrow(
+            root.get_right(),
+            r1_b_label.get_left(),
+            color=TEXT_DIM,
+            stroke_width=1.5,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
+        self.play(
+            FadeIn(arrow_r1a),
+            FadeIn(r1_a_label),
+            FadeIn(arrow_r1b),
+            FadeIn(r1_b_label),
+            run_time=0.5,
+        )
 
         # A wins R1 -> A wins immediately
         result_aa = Text("A wins!", font=FONT, font_size=16, color=ACCENT_GOLD)
         result_aa.move_to([0.5, 0.6, 0])
-        result_aa_rect = SurroundingRectangle(result_aa, color=ACCENT_GOLD, buff=0.06, stroke_width=1.5)
-        arrow_aa = Arrow(r1_a_label.get_right(), result_aa.get_left(),
-                         color=ACCENT_GOLD, stroke_width=1.5, buff=0.1,
-                         max_tip_length_to_length_ratio=0.15)
+        result_aa_rect = SurroundingRectangle(
+            result_aa, color=ACCENT_GOLD, buff=0.06, stroke_width=1.5
+        )
+        arrow_aa = Arrow(
+            r1_a_label.get_right(),
+            result_aa.get_left(),
+            color=ACCENT_GOLD,
+            stroke_width=1.5,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
         self.play(FadeIn(arrow_aa), FadeIn(result_aa), FadeIn(result_aa_rect), run_time=0.4)
 
         # B wins R1 -> Round 2
@@ -447,42 +467,77 @@ class ProblemOfPoints(Scene):
         r2_a_label.move_to([0.5, -0.05, 0])
         r2_b_label = Text("B wins R2", font=FONT, font_size=14, color=ACCENT_PINK)
         r2_b_label.move_to([0.5, -0.6, 0])
-        arrow_r2a = Arrow(r1_b_label.get_right(), r2_a_label.get_left(),
-                          color=TEXT_DIM, stroke_width=1.5, buff=0.1,
-                          max_tip_length_to_length_ratio=0.15)
-        arrow_r2b = Arrow(r1_b_label.get_right(), r2_b_label.get_left(),
-                          color=TEXT_DIM, stroke_width=1.5, buff=0.1,
-                          max_tip_length_to_length_ratio=0.15)
-        self.play(FadeIn(arrow_r2a), FadeIn(r2_a_label),
-                  FadeIn(arrow_r2b), FadeIn(r2_b_label), run_time=0.5)
+        arrow_r2a = Arrow(
+            r1_b_label.get_right(),
+            r2_a_label.get_left(),
+            color=TEXT_DIM,
+            stroke_width=1.5,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
+        arrow_r2b = Arrow(
+            r1_b_label.get_right(),
+            r2_b_label.get_left(),
+            color=TEXT_DIM,
+            stroke_width=1.5,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
+        self.play(
+            FadeIn(arrow_r2a),
+            FadeIn(r2_a_label),
+            FadeIn(arrow_r2b),
+            FadeIn(r2_b_label),
+            run_time=0.5,
+        )
 
         # Round 2 results
         result_ba = Text("A wins!", font=FONT, font_size=16, color=ACCENT_GOLD)
         result_ba.move_to([3.5, -0.05, 0])
-        result_ba_rect = SurroundingRectangle(result_ba, color=ACCENT_GOLD, buff=0.06, stroke_width=1.5)
-        arrow_ba = Arrow(r2_a_label.get_right(), result_ba.get_left(),
-                         color=ACCENT_GOLD, stroke_width=1.5, buff=0.1,
-                         max_tip_length_to_length_ratio=0.15)
+        result_ba_rect = SurroundingRectangle(
+            result_ba, color=ACCENT_GOLD, buff=0.06, stroke_width=1.5
+        )
+        arrow_ba = Arrow(
+            r2_a_label.get_right(),
+            result_ba.get_left(),
+            color=ACCENT_GOLD,
+            stroke_width=1.5,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
         result_bb = Text("B wins!", font=FONT, font_size=16, color=ACCENT_PINK)
         result_bb.move_to([3.5, -0.6, 0])
-        result_bb_rect = SurroundingRectangle(result_bb, color=ACCENT_PINK, buff=0.06, stroke_width=1.5)
-        arrow_bb = Arrow(r2_b_label.get_right(), result_bb.get_left(),
-                         color=ACCENT_PINK, stroke_width=1.5, buff=0.1,
-                         max_tip_length_to_length_ratio=0.15)
-        self.play(FadeIn(arrow_ba), FadeIn(result_ba), FadeIn(result_ba_rect),
-                  FadeIn(arrow_bb), FadeIn(result_bb), FadeIn(result_bb_rect), run_time=0.5)
+        result_bb_rect = SurroundingRectangle(
+            result_bb, color=ACCENT_PINK, buff=0.06, stroke_width=1.5
+        )
+        arrow_bb = Arrow(
+            r2_b_label.get_right(),
+            result_bb.get_left(),
+            color=ACCENT_PINK,
+            stroke_width=1.5,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
+        self.play(
+            FadeIn(arrow_ba),
+            FadeIn(result_ba),
+            FadeIn(result_ba_rect),
+            FadeIn(arrow_bb),
+            FadeIn(result_bb),
+            FadeIn(result_bb_rect),
+            run_time=0.5,
+        )
 
         # Summary (一行、シンプル)
-        summary = Text("4 通り中 A が 3 通り、B が 1 通りで勝利", font=FONT,
-                       font_size=18, color=TEXT_WHITE)
+        summary = Text(
+            "4 通り中 A が 3 通り、B が 1 通りで勝利", font=FONT, font_size=18, color=TEXT_WHITE
+        )
         summary.move_to([0, -1.1, 0])
         self.play(FadeIn(summary), run_time=0.4)
 
         # Expectation values (中心メッセージ、字幕クリアランス内 y >= -2.0)
-        exp_a = MathTex(r"E[A] = \tfrac{3}{4} \times 64 = 48",
-                        font_size=26, color=ACCENT_CYAN)
-        exp_b = MathTex(r"E[B] = \tfrac{1}{4} \times 64 = 16",
-                        font_size=26, color=ACCENT_PINK)
+        exp_a = MathTex(r"E[A] = \tfrac{3}{4} \times 64 = 48", font_size=26, color=ACCENT_CYAN)
+        exp_b = MathTex(r"E[B] = \tfrac{1}{4} \times 64 = 16", font_size=26, color=ACCENT_PINK)
         exp_group = VGroup(exp_a, exp_b).arrange(RIGHT, buff=0.8)
         exp_group.move_to([0, -1.75, 0])
         self.play(FadeIn(exp_group), run_time=0.6)
@@ -519,8 +574,7 @@ class ProblemOfPoints(Scene):
         self.play(FadeIn(title), run_time=0.4)
 
         # General formula
-        formula = MathTex(r"E[X] = \sum_i p_i \, x_i",
-                          font_size=30, color=ACCENT_GOLD)
+        formula = MathTex(r"E[X] = \sum_i p_i \, x_i", font_size=30, color=ACCENT_GOLD)
         formula.move_to([0, 2.3, 0])
         self.play(FadeIn(formula), run_time=0.5)
 
@@ -529,22 +583,26 @@ class ProblemOfPoints(Scene):
         left_title.move_to([-3.5, 1.5, 0])
         left_body1 = Text("4 通りを列挙", font=FONT, font_size=18, color=TEXT_WHITE)
         left_body1.move_to([-3.5, 0.95, 0])
-        left_body2 = MathTex(r"AA, AB, BA \rightarrow A",
-                             font_size=20, color=TEXT_DIM)
+        left_body2 = MathTex(r"AA, AB, BA \rightarrow A", font_size=20, color=TEXT_DIM)
         left_body2.move_to([-3.5, 0.40, 0])
-        left_body3 = MathTex(r"BB \rightarrow B",
-                             font_size=20, color=TEXT_DIM)
+        left_body3 = MathTex(r"BB \rightarrow B", font_size=20, color=TEXT_DIM)
         left_body3.move_to([-3.5, -0.05, 0])
-        left_result = MathTex(r"\therefore P(A) = \tfrac{3}{4}",
-                              font_size=24, color=ACCENT_CYAN)
+        left_result = MathTex(r"\therefore P(A) = \tfrac{3}{4}", font_size=24, color=ACCENT_CYAN)
         left_result.move_to([-3.5, -0.65, 0])
         left_box = SurroundingRectangle(
             VGroup(left_title, left_body1, left_body2, left_body3, left_result),
-            color=ACCENT_CYAN, buff=0.18, stroke_width=1.5,
+            color=ACCENT_CYAN,
+            buff=0.18,
+            stroke_width=1.5,
         )
         self.play(FadeIn(left_box), FadeIn(left_title), run_time=0.4)
-        self.play(FadeIn(left_body1), FadeIn(left_body2), FadeIn(left_body3),
-                  FadeIn(left_result), run_time=0.6)
+        self.play(
+            FadeIn(left_body1),
+            FadeIn(left_body2),
+            FadeIn(left_body3),
+            FadeIn(left_result),
+            run_time=0.6,
+        )
 
         # Right box: Pascal method
         right_title = Text("パスカル方式", font=FONT, font_size=20, color=ACCENT_PINK)
@@ -552,35 +610,52 @@ class ProblemOfPoints(Scene):
         right_body1 = Text("算術三角形 + 再帰", font=FONT, font_size=18, color=TEXT_WHITE)
         right_body1.move_to([3.5, 0.95, 0])
         # Tiny triangle hint (row 2 of Pascal's triangle: 1 2 1, suggesting recursion)
-        right_body2 = MathTex(r"\binom{2}{0} : \binom{2}{1} : \binom{2}{2}",
-                              font_size=20, color=TEXT_DIM)
+        right_body2 = MathTex(
+            r"\binom{2}{0} : \binom{2}{1} : \binom{2}{2}", font_size=20, color=TEXT_DIM
+        )
         right_body2.move_to([3.5, 0.40, 0])
-        right_body3 = MathTex(r"= 1 : 2 : 1",
-                              font_size=20, color=TEXT_DIM)
+        right_body3 = MathTex(r"= 1 : 2 : 1", font_size=20, color=TEXT_DIM)
         right_body3.move_to([3.5, -0.05, 0])
-        right_result = MathTex(r"\therefore P(A) = \tfrac{3}{4}",
-                               font_size=24, color=ACCENT_PINK)
+        right_result = MathTex(r"\therefore P(A) = \tfrac{3}{4}", font_size=24, color=ACCENT_PINK)
         right_result.move_to([3.5, -0.65, 0])
         right_box = SurroundingRectangle(
             VGroup(right_title, right_body1, right_body2, right_body3, right_result),
-            color=ACCENT_PINK, buff=0.18, stroke_width=1.5,
+            color=ACCENT_PINK,
+            buff=0.18,
+            stroke_width=1.5,
         )
         self.play(FadeIn(right_box), FadeIn(right_title), run_time=0.4)
-        self.play(FadeIn(right_body1), FadeIn(right_body2), FadeIn(right_body3),
-                  FadeIn(right_result), run_time=0.6)
+        self.play(
+            FadeIn(right_body1),
+            FadeIn(right_body2),
+            FadeIn(right_body3),
+            FadeIn(right_result),
+            run_time=0.6,
+        )
 
         # Same conclusion arrows (visual convergence)
-        left_arrow = Arrow([-3.5, -1.05, 0], [-0.6, -1.4, 0],
-                           color=ACCENT_GOLD, stroke_width=2.0, buff=0.1,
-                           max_tip_length_to_length_ratio=0.15)
-        right_arrow = Arrow([3.5, -1.05, 0], [0.6, -1.4, 0],
-                            color=ACCENT_GOLD, stroke_width=2.0, buff=0.1,
-                            max_tip_length_to_length_ratio=0.15)
+        left_arrow = Arrow(
+            [-3.5, -1.05, 0],
+            [-0.6, -1.4, 0],
+            color=ACCENT_GOLD,
+            stroke_width=2.0,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
+        right_arrow = Arrow(
+            [3.5, -1.05, 0],
+            [0.6, -1.4, 0],
+            color=ACCENT_GOLD,
+            stroke_width=2.0,
+            buff=0.1,
+            max_tip_length_to_length_ratio=0.15,
+        )
         self.play(FadeIn(left_arrow), FadeIn(right_arrow), run_time=0.4)
 
         # Conclusion
-        conclusion = Text("同じ結論 → 期待値の概念が誕生", font=FONT,
-                          font_size=22, color=ACCENT_GOLD)
+        conclusion = Text(
+            "同じ結論 → 期待値の概念が誕生", font=FONT, font_size=22, color=ACCENT_GOLD
+        )
         conclusion.move_to([0, -1.75, 0])
         self.play(FadeIn(conclusion), run_time=0.6)
 
@@ -592,9 +667,18 @@ class ProblemOfPoints(Scene):
 # comparison modes label "パスカル方式 / フェルマー方式".
 LINT_FACTUAL_CLAIMS = {
     "tree": {"people": [["パスカル", "Pascal"], ["フェルマー", "Fermat"]], "years": ["1654"]},
-    "calculation": {"people": [["パスカル", "Pascal"], ["フェルマー", "Fermat"]], "years": ["1654"]},
-    "tree_with_expectation": {"people": [["パスカル", "Pascal"], ["フェルマー", "Fermat"]], "years": ["1654"]},
-    "expectation_comparison": {"people": [["パスカル", "Pascal"], ["フェルマー", "Fermat"]], "years": ["1654"]},
+    "calculation": {
+        "people": [["パスカル", "Pascal"], ["フェルマー", "Fermat"]],
+        "years": ["1654"],
+    },
+    "tree_with_expectation": {
+        "people": [["パスカル", "Pascal"], ["フェルマー", "Fermat"]],
+        "years": ["1654"],
+    },
+    "expectation_comparison": {
+        "people": [["パスカル", "Pascal"], ["フェルマー", "Fermat"]],
+        "years": ["1654"],
+    },
 }
 
 # -----------------------------------------------------------------------

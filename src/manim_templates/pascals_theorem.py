@@ -64,7 +64,6 @@ from style import (
     BG_COLOR,
     FONT,
     TEXT_DIM,
-    TEXT_WHITE,
     load_params,
 )
 
@@ -85,9 +84,7 @@ POINT_ANGLES_DEG = [0.0, 30.0, 70.0, 80.0, 150.0, 220.0]
 
 def _point_on_circle(angle_deg):
     rad = math.radians(angle_deg)
-    return CIRCLE_CENTER + CIRCLE_RADIUS * np.array(
-        [math.cos(rad), math.sin(rad), 0.0]
-    )
+    return CIRCLE_CENTER + CIRCLE_RADIUS * np.array([math.cos(rad), math.sin(rad), 0.0])
 
 
 def _line_intersection(p1, p2, p3, p4):
@@ -173,7 +170,7 @@ class PascalsTheorem(Scene):
         self.play(Create(circle), run_time=0.8)
 
         pts, dots, labels = self._make_points_and_labels()
-        self.play(*[FadeIn(d) for d in dots], *[FadeIn(l) for l in labels], run_time=0.9)
+        self.play(*[FadeIn(d) for d in dots], *[FadeIn(lab) for lab in labels], run_time=0.9)
 
         hexagon = self._make_hexagon(pts)
         self.play(Create(hexagon), run_time=1.0)
@@ -206,7 +203,11 @@ class PascalsTheorem(Scene):
         # Mark intersection points
         L_dots = VGroup()
         L_labels = VGroup()
-        for L, name, col in [(L1, "L_1", ACCENT_PINK), (L2, "L_2", ACCENT_CYAN), (L3, "L_3", ACCENT_GOLD)]:
+        for L, name, col in [
+            (L1, "L_1", ACCENT_PINK),
+            (L2, "L_2", ACCENT_CYAN),
+            (L3, "L_3", ACCENT_GOLD),
+        ]:
             if L is None:
                 continue
             d = Dot(L, color=col, radius=0.09)
@@ -214,10 +215,10 @@ class PascalsTheorem(Scene):
             lbl.move_to(L + np.array([0.30, 0.20, 0]))
             L_dots.add(d)
             L_labels.add(lbl)
-        self.play(*[FadeIn(d) for d in L_dots], *[FadeIn(l) for l in L_labels], run_time=0.8)
+        self.play(*[FadeIn(d) for d in L_dots], *[FadeIn(lab) for lab in L_labels], run_time=0.8)
 
         # Draw the Pascal line covering all 3 intersection points (L1, L2, L3).
-        # Day 20 ある回 fix: previously drew line from L1 to L3 only, which left
+        # ある回 fix: previously drew line from L1 to L3 only, which left
         # L2 (mathematically collinear but geometrically outside L1-L3 segment)
         # appearing off-line on screen. Now compute parameter range covering all
         # 3 points + pad, so the drawn line passes visibly through all of them.
@@ -238,7 +239,9 @@ class PascalsTheorem(Scene):
 
         msg = Text(
             "三つの交点はいつも一直線上に並ぶ ── Pascal 線",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.85, 0])
         self.play(FadeIn(msg), run_time=0.6)
@@ -256,7 +259,7 @@ class PascalsTheorem(Scene):
         self.play(Create(circle), run_time=0.6)
 
         pts, dots, labels = self._make_points_and_labels()
-        self.play(*[FadeIn(d) for d in dots], *[FadeIn(l) for l in labels], run_time=0.8)
+        self.play(*[FadeIn(d) for d in dots], *[FadeIn(lab) for lab in labels], run_time=0.8)
 
         # Step 2: pair (P1P2, P4P5) → L1
         L1 = _line_intersection(pts[0], pts[1], pts[3], pts[4])
@@ -298,7 +301,7 @@ class PascalsTheorem(Scene):
             self.play(Create(e34), Create(e61), FadeIn(d3), FadeIn(l3_lbl), run_time=0.9)
 
         # Draw Pascal line covering all 3 intersection points (L1, L2, L3).
-        # Day 20 ある回 fix (same as mystic_hexagram mode): project L1, L2, L3
+        # ある回 fix (same as mystic_hexagram mode): project L1, L2, L3
         # onto line direction, draw segment covering min..max + pad so all
         # 3 points appear visibly on the line.
         if L1 is not None and L2 is not None and L3 is not None:
@@ -317,7 +320,9 @@ class PascalsTheorem(Scene):
 
         msg = Text(
             "三点 L1, L2, L3 は一直線上に並ぶ",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.85, 0])
         self.play(FadeIn(msg), run_time=0.6)

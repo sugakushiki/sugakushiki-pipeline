@@ -54,11 +54,9 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -139,7 +137,7 @@ def render_mode(
             scene_class,
         ]
         t0 = time.time()
-        result = subprocess.run(
+        subprocess.run(
             cmd,
             cwd=str(template_path.parent),
             capture_output=True,

@@ -56,12 +56,12 @@ cd <project_root>/
 venv\Scripts\activate
 
 REM 1. スクリプト生成 + QA
-python src/pipeline.py episodes/001_erdos/episode_config.json --steps script --qa-quick
+python src/pipeline.py examples/moriarty/episode_config.json --steps script --qa-quick
 
 REM 2. qa_report_script.json を確認し、scene_definition.json を手動修正
 
 REM 3. 残りを実行
-python src/pipeline.py episodes/001_erdos/episode_config.json --skip-script
+python src/pipeline.py examples/moriarty/episode_config.json --skip-script
 ```
 
 warning数件の手動修正は通常5分以内で完了する。

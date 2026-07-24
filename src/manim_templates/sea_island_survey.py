@@ -87,13 +87,13 @@ class SeaIslandSurvey(Scene):
         # Geometry built so each line of sight is COLINEAR through
         # eye(ground) -> pole tip -> island summit (the essence of 重差術).
         ground_y = -0.6
-        h = 1.0                       # equal pole height (表高)
+        h = 1.0  # equal pole height (表高)
         ground = Line([-6.0, ground_y, 0], [6.0, ground_y, 0], color=TEXT_DIM, stroke_width=2)
         self.play(Create(ground), run_time=0.5)
 
         # Island (mountain shape) on the right
         isl_x, isl_h = 4.6, 2.0
-        sx, sy = isl_x, ground_y + isl_h          # summit
+        sx, sy = isl_x, ground_y + isl_h  # summit
         island = Polygon(
             [isl_x - 0.9, ground_y, 0],
             [isl_x + 0.9, ground_y, 0],
@@ -106,7 +106,7 @@ class SeaIslandSurvey(Scene):
         self.play(Create(island), FadeIn(isl_lbl), run_time=0.7)
 
         # Two equal-height poles: 前表 (near island) and 後表 (far)
-        p1x, p2x = 2.0, 0.4           # 前表, 後表
+        p1x, p2x = 2.0, 0.4  # 前表, 後表
         tip_y = ground_y + h
         # eye x so that line (pole tip -> summit) meets ground:
         #   ex = px - (sx - px) * h / (sy - ground_y - h)
@@ -132,13 +132,19 @@ class SeaIslandSurvey(Scene):
         self.play(Create(sight1), Create(sight2), FadeIn(eye1), FadeIn(eye2), run_time=0.9)
 
         # Offsets (却行 = eye -> pole) brackets along the ground
-        off1 = Line([e1x, ground_y - 0.4, 0], [p1x, ground_y - 0.4, 0], color=ACCENT_GOLD, stroke_width=3)
-        off2 = Line([e2x, ground_y - 0.7, 0], [p2x, ground_y - 0.7, 0], color=ACCENT_PINK, stroke_width=3)
+        off1 = Line(
+            [e1x, ground_y - 0.4, 0], [p1x, ground_y - 0.4, 0], color=ACCENT_GOLD, stroke_width=3
+        )
+        off2 = Line(
+            [e2x, ground_y - 0.7, 0], [p2x, ground_y - 0.7, 0], color=ACCENT_PINK, stroke_width=3
+        )
         offl = Text("却行 ＝ 目から表までの後退距離", font=FONT, font_size=18, color=ACCENT_GOLD)
         offl.move_to([0.2, ground_y - 1.0, 0])
         self.play(Create(off1), Create(off2), FadeIn(offl), run_time=0.7)
 
-        note = Text("二度の観測の差から島の高さと距離を求める", font=FONT, font_size=20, color=TEXT_WHITE)
+        note = Text(
+            "二度の観測の差から島の高さと距離を求める", font=FONT, font_size=20, color=TEXT_WHITE
+        )
         note.move_to([0, -2.0, 0])
         self.play(FadeIn(note), run_time=0.6)
 
@@ -166,34 +172,35 @@ class SeaIslandSurvey(Scene):
 
         cap = Text(
             "表 (ポール) 2 本・目 2 つの照準線が島頂に収束 ── すべての記号を図上で定義",
-            font=FONT, font_size=18, color=TEXT_DIM,
+            font=FONT,
+            font_size=18,
+            color=TEXT_DIM,
         )
         cap.move_to([0, 2.45, 0])
         self.play(FadeIn(cap), run_time=0.4)
 
         # === Geometric parameters (chosen so the figure stays on screen
         # AND satisfies the colinear-sight-line constraint exactly) ===
-        s1, s2, d = 1.20, 1.50, 0.60          # display-unit lengths
-        h_pole = 0.62                          # display pole height
+        s1, s2, d = 1.20, 1.50, 0.60  # display-unit lengths
+        h_pole = 0.62  # display pole height
         # L follows from the geometry: L = s_1 d / (s_2 - s_1)
-        L_val = s1 * d / (s2 - s1)             # = 2.40
+        L_val = s1 * d / (s2 - s1)  # = 2.40
         # And H from similarity: H = h (L + s_1) / s_1
-        H_val = h_pole * (L_val + s1) / s1     # = 3 * h_pole = 1.86
+        H_val = h_pole * (L_val + s1) / s1  # = 3 * h_pole = 1.86
 
         # Anchor 前表 at x=0 in local coords, then shift so the figure sits
         # in the LEFT half of the canvas and the formula panel fits on the
         # right.
         x_shift = -2.55
-        x_p1 = 0.0    + x_shift          # 前表 foot
-        x_p2 = -d     + x_shift          # 後表 foot
-        x_e1 = -s1    + x_shift          # 目_1 (front sighting)
-        x_e2 = -d - s2 + x_shift         # 目_2 (back sighting)
-        x_sf = L_val  + x_shift          # summit foot
-        gy = -0.55                       # ground y (raised so brackets fit)
+        x_p1 = 0.0 + x_shift  # 前表 foot
+        x_p2 = -d + x_shift  # 後表 foot
+        x_e1 = -s1 + x_shift  # 目_1 (front sighting)
+        x_e2 = -d - s2 + x_shift  # 目_2 (back sighting)
+        x_sf = L_val + x_shift  # summit foot
+        gy = -0.55  # ground y (raised so brackets fit)
 
         # Ground line spanning the whole figure
-        ground = Line([x_e2 - 0.35, gy, 0], [x_sf + 0.35, gy, 0],
-                      color=TEXT_DIM, stroke_width=2)
+        ground = Line([x_e2 - 0.35, gy, 0], [x_sf + 0.35, gy, 0], color=TEXT_DIM, stroke_width=2)
         self.play(Create(ground), run_time=0.35)
 
         # Island (mountain on the right)
@@ -202,23 +209,21 @@ class SeaIslandSurvey(Scene):
             [x_sf - 0.40, gy, 0],
             [x_sf + 0.40, gy, 0],
             summit,
-            color=ACCENT_PINK, stroke_width=2.2,
+            color=ACCENT_PINK,
+            stroke_width=2.2,
         )
         isl_lbl = Text("島頂", font=FONT, font_size=14, color=ACCENT_PINK)
         isl_lbl.move_to([x_sf, gy + H_val + 0.22, 0])
         self.play(FadeIn(island), FadeIn(isl_lbl), run_time=0.45)
 
         # Two equal-height poles
-        p1 = Line([x_p1, gy, 0], [x_p1, gy + h_pole, 0],
-                  color=ACCENT_CYAN, stroke_width=3)
-        p2 = Line([x_p2, gy, 0], [x_p2, gy + h_pole, 0],
-                  color=ACCENT_CYAN, stroke_width=3)
+        p1 = Line([x_p1, gy, 0], [x_p1, gy + h_pole, 0], color=ACCENT_CYAN, stroke_width=3)
+        p2 = Line([x_p2, gy, 0], [x_p2, gy + h_pole, 0], color=ACCENT_CYAN, stroke_width=3)
         p1_lbl = Text("前表", font=FONT, font_size=13, color=ACCENT_CYAN)
         p1_lbl.move_to([x_p1 + 0.22, gy + h_pole + 0.16, 0])
         p2_lbl = Text("後表", font=FONT, font_size=13, color=ACCENT_CYAN)
         p2_lbl.move_to([x_p2 - 0.22, gy + h_pole + 0.16, 0])
-        self.play(Create(p1), Create(p2),
-                  FadeIn(p1_lbl), FadeIn(p2_lbl), run_time=0.55)
+        self.play(Create(p1), Create(p2), FadeIn(p1_lbl), FadeIn(p2_lbl), run_time=0.55)
 
         # h label (pole height) between the two pole tips (centered)
         h_fig = MathTex(r"h", font_size=22, color=ACCENT_CYAN)
@@ -231,46 +236,37 @@ class SeaIslandSurvey(Scene):
 
         # Two sight lines from each eye through the matching pole tip to the
         # summit (the construction MUST be colinear by our parameter choice).
-        sight1 = DashedLine([x_e1, gy, 0], summit,
-                            color=TEXT_WHITE, stroke_width=1.4)
-        sight2 = DashedLine([x_e2, gy, 0], summit,
-                            color=TEXT_WHITE, stroke_width=1.4)
+        sight1 = DashedLine([x_e1, gy, 0], summit, color=TEXT_WHITE, stroke_width=1.4)
+        sight2 = DashedLine([x_e2, gy, 0], summit, color=TEXT_WHITE, stroke_width=1.4)
         eye1 = Text("目 1", font=FONT, font_size=13, color=TEXT_DIM)
         eye1.move_to([x_e1, gy - 0.22, 0])
         eye2 = Text("目 2", font=FONT, font_size=13, color=TEXT_DIM)
         eye2.move_to([x_e2, gy - 0.22, 0])
-        self.play(Create(sight1), Create(sight2),
-                  FadeIn(eye1), FadeIn(eye2), run_time=0.7)
+        self.play(Create(sight1), Create(sight2), FadeIn(eye1), FadeIn(eye2), run_time=0.7)
 
         # === Distance brackets below the ground (two rows to avoid overlap) ===
         # Row 1 (closer to ground): s_2 and d (they are adjacent, no overlap).
         row1_y = gy - 0.50
-        s2_br = Line([x_e2, row1_y, 0], [x_p2, row1_y, 0],
-                     color=ACCENT_PINK, stroke_width=2.2)
+        s2_br = Line([x_e2, row1_y, 0], [x_p2, row1_y, 0], color=ACCENT_PINK, stroke_width=2.2)
         s2_lbl = MathTex(r"s_2", font_size=20, color=ACCENT_PINK)
         s2_lbl.move_to([(x_e2 + x_p2) / 2, row1_y - 0.22, 0])
 
-        d_br = Line([x_p2, row1_y, 0], [x_p1, row1_y, 0],
-                    color=ACCENT_GOLD, stroke_width=2.2)
+        d_br = Line([x_p2, row1_y, 0], [x_p1, row1_y, 0], color=ACCENT_GOLD, stroke_width=2.2)
         d_lbl = MathTex(r"d", font_size=22, color=ACCENT_GOLD)
         d_lbl.move_to([(x_p2 + x_p1) / 2, row1_y - 0.22, 0])
 
         # Row 2 (further from ground): s_1 and L (overlap with row 1 horizontally).
         row2_y = gy - 0.95
-        s1_br = Line([x_e1, row2_y, 0], [x_p1, row2_y, 0],
-                     color=ACCENT_CYAN, stroke_width=2.2)
+        s1_br = Line([x_e1, row2_y, 0], [x_p1, row2_y, 0], color=ACCENT_CYAN, stroke_width=2.2)
         s1_lbl = MathTex(r"s_1", font_size=20, color=ACCENT_CYAN)
         s1_lbl.move_to([(x_e1 + x_p1) / 2, row2_y - 0.22, 0])
 
-        L_br = Line([x_p1, row2_y, 0], [x_sf, row2_y, 0],
-                    color=ACCENT_GOLD, stroke_width=2.2)
+        L_br = Line([x_p1, row2_y, 0], [x_sf, row2_y, 0], color=ACCENT_GOLD, stroke_width=2.2)
         L_lbl = MathTex(r"L", font_size=22, color=ACCENT_GOLD)
         L_lbl.move_to([(x_p1 + x_sf) / 2, row2_y - 0.22, 0])
 
-        self.play(FadeIn(s2_br), FadeIn(s2_lbl),
-                  FadeIn(d_br), FadeIn(d_lbl), run_time=0.5)
-        self.play(FadeIn(s1_br), FadeIn(s1_lbl),
-                  FadeIn(L_br), FadeIn(L_lbl), run_time=0.5)
+        self.play(FadeIn(s2_br), FadeIn(s2_lbl), FadeIn(d_br), FadeIn(d_lbl), run_time=0.5)
+        self.play(FadeIn(s1_br), FadeIn(s1_lbl), FadeIn(L_br), FadeIn(L_lbl), run_time=0.5)
 
         # === RIGHT panel: Japanese key + similarity + formulas ===
         panel_x = 4.55
@@ -283,12 +279,12 @@ class SeaIslandSurvey(Scene):
             return VGroup(v, eq, d_).arrange(buff=0.06)
 
         defs = VGroup(
-            _def_row(r"h",   "表 (ポール) の高さ", ACCENT_CYAN),
-            _def_row(r"d",   "表の間隔",           ACCENT_GOLD),
-            _def_row(r"s_1", "前表の却行",         ACCENT_CYAN),
-            _def_row(r"s_2", "後表の却行",         ACCENT_PINK),
-            _def_row(r"L",   "前表から島までの距離", ACCENT_GOLD),
-            _def_row(r"H",   "島の高さ",           ACCENT_PINK),
+            _def_row(r"h", "表 (ポール) の高さ", ACCENT_CYAN),
+            _def_row(r"d", "表の間隔", ACCENT_GOLD),
+            _def_row(r"s_1", "前表の却行", ACCENT_CYAN),
+            _def_row(r"s_2", "後表の却行", ACCENT_PINK),
+            _def_row(r"L", "前表から島までの距離", ACCENT_GOLD),
+            _def_row(r"H", "島の高さ", ACCENT_PINK),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.09)
         defs.move_to([panel_x, 1.10, 0])
         self.play(FadeIn(defs), run_time=0.6)
@@ -296,16 +292,15 @@ class SeaIslandSurvey(Scene):
         # Similarity statement + the master ratio (both similar pairs).
         ratio = MathTex(
             r"\dfrac{H}{h} \;=\; \dfrac{L+s_1}{s_1} \;=\; \dfrac{L+d+s_2}{s_2}",
-            font_size=20, color=ACCENT_CYAN,
+            font_size=20,
+            color=ACCENT_CYAN,
         )
         ratio.move_to([panel_x, -0.55, 0])
 
         # Solving for H and L (the double-difference formulas).
-        fH = MathTex(r"H = \dfrac{h\,d}{s_2 - s_1} + h",
-                     font_size=22, color=ACCENT_GOLD)
+        fH = MathTex(r"H = \dfrac{h\,d}{s_2 - s_1} + h", font_size=22, color=ACCENT_GOLD)
         fH.move_to([panel_x, -1.15, 0])
-        fL = MathTex(r"L = \dfrac{s_1\,d}{s_2 - s_1}",
-                     font_size=22, color=ACCENT_CYAN)
+        fL = MathTex(r"L = \dfrac{s_1\,d}{s_2 - s_1}", font_size=22, color=ACCENT_CYAN)
         fL.move_to([panel_x, -1.65, 0])
         self.play(FadeIn(ratio), run_time=0.5)
         self.play(FadeIn(fH), FadeIn(fL), run_time=0.6)
@@ -313,16 +308,14 @@ class SeaIslandSurvey(Scene):
         # Bottom strip: original problem & answer
         ans = Text(
             "原問: 表高 3丈・表間 1000歩  →  島高 4里55歩・距離 102里150歩",
-            font=FONT, font_size=18, color=ACCENT_GOLD,
+            font=FONT,
+            font_size=18,
+            color=ACCENT_GOLD,
         )
         ans.move_to([0, -1.95, 0])
         self.play(FadeIn(ans), run_time=0.6)
 
-        anim_total = (0.6 + 0.4
-                      + 0.35 + 0.45 + 0.55 + 0.4 + 0.7
-                      + 0.5 + 0.5
-                      + 0.6 + 0.5 + 0.6
-                      + 0.6)
+        anim_total = 0.6 + 0.4 + 0.35 + 0.45 + 0.55 + 0.4 + 0.7 + 0.5 + 0.5 + 0.6 + 0.5 + 0.6 + 0.6
         self.wait(max(1.5, duration - anim_total))
 
 

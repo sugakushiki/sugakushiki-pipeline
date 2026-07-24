@@ -86,7 +86,9 @@ class GaussianCurvature2D(Scene):
         names = ["球面", "平面・円筒", "鞍面"]
         colors = [ACCENT_GOLD, ACCENT_CYAN, ACCENT_PINK]
 
-        for i, (x, label, name, color) in enumerate(zip(col_x, labels, names, colors, strict=False)):
+        for i, (x, label, name, color) in enumerate(
+            zip(col_x, labels, names, colors, strict=False)
+        ):
             # Label
             k_label = MathTex(label, font_size=32, color=color)
             k_label.move_to([x, 1.8, 0])
@@ -126,14 +128,6 @@ class GaussianCurvature2D(Scene):
                     t_range=[-1.0, 1.0],
                     color=color,
                     stroke_width=3,
-                )
-                # Cross curve: downward bend (side-to-side)
-                curve_down = ParametricFunction(
-                    lambda t: np.array([0, -0.5 * t**2, 0]),
-                    t_range=[-1.0, 1.0],
-                    color=color,
-                    stroke_width=3,
-                    stroke_opacity=0.6,
                 )
                 # Shift cross curve to horizontal representation
                 curve_down_h = ParametricFunction(
@@ -314,6 +308,8 @@ class GaussianCurvature2D(Scene):
         note.move_to([0, -2.2, 0])
         self.play(FadeIn(note), run_time=0.8)
         self.wait(max(duration - anim_time - 1.0, 1.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -321,7 +317,6 @@ LINT_FACTUAL_CLAIMS = {
     "curvature_types": {"people": [], "years": []},
     "map_distortion": {"people": [], "years": []},
 }
-
 
 
 SCENES = {

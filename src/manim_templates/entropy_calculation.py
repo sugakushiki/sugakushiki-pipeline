@@ -28,7 +28,6 @@ from manim import (
     MathTex,
     Scene,
     Text,
-    VGroup,
     config,
 )
 from style import (
@@ -112,7 +111,6 @@ class EntropyCalculation(Scene):
         self.wait(1.0 * ws)
 
         # Entropy result
-        entropy_box = VGroup()
         eq = MathTex(
             r"H = -\sum p_i \log_2 p_i",
             font_size=36,
@@ -339,6 +337,8 @@ class EntropyCalculation(Scene):
         note.to_edge(DOWN, buff=0.9)
         self.play(FadeIn(note), run_time=0.5)
         self.wait(2.0 * ws)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -347,7 +347,6 @@ LINT_FACTUAL_CLAIMS = {
     "weather": {"people": [], "years": []},
     "formula": {"people": [], "years": []},
 }
-
 
 
 # -----------------------------------------------------------------------

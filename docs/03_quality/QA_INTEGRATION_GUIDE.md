@@ -1,269 +1,142 @@
-# QA統合ガイド — pipeline.py + script_generator.py リファクタリング
+# QA 結果の扱い方
 
-**前提**: qa_checker.py, claude_backend.py, QA_PIPELINE.md が作成済み
-
----
-
-## 1. ファイル配置
-
-```batch
-cd <project_root>/
-
-REM 新規ファイル → src/ に配置
-copy qa_checker.py src\qa_checker.py
-copy claude_backend.py src\claude_backend.py
-
-REM ドキュメント → docs/ に配置
-copy QA_PIPELINE.md docs\QA_PIPELINE.md
-
-REM .gitignore に追加
-echo _tmp_qa_prompt.txt >> .gitignore
-echo _tmp_qa_output.txt >> .gitignore
-echo *.bak >> .gitignore
-echo qa_auto_fixes.json >> .gitignore
-```
+> QA が出した指摘を、どう読み、どこまで信じ、どう反映するか。
+> 関連:
+> - [`qa.md`](qa.md): 実行時のフラグと、どのガードが build を止めるか
+> - [`QA_PIPELINE.md`](QA_PIPELINE.md): 各エージェントのプロンプト設計
+> - [`pitfalls.md`](pitfalls.md): 過去に QA を鵜呑みにして踏んだ失敗
 
 ---
 
-## 2. pipeline.py への QA 統合
+## 大原則: QA の指摘は「候補」であって「判定」ではない
 
-### 2-1. 変更箇所（argparse）
+QA レポートは severity / confidence / citation が構造化されているため、
+**一見すると裁定済みの結論に見える**。実際には LLM エージェントの出力であり、
+誤検出も、もっともらしい誤った根拠も混ざる。
 
-```python
-# 既存の引数に追加
-parser.add_argument(
-    "--qa", action="store_true",
-    help="スクリプト生成後にQAチェックを実行",
-)
-parser.add_argument(
-    "--qa-quick", action="store_true",
-    help="クイックQA（Sonnetエージェントのみ）",
-)
-parser.add_argument(
-    "--qa-auto-fix", action="store_true",
-    help="QAの結果に基づく自動修正を適用",
-)
-parser.add_argument(
-    "--skip-qa", action="store_true",
-    help="QAチェックをスキップ（--qa指定時の上書き）",
-)
-```
+- **warning 以上の指摘は、1 件ずつ一次資料で裏取りしてから反映する**
+- **却下する判断のときこそ裏取りする** — 「これは誤検出だろう」と表面的に
+  判断して流すのが、最も事故が起きるパターン
+- FactChecker / SourceManager / ContentReviewer は Claude なので、**読む側と
+  同じバイアスを持ちうる**。「もっともらしいから正しい」は成立しない
 
-### 2-2. 変更箇所（scriptステップの後に挿入）
-
-```python
-# === QA Gate 1: Script QA ===
-if (args.qa or args.qa_quick) and not args.skip_qa:
-    if "script" in steps_to_run or scene_def_path.exists():
-        print(f"\n{'='*60}")
-        print("Gate 1: Script QA")
-        print(f"{'='*60}")
-        
-        import subprocess as sp
-        
-        qa_cmd = [
-            sys.executable, 
-            str(src_dir / "qa_checker.py"),
-            str(scene_def_path),
-            "--gate", "script",
-        ]
-        
-        if args.qa_quick:
-            qa_cmd.append("--quick")
-        
-        if args.qa_auto_fix:
-            qa_cmd.append("--auto-fix")
-        
-        # qa_checker は os.system() 経由で Claude Code を呼ぶので
-        # subprocess ではなく os.system() で実行する方が安全
-        qa_cmd_str = " ".join(f'"{c}"' for c in qa_cmd)
-        qa_exit = os.system(qa_cmd_str)
-        
-        if qa_exit == 1:
-            print("\n❌ QA FAILED. Fix critical issues before proceeding.")
-            print("   レポート: " + str(episode_dir / "qa_report_script.json"))
-            if not input("続行しますか？ (y/N): ").strip().lower() == "y":
-                sys.exit(1)
-        elif qa_exit == 2:
-            print("\n💥 QA ERROR. Some agents failed.")
-            print("   レポートを確認してください。")
-```
-
-### 2-3. 実行例
-
-```batch
-REM スクリプト生成 + クイックQA
-python src/pipeline.py episodes/001_erdos/episode_config.json --steps script --qa-quick
-
-REM フルパイプライン + フルQA + 自動修正
-python src/pipeline.py episodes/001_erdos/episode_config.json --qa --qa-auto-fix
-
-REM QAスキップ（急ぎの場合）
-python src/pipeline.py episodes/001_erdos/episode_config.json --skip-qa
-```
+`qa_report_*.json` を読むと `.claude/hooks/qa_report_reminder.py` が
+再検証リマインダを差し込む。これはこの原則を機械的に思い出させるためのもの。
 
 ---
 
-## 3. script_generator.py のリファクタリング
+## レポートの構造
 
-### 3-1. 目的
+`episodes/<id>/qa_report_script.json`:
 
-script_generator.py 内の Claude Code 呼び出しロジックを claude_backend.py に統一し、
-コードの重複を解消する。
-
-### 3-2. 変更概要
-
-**Before** (script_generator.py 内):
-```python
-# ファイルI/O方式で Claude Code を呼び出す独自実装
-prompt_file = project_root / "_tmp_prompt.txt"
-output_file = project_root / "_tmp_claude_output.txt"
-prompt_file.write_text(prompt, encoding="utf-8")
-cmd = f'cd /d "{project_root}" && claude -p "..." --output-format text > "{output_file}" 2>&1'
-os.system(cmd)
-result = output_file.read_text(encoding="utf-8")
+```
+overall_status : PASS / WARN / FAIL
+summary        : {total_issues, critical, warning, info}
+agents_run     : 実行されたエージェント名
+agents         : {エージェント名: {status, issues[], summary, _model, _duration_sec}}
 ```
 
-**After** (claude_backend.py を利用):
-```python
-from claude_backend import call_claude, extract_json_from_response
+`issues[]` の 1 件:
 
-result_text = call_claude(
-    prompt=full_prompt,
-    model="opus",  # or "sonnet"
-    debug=args.debug,
-    project_root=str(project_root),
-)
-scene_definition = extract_json_from_response(result_text)
-```
+| フィールド | 意味 |
+|---|---|
+| `severity` | `critical` / `warning` / `info` |
+| `scene_id` | 対象シーン (`math_03` 等) |
+| `claim` | narration 側の該当記述 |
+| `finding` | エージェントの指摘内容 |
+| `suggestion` | 修正案 (無い場合は `null`) |
+| `confidence` | エージェントの自己申告確信度 (0.0〜1.0) |
 
-### 3-3. 具体的な変更手順
-
-1. **import追加** (script_generator.py 冒頭):
-```python
-from claude_backend import call_claude, extract_json_from_response
-```
-
-2. **Claude Code 呼び出し部分を置き換え**:
-   - `_tmp_prompt.txt` / `_tmp_claude_output.txt` の書き出し・読み込みロジックを削除
-   - `call_claude()` 関数呼び出しに置き換え
-   - ファイルパス名は `_tmp_qa_prompt.txt` (qa_checker) と衝突しないよう注意
-     → claude_backend.py はプレフィックスで区別: script用は `_tmp_script_*`, QA用は `_tmp_qa_*`
-
-3. **JSON抽出を共通化**:
-   - `extract_json_from_response()` が claude_backend.py にあるので、
-     script_generator.py 内の同様のロジックを削除
-
-4. **モデルマッピングを共通化**:
-   - `CLAUDE_MODEL_MAP` が claude_backend.py にあるので、
-     script_generator.py 内の重複定義を削除
-
-### 3-4. 注意点
-
-- claude_backend.py の一時ファイル名は `_tmp_qa_*` になっている。
-  script_generator.py 用にプレフィックスを分けたい場合は、
-  `call_claude()` に `prefix` パラメータを追加するか、
-  並行実行しないなら同じファイル名でも問題ない。
-
-- リトライロジック（最大3回、文字数バリデーション）は script_generator.py 固有なので、
-  リファクタリング後も script_generator.py 側に残す。
+**`confidence` は精度の保証ではない**。低い値は「裏取りが要る」の合図として使えるが、
+高い値が正しさを意味するわけではない。判断材料の 1 つとして読む。
 
 ---
 
-## 4. qa_checker.py 単体テスト手順
+## エージェントごとの得手不得手
 
-```batch
-cd <project_root>/
-venv\Scripts\activate
+| エージェント | 見るもの | 注意 |
+|---|---|---|
+| `fact` | 事実の正確性 | 年号・帰属の指摘は当たりも多いが、一次資料と食い違うことがある。必ず出典で確認 |
+| `style` | 文体・トーン | `--auto-fix` の対象はここだけ |
+| `source` | 参考文献の妥当性 | 実在しない書名を「確認した」形で挙げることがある |
+| `content` | 構成・尺感 | 尺超過の false positive が出やすい。実尺は timing.json で確認 |
+| `consistency` | 用語・トーンの一貫性 | エピソード内のみ。横断の表記揺れは `lint_cross_episode_terms.py` |
+| `dearu_lint` | である調の混入 | **決定論的な正規表現**。LLM の StyleChecker が run 間で揺れて見逃すため併走させている。`『...』` 引用内は info、本文の終止は warning |
 
-REM 1. クイックモード（Sonnetのみ、~25分）
-python src/qa_checker.py episodes/001_erdos/scene_definition.json --quick
-
-REM 2. 特定エージェントのみ（スタイルだけ、~8分）
-python src/qa_checker.py episodes/001_erdos/scene_definition.json --agents style
-
-REM 3. Gemini Grounding FactChecker（Web検索付き、~1分）
-python src/qa_checker.py episodes/001_erdos/scene_definition.json --agents fact --use-gemini-fact
-
-REM 4. フルQA + 自動修正（~75分）
-python src/qa_checker.py episodes/001_erdos/scene_definition.json --auto-fix
-
-REM 5. デバッグモード
-python src/qa_checker.py episodes/001_erdos/scene_definition.json --agents style --debug
-```
-
-### 推奨テスト順序
-
-1. まず `--agents style` でスタイルチェッカー単体を動作確認（~8分）
-2. 次に `--agents fact --use-gemini-fact` でGemini Grounding版を確認（~1分）
-3. `--quick` でSonnet 3エージェント一括（~25分）
-4. 最後にフル実行（~75分）
+`dearu_lint` だけは LLM ではないので、指摘の有無は再現する。それ以外は
+**同じ入力でも run ごとに結果が揺れる**ことを前提に読む。
 
 ---
 
-## 5. ディレクトリ構造（QA追加後）
+## `--auto-fix` の適用範囲
 
-```
-sugakushiki/
-├── src/
-│   ├── pipeline.py              ← QA統合追加
-│   ├── script_generator.py      ← claude_backend.py 利用にリファクタ
-│   ├── qa_checker.py            ★新規
-│   ├── claude_backend.py        ★新規
-│   ├── audio_generator.py
-│   ├── subtitle_generator.py
-│   ├── image_generator.py
-│   ├── visual_generator.py
-│   ├── video_assembler.py
-│   └── manim_templates/
-├── docs/
-│   ├── QA_PIPELINE.md           ★新規
-│   └── ... (既存)
-├── episodes/
-│   └── 001_erdos/
-│       ├── scene_definition.json
-│       ├── scene_definition.json.bak  ← auto-fix時のバックアップ
-│       ├── qa_report_script.json      ← QAレポート
-│       ├── qa_auto_fixes.json         ← 自動修正ログ
-│       └── ... (既存)
-```
+`qa_checker.py --auto-fix` が触るのは、**きわめて限定された条件を全て満たす指摘だけ**:
+
+- `style` エージェントの指摘であること
+- severity が `info` より上 (warning / critical)
+- `suggestion` が存在すること
+- 置換元が 30 字未満、`suggestion` が 60 字未満
+- 1 回の実行で最大 5 件
+
+該当する指摘の `claim` を `suggestion` で単純置換する。適用内容は
+`qa_auto_fixes.json` に記録される。
+
+**事実・構成・出典の指摘は自動修正の対象外**。それらは人間が判断する。
+auto-fix を使った場合も、置換結果は目視で確認する。
 
 ---
 
-## 6. Git commit案
+## 単体実行
 
+pipeline を回さずに `qa_checker.py` だけを走らせる。内容修正の後、
+高い asset 生成 (画像・音声) をやり直す**前**に script を再検証するのに使う。
+
+```bash
+python src/qa_checker.py episodes/<id>/scene_definition.json --gate script
 ```
-P2-7: Multi-agent QA pipeline (Gate 1: Script QA)
 
-New files:
-- src/qa_checker.py: 5 agents (FactChecker, StyleChecker, SourceManager,
-  ContentReviewer, ConsistencyChecker) with Opus/Sonnet backend selection
-- src/claude_backend.py: Shared Claude Code -p utility (extracted from
-  script_generator.py pattern, file I/O workaround for Windows)
-- docs/QA_PIPELINE.md: Full 4-gate design document
+| フラグ | 用途 |
+|---|---|
+| `--agents style` | エージェントを絞る (カンマ区切りで複数指定可) |
+| `--quick` | Sonnet のエージェントのみ。全実行より大幅に速い |
+| `--use-gemini-fact` | FactChecker を Gemini Grounding (web 検索あり) にする |
+| `--auto-fix` | 上記の条件を満たす style 指摘を適用する |
+| `--output PATH` | レポートの出力先を変える |
+| `--debug` | プロンプトと応答を表示する |
 
-Features:
-- --quick mode (Sonnet agents only, ~25min)
-- --auto-fix mode (safe style corrections applied to scene_definition.json)
-- --use-gemini-fact (Gemini Grounding for web-search-enabled fact checking)
-- --debug mode (show prompts and responses)
-- JSON report output (qa_report_script.json)
-- PASS/WARN/FAIL status with severity-based aggregation
-
-Pipeline integration:
-- pipeline.py: --qa and --qa-quick flags for post-script QA gate
-```
+実行前に所要時間の見積りが表示される。実測はエピソードの長さと
+エージェント構成で変わるので、見積りは目安として扱う。
 
 ---
 
-## 7. Phase A 拡張: pronunciation_check 集積運用構造
+## 修正した後
 
-audio_generator の pronunciation_check は誤読パターンの集積運用構造を持つ:
+1. **narration を編集したら `narration_speech` と `narration_speech_cloud` も同期する**
+   — 読み替えテキストが古いまま残ると、音声だけが旧文面で合成される
+2. **`description.intro` も確認する** — 数学的な前提条件や限定詞が narration 側
+   だけ直って intro から落ちると、概要欄が不正確になる
+3. **大量修正・事実修正・横断修正のあとは standalone で再検証する** —
+   `qa_checker.py --gate script` を通してから、asset 生成を含む再ビルドに進む
+4. **読みや速度を変えたなら `--steps` に `subtitles` を含める** — narration の
+   文面が同じでも音声尺が変われば字幕のタイムスタンプは古くなる
 
-- **`_MISREADING_CATEGORIES` 辞書** (`audio_generator.py`): math_terms / compounds 等のカテゴリ別 misreading entries
-- **`_convert_fractions()` regex 自動変換**: `(\d+)分の(\d+)` を kana 化 (1-20 範囲)
-- **pronunciation_check Claude prompt**: 複合「値」/分数/否/数式ルール明示
-- **`script_generator` narration_speech 生成 prompt**: 生成段階での同ルール適用
-- **`formula_display._sanitize_subtitle()`**: 字幕の raw LaTeX strip + WARN
+---
 
-per-ep 個別対応 (narration_speech 個別書き換え) ではなく global 集積で誤読を予防する設計。詳細: `docs/03_quality/STYLE_GUIDE.md` の「数式音声化ルール」section、`docs/03_quality/pitfalls.md` の VOICEVOX section / 字幕 section。
+## pronunciation_check の集積運用構造
+
+誤読対策は per-episode の個別書き換えではなく、**global な集積**で予防する設計になっている。
+同じ誤読が次のエピソードで再発しないようにするため、修正はできるだけ下の層に入れる。
+
+- **`_MISREADING_CATEGORIES` 辞書** (`audio_generator.py`) — math_terms / compounds
+  等のカテゴリ別の誤読エントリ
+- **`_convert_fractions()`** — `(\d+)分の(\d+)` を kana に自動変換
+- **pronunciation_check のプロンプト** — 複合語・分数・否定・数式のルールを明示
+- **`script_generator` の narration_speech 生成プロンプト** — 生成段階で同じルールを適用
+- **`formula_display._sanitize_subtitle()`** — 字幕に生の LaTeX が残っていれば strip して WARN
+
+文脈依存の誤読 (同じ漢字が文によって読み分かる語) は global 化できないので、
+そこだけ `narration_speech` 側で個別に指定する。
+
+詳細: [`STYLE_GUIDE.md`](STYLE_GUIDE.md) の数式音声化ルール、
+[`pitfalls.md`](pitfalls.md) の VOICEVOX / 字幕の節。
+Cloud TTS の読み・速度については [`cloud_tts_qa.md`](cloud_tts_qa.md)。

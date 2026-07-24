@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""post_build_verify.py — post-build structural verification (8 checks).
+"""post_build_verify.py — post-build structural verification (9 checks).
 
 Runs a systematic verification checklist on a built episode directory so that
 "build complete" is backed by evidence, not just a pipeline exit code of 0. It
@@ -34,7 +34,12 @@ unreviewed Manim frames.
 
 7. **Subtitle char count**: flag lines longer than MAX_CHARS (default 25 jp).
 
-8. **Stale kana sweep**: extra _MISREADING_CATEGORIES consistency check.
+8. **temp_videos sync**: warn if temp_videos/<ep_id>_output_final.mp4 (the review
+   copy) is missing or stale relative to the freshly built output_final.mp4.
+
+9. **output_final.mp4 health**: ffprobe the final mp4 → ERROR if the moov
+   atom is missing or duration is unreadable (a killed bgm-step ffmpeg leaves a
+   truncated, unplayable file that "exists" but is not a finished build).
 
 This script does not replace human review; it forces a look at every artifact
 before a build is reported as complete.
@@ -46,21 +51,35 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROPER_NOUNS_TO_VERIFY = [
     # Curated watch-list of proper nouns that VOICEVOX has historically misread
     # (e.g. dropped-mora cases). Only the ones present in the episode are checked.
-    "フェルマー", "メルセンヌ", "デザルグ", "ロベルヴァル", "セギエ", "シカール",
-    "トリチェリ", "ハジェク", "コルモゴロフ", "ジロラモ・カルダーノ",
-    "シュヴァリエ・ド・メレ", "フロラン・ペリエ", "エチエンヌ・パスカル",
-    "クレルモン・フェラン", "ピュイ・ド・ドーム", "ポール・ロワイヤル",
-    "ベルヌーイ", "ライプニッツ", "バベッジ", "ノイマン", "ピンガラ",
+    "フェルマー",
+    "メルセンヌ",
+    "デザルグ",
+    "ロベルヴァル",
+    "セギエ",
+    "シカール",
+    "トリチェリ",
+    "ハジェク",
+    "コルモゴロフ",
+    "ジロラモ・カルダーノ",
+    "シュヴァリエ・ド・メレ",
+    "フロラン・ペリエ",
+    "エチエンヌ・パスカル",
+    "クレルモン・フェラン",
+    "ピュイ・ド・ドーム",
+    "ポール・ロワイヤル",
+    "ベルヌーイ",
+    "ライプニッツ",
+    "バベッジ",
+    "ノイマン",
+    "ピンガラ",
 ]
 
 
@@ -91,6 +110,7 @@ def check_subtitle_hash(ep_dir: Path) -> dict:
         return {"status": "SKIP", "reason": "meta or scene_def missing"}
     try:
         import hashlib
+
         with open(meta, encoding="utf-8") as f:
             embedded = json.load(f).get("narration_hash")
         with open(scene_def, encoding="utf-8") as f:
@@ -103,8 +123,12 @@ def check_subtitle_hash(ep_dir: Path) -> dict:
         text = "\n".join(blob)
         current = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
         if embedded != current:
-            return {"status": "WARN", "embedded": embedded, "current": current,
-                    "msg": "subtitles.srt is stale relative to current scene_def"}
+            return {
+                "status": "WARN",
+                "embedded": embedded,
+                "current": current,
+                "msg": "subtitles.srt is stale relative to current scene_def",
+            }
         return {"status": "OK"}
     except Exception as e:
         return {"status": "ERROR", "details": str(e)}
@@ -124,6 +148,7 @@ def check_description_freshness(ep_dir: Path) -> dict:
     )
     if desc_mtime < src_mtime:
         import datetime
+
         return {
             "status": "WARN",
             "msg": f"STALE: desc {datetime.datetime.fromtimestamp(desc_mtime).isoformat(timespec='seconds')} < src {datetime.datetime.fromtimestamp(src_mtime).isoformat(timespec='seconds')}",
@@ -183,8 +208,7 @@ def check_narration_ns_sync(ep_dir: Path) -> dict:
                     reasons = _check_narration_speech_drift(narr_flat, ns)
                     for r in reasons:
                         semantic_misses.append(
-                            f"{sc['scene_id']}[{i}]: {r} "
-                            f"(N={narr_flat[:30]}.. / NS={ns[:30]}..)"
+                            f"{sc['scene_id']}[{i}]: {r} (N={narr_flat[:30]}.. / NS={ns[:30]}..)"
                         )
 
     all_misses = ratio_misses + semantic_misses
@@ -303,13 +327,13 @@ def check_temp_videos_sync(ep_dir: Path) -> dict:
     if not temp_path.exists():
         return {
             "status": "WARN",
-            "msg": f"temp_videos copy missing: {temp_path}. "
-                   f"Run: cp {output} {temp_path}",
+            "msg": f"temp_videos copy missing: {temp_path}. Run: cp {output} {temp_path}",
         }
     output_mtime = output.stat().st_mtime
     temp_mtime = temp_path.stat().st_mtime
     if output_mtime > temp_mtime + 1:  # 1 sec tolerance
         import datetime as _dt
+
         return {
             "status": "WARN",
             "msg": (
@@ -345,8 +369,46 @@ def check_subtitle_char_count(ep_dir: Path, max_chars: int = 25) -> dict:
     return {"status": "OK"}
 
 
+def check_output_final_health(ep_dir: Path) -> dict:
+    """output_final.mp4 の moov/duration 健全性.
+
+    pipeline は「output_final.mp4 が存在 = 完走」を前提とするが、bgm step の
+    ffmpeg が途中で kill されると moov atom 欠落の部分書き込みファイルが残り、
+    再生不可なのに「完成」と誤認される。ffprobe で moov/duration
+    を確認し、読めなければ ERROR を返す (生成元 bgm_mixer / pipeline verify と
+    合わせた 3 層 layered defense の最終層)。
+    """
+    output = ep_dir / "output_final.mp4"
+    if not output.exists():
+        return {"status": "SKIP", "reason": "output_final.mp4 missing"}
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", str(output)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception as e:
+        return {"status": "ERROR", "msg": f"ffprobe 実行不可: {e}"}
+    if result.returncode != 0:
+        return {
+            "status": "ERROR",
+            "msg": "moov atom 欠落 / 再生不可 (ffprobe failed)。bgm step を再実行してください。",
+        }
+    try:
+        dur = float(json.loads(result.stdout)["format"]["duration"])
+    except Exception:
+        return {
+            "status": "ERROR",
+            "msg": "duration 取得不可 (壊れた mp4)。bgm step を再実行してください。",
+        }
+    if dur <= 0:
+        return {"status": "ERROR", "msg": f"duration 異常 ({dur})"}
+    return {"status": "OK", "duration_sec": round(dur, 1)}
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Post-build structural verification (8 checks)")
+    parser = argparse.ArgumentParser(description="Post-build structural verification (9 checks)")
     parser.add_argument("episode_dir", help="Path to episode directory")
     parser.add_argument(
         "--subject",
@@ -388,6 +450,7 @@ def main():
         ("6. VOICEVOX proper noun verify", verify_voicevox_proper_nouns(subject)),
         ("7. Subtitle char count (>25 jp)", check_subtitle_char_count(ep_dir)),
         ("8. temp_videos sync", check_temp_videos_sync(ep_dir)),
+        ("9. output_final.mp4 health", check_output_final_health(ep_dir)),
     ]
 
     warnings = 0

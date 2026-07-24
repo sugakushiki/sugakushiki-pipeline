@@ -41,12 +41,12 @@ def ring_positions(center, radius, n, start_angle=0):
         y = center[1] + radius * pymath.sin(angle)
         positions.append([x, y, 0])
     return positions
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template with no on-screen person/year claims — declared empty under the
 # lint's "default" fallback key (checked, not silently skipped).
 LINT_FACTUAL_CLAIMS = {"default": {"people": [], "years": []}}
-
-
 
 
 class ErdosNetwork(Scene):
@@ -84,7 +84,7 @@ class ErdosNetwork(Scene):
         pos_1 = ring_positions(center, 2.0, len(coauthors_1))
         ring1_group = VGroup()
 
-        for i, (name, pos) in enumerate(zip(coauthors_1, pos_1, strict=False)):
+        for _i, (name, pos) in enumerate(zip(coauthors_1, pos_1, strict=False)):
             dot = Dot(point=pos, radius=0.12, color=ACCENT_CYAN)
             label = Text(name, font_size=16, color=TEXT_WHITE)
             # Place label above for bottom-half nodes to avoid subtitle overlap
@@ -107,7 +107,7 @@ class ErdosNetwork(Scene):
         pos_2 = ring_positions(center, 3.8, len(coauthors_2_names), start_angle=0.2)
         ring2_group = VGroup()
 
-        for i, (name, pos) in enumerate(zip(coauthors_2_names, pos_2, strict=False)):
+        for i, (_name, pos) in enumerate(zip(coauthors_2_names, pos_2, strict=False)):
             dot = Dot(point=pos, radius=0.08, color=ACCENT_PINK)
             # Connect to nearest ring-1 node
             nearest_r1 = pos_1[i % len(pos_1)]

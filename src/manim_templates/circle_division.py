@@ -190,24 +190,32 @@ class CircleDivision(Scene):
             self.wait(0.35)
             prev = poly
 
-        nz = Text("もう割れぬところまで割れば\n円と一体となり 誤差は残らない",
-                  font=FONT, font_size=24, color=TEXT_WHITE, line_spacing=0.85)
+        nz = Text(
+            "もう割れぬところまで割れば\n円と一体となり 誤差は残らない",
+            font=FONT,
+            font_size=24,
+            color=TEXT_WHITE,
+            line_spacing=0.85,
+        )
         nz.move_to([2.7, 1.7, 0])
         self.play(FadeIn(nz), run_time=0.7)
 
         series = MathTex(
             r"\tfrac14+\tfrac1{16}+\tfrac1{64}+\cdots=\tfrac13",
-            font_size=28, color=ACCENT_CYAN,
+            font_size=28,
+            color=ACCENT_CYAN,
         )
         series.move_to([2.7, 0.1, 0])
-        accel = MathTex(r"\pi \approx \tfrac{3927}{1250} \approx 3.1416",
-                        font_size=30, color=ACCENT_GOLD)
+        accel = MathTex(
+            r"\pi \approx \tfrac{3927}{1250} \approx 3.1416", font_size=30, color=ACCENT_GOLD
+        )
         accel.move_to([2.7, -1.0, 0])
         self.play(FadeIn(series), run_time=0.5)
         self.play(FadeIn(accel), run_time=0.5)
 
-        note = Text("この加速法・値は劉徽本人か後代か諸説あり",
-                    font=FONT, font_size=18, color=TEXT_DIM)
+        note = Text(
+            "この加速法・値は劉徽本人か後代か諸説あり", font=FONT, font_size=18, color=TEXT_DIM
+        )
         note.move_to([0, -1.95, 0])
         self.play(FadeIn(note), run_time=0.5)
 
@@ -252,9 +260,14 @@ class CircleDivision(Scene):
         # Arrow tail above the circle, tip just touching the upper-left arc.
         arrow_tail = [cx - 0.55, cy + r + 0.75, 0]
         arrow_tip = [cx - r * 0.55, cy + r * 0.82, 0]
-        c_arrow = Arrow(arrow_tail, arrow_tip, color=ACCENT_PINK,
-                        stroke_width=2.5,
-                        max_tip_length_to_length_ratio=0.22, buff=0.0)
+        c_arrow = Arrow(
+            arrow_tail,
+            arrow_tip,
+            color=ACCENT_PINK,
+            stroke_width=2.5,
+            max_tip_length_to_length_ratio=0.22,
+            buff=0.0,
+        )
         c_jp = Text("円周", font=FONT, font_size=16, color=ACCENT_PINK)
         c_jp.move_to([cx - 0.9, cy + r + 0.92, 0])
         c_eq = MathTex(r"C = 2\pi r", font_size=22, color=ACCENT_PINK)
@@ -272,9 +285,9 @@ class CircleDivision(Scene):
         # into 2 triangles by a faint diagonal (upper-left -> lower-right).
         W = math.pi * r
         H = r
-        n = 8                # 8 strips -> 16 triangles total
+        n = 8  # 8 strips -> 16 triangles total
         b_w = W / n
-        shear = 0.20         # slight shear so it reads as parallelogram
+        shear = 0.20  # slight shear so it reads as parallelogram
 
         para_cx = 2.55
         bx = para_cx - W / 2 - shear / 2
@@ -285,7 +298,8 @@ class CircleDivision(Scene):
             [bx + W, by, 0],
             [bx + W + shear, by + H, 0],
             [bx + shear, by + H, 0],
-            color=ACCENT_CYAN, stroke_width=2.5,
+            color=ACCENT_CYAN,
+            stroke_width=2.5,
         )
         outer.set_fill(ACCENT_CYAN, opacity=0.18)
 
@@ -294,10 +308,15 @@ class CircleDivision(Scene):
         for k in range(1, n):
             x_b = bx + k * b_w
             x_t = bx + shear + k * b_w
-            vert_lines.add(Line(
-                [x_b, by, 0], [x_t, by + H, 0],
-                color=ACCENT_CYAN, stroke_width=1.3, stroke_opacity=0.85,
-            ))
+            vert_lines.add(
+                Line(
+                    [x_b, by, 0],
+                    [x_t, by + H, 0],
+                    color=ACCENT_CYAN,
+                    stroke_width=1.3,
+                    stroke_opacity=0.85,
+                )
+            )
 
         # Faint diagonals: upper-left -> lower-right of each strip
         # (each strip becomes 2 right triangles -- the 16 triangles).
@@ -305,10 +324,15 @@ class CircleDivision(Scene):
         for k in range(n):
             x_tl = bx + shear + k * b_w
             x_br = bx + (k + 1) * b_w
-            slant_lines.add(Line(
-                [x_tl, by + H, 0], [x_br, by, 0],
-                color=TEXT_DIM, stroke_width=0.9, stroke_opacity=0.55,
-            ))
+            slant_lines.add(
+                Line(
+                    [x_tl, by + H, 0],
+                    [x_br, by, 0],
+                    color=TEXT_DIM,
+                    stroke_width=0.9,
+                    stroke_opacity=0.55,
+                )
+            )
 
         # Alternating-shade fill on the strips (visual "16 triangles" cue)
         strip_fills = VGroup()
@@ -318,9 +342,12 @@ class CircleDivision(Scene):
             xt_l = bx + shear + k * b_w
             xt_r = bx + shear + (k + 1) * b_w
             strip = Polygon(
-                [xb_l, by, 0], [xb_r, by, 0],
-                [xt_r, by + H, 0], [xt_l, by + H, 0],
-                stroke_width=0, color=ACCENT_CYAN,
+                [xb_l, by, 0],
+                [xb_r, by, 0],
+                [xt_r, by + H, 0],
+                [xt_l, by + H, 0],
+                stroke_width=0,
+                color=ACCENT_CYAN,
             )
             strip.set_fill(ACCENT_CYAN, opacity=0.12 if k % 2 == 0 else 0.05)
             strip_fills.add(strip)
@@ -339,8 +366,7 @@ class CircleDivision(Scene):
         h_jp.move_to([bx - 0.30, by + H / 2 + 0.32, 0])
         self.play(FadeIn(w_lbl), FadeIn(h_lbl), FadeIn(base_jp), FadeIn(h_jp), run_time=0.6)
 
-        formula = MathTex(r"A = \tfrac12\,C \cdot r = \pi r^2",
-                          font_size=32, color=ACCENT_GOLD)
+        formula = MathTex(r"A = \tfrac12\,C \cdot r = \pi r^2", font_size=32, color=ACCENT_GOLD)
         formula.move_to([0, -1.95, 0])
         self.play(FadeIn(formula), run_time=0.7)
 

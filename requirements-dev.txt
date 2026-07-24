@@ -15,5 +15,5 @@
 ruff==0.15.12
 
 # Path matching (gitignore-compatible glob, used by scripts/sync_to_public.py)
-# Day 9 (2026-05-04, T1) added: handles WHITELIST/EXCLUDE with !-exception patterns
+# (2026-05-04, T1) added: handles WHITELIST/EXCLUDE with !-exception patterns
 pathspec==0.12.1

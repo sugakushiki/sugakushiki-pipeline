@@ -63,7 +63,7 @@ class ContinuedFractionExpand(Scene):
         wait_per = max(0.8, (duration - 6) / (len(levels) + 2))
 
         prev_cf = None
-        for i, latex in enumerate(levels):
+        for _i, latex in enumerate(levels):
             cf = MathTex(latex, font_size=36, color=highlight_color)
             cf.move_to([0, 0, 0])
 

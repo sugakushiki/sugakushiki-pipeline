@@ -6,16 +6,16 @@ Gate 1（スクリプトQA）を実装。Gate 2-4 は将来拡張。
 
 使い方:
     # 全エージェント実行
-    python src/qa_checker.py episodes/001_erdos/scene_definition.json --gate script
+    python src/qa_checker.py examples/moriarty/scene_definition.json --gate script
 
     # 特定エージェントのみ
-    python src/qa_checker.py episodes/001_erdos/scene_definition.json --gate script --agents fact,style
+    python src/qa_checker.py examples/moriarty/scene_definition.json --gate script --agents fact,style
 
     # クイックモード（Sonnetエージェントのみ）
-    python src/qa_checker.py episodes/001_erdos/scene_definition.json --gate script --quick
+    python src/qa_checker.py examples/moriarty/scene_definition.json --gate script --quick
 
     # デバッグ
-    python src/qa_checker.py episodes/001_erdos/scene_definition.json --gate script --debug
+    python src/qa_checker.py examples/moriarty/scene_definition.json --gate script --debug
 """
 
 import argparse
@@ -775,6 +775,20 @@ def run_dearu_lint(scene_definition: dict) -> dict:
         _re.compile(r"(?<![まで])した。"),
         _re.compile(r"(?<![ま])った。"),
         _re.compile(r"(?<![ま])ない。"),
+        # ある回 強化: LLM StyleChecker が拾い決定論版が見逃した平叙終止を追加。
+        # 〜ている。/ていた。(進行形の plain。ています/でした は末尾が異なり不一致)
+        _re.compile(r"ている。"),
+        _re.compile(r"ていた。"),
+        # 一段動詞の辞書形終止 (求める。受ける。等。「ました」由来は末尾不一致で除外済)
+        _re.compile(r"(?<![ま])ける。"),
+        _re.compile(r"(?<![ま])める。"),
+        # 形容詞い形の終止 (小さい。等)。名詞+い (問い。/違い。/思い。) を巻き込まない
+        # よう、代表的な形容詞語幹の alternation に限定する。
+        _re.compile(
+            r"(小さ|大き|高|低|長|短|多|少な|新し|古|良|悪|近|遠|早|遅|強|弱|深|浅|"
+            r"広|狭|正し|難し|美し|等し|重|軽|暗|明る|優し|厳し|激し|珍し|著し|寒|暑|"
+            r"熱|冷た|温か|辛|甘|苦し|痛|怖|嬉し|悲し|楽し|険し|乏し|鋭|鈍|硬|柔らか)い。"
+        ),
     ]
 
     issues = []
@@ -788,9 +802,7 @@ def run_dearu_lint(scene_definition: dict) -> dict:
                 continue
             text = raw.replace("|", "")
             # 『...』 引用スパン (修辞的提示は許容 → info)
-            quote_spans = [
-                (m.start(), m.end()) for m in _re.finditer(r"『[^』]*』", text)
-            ]
+            quote_spans = [(m.start(), m.end()) for m in _re.finditer(r"『[^』]*』", text)]
             seen = set()
             for pat in patterns:
                 for m in pat.finditer(text):
@@ -822,6 +834,42 @@ def run_dearu_lint(scene_definition: dict) -> dict:
                         }
                     )
 
+    # 強化: description.intro も である調走査。ある回 で概要欄 intro が
+    # である調 (「訪ねた。」「答えたと伝えられている。」「技術』にあった。」) のまま
+    # build を通過した。narration は全 ですます だったが、description.intro は
+    # script_generator が narration と別に生成するため、narration だけ見る本 lint を
+    # すり抜けた。同じ hard rule なので独立に走査し warning で拾う (『』引用内は info)。
+    intro_text = scene_definition.get("description", {}).get("intro", "")
+    if isinstance(intro_text, str) and intro_text.strip():
+        itext = intro_text.replace("|", "").replace("\n", "")
+        iquote_spans = [(m.start(), m.end()) for m in _re.finditer(r"『[^』]*』", itext)]
+        iseen: set = set()
+        for pat in patterns:
+            for m in pat.finditer(itext):
+                pos = m.start()
+                if pos in iseen:
+                    continue
+                iseen.add(pos)
+                in_quote = any(s <= pos < e for s, e in iquote_spans)
+                ctx_s = max(0, pos - 18)
+                ctx_e = min(len(itext), m.end() + 3)
+                excerpt = itext[ctx_s:ctx_e]
+                issues.append(
+                    {
+                        "severity": "info" if in_quote else "warning",
+                        "scene_id": "description.intro",
+                        "claim": f"description.intro である調終止候補: …{excerpt}",
+                        "finding": (
+                            "『』引用内の修辞的提示。意図的なら許容"
+                            if in_quote
+                            else "概要欄 intro が である調終止。narration が ですます調でも "
+                            "description.intro は別生成のため独立に ですます化が必要 "
+                            ""
+                        ),
+                        "suggestion": "intro 文末を「〜ました／〜います／〜です」等に統一",
+                    }
+                )
+
     warn = sum(1 for i in issues if i["severity"] == "warning")
     info = sum(1 for i in issues if i["severity"] == "info")
     if warn > 0:
@@ -833,7 +881,7 @@ def run_dearu_lint(scene_definition: dict) -> dict:
         f"(『』引用内は info)。LLM StyleChecker の盲点補完。0 件なら ですます調統一。"
     )
 
-    # Day 18 強化 D: description.intro drift lint も併走して issues に append。
+    # 強化 D: description.intro drift lint も併走して issues に append。
     # 軽量 deterministic 6-gram coverage 検査で description.intro と narration の
     # 用語ゆれを検出。
     # info-level のみ、dearu_lint の status には影響しない。
@@ -843,7 +891,7 @@ def run_dearu_lint(scene_definition: dict) -> dict:
     if drift_issues:
         summary += f" / description.intro drift {len(drift_issues)} 件 (info)"
 
-    # Day 19 強化 D: temporal ordering lint
+    # 強化 D: temporal ordering lint
     # 同一文中に年号が複数登場する場合、出現順と数値順の不一致を WARN として検出。
     # ある回「コーシーが1821年に始め、ボルツァーノが1817年に独立して着想していた」
     # のように年代倒錯した文 (1821 → 1817 順) は文法的には正しいが音声で誤解しやすい。
@@ -865,7 +913,7 @@ def run_dearu_lint(scene_definition: dict) -> dict:
 
 
 def _detect_temporal_ordering(scene_definition: dict) -> list:
-    """Day 19 強化 D: 同一文中の年号倒錯を検出。
+    """強化 D: 同一文中の年号倒錯を検出。
 
     ある回 N[3]「コーシーが1821年に始め、ボルツァーノが1817年に独立して
     着想していた厳密化を、ヴァイエルシュトラスは…」型の文では、出現順 (1821 →
@@ -894,8 +942,12 @@ def _detect_temporal_ordering(scene_definition: dict) -> list:
 
     # 過去完了マーカー (年代倒錯を緩和する文法手がかり)
     PAST_PERFECT_HINTS = [
-        "ていた", "ていました", "ていたが", "ていたものの",
-        "していた", "していました",
+        "ていた",
+        "ていました",
+        "ていたが",
+        "ていたものの",
+        "していた",
+        "していました",
     ]
 
     issues = []
@@ -912,10 +964,7 @@ def _detect_temporal_ordering(scene_definition: dict) -> list:
             for sentence in _re.split(r"[。！？]", text):
                 if not sentence.strip():
                     continue
-                years_with_pos = [
-                    (m.start(), int(m.group(1)))
-                    for m in YEAR_PAT.finditer(sentence)
-                ]
+                years_with_pos = [(m.start(), int(m.group(1))) for m in YEAR_PAT.finditer(sentence)]
                 if len(years_with_pos) < 2:
                     continue
                 # 出現順 (= positions のまま) vs 数値順
@@ -929,23 +978,26 @@ def _detect_temporal_ordering(scene_definition: dict) -> list:
                 expected = ", ".join(f"{y}年" for _, y in numeric_order)
                 hint_note = (
                     " (「ていた」過去完了で時系列保持あり、音声で誤解リスクのみ)"
-                    if has_past_perfect else ""
+                    if has_past_perfect
+                    else ""
                 )
                 excerpt = sentence.strip()[:80]
-                issues.append({
-                    "severity": severity,
-                    "scene_id": sid,
-                    "claim": f"{sid}[{idx}] 年代倒錯: {excerpt}",
-                    "finding": (
-                        f"出現順 [{appearance}] が数値順 [{expected}] と"
-                        f"一致しない{hint_note}。音声視聴で先発・後発の関係が"
-                        f"逆に誤解される可能性"
-                    ),
-                    "suggestion": (
-                        "出現順を数値順に揃える (例: 1817年 → 1821年 → ...)。"
-                        "または「先んじて」「先に」等の時系列マーカーを追加"
-                    ),
-                })
+                issues.append(
+                    {
+                        "severity": severity,
+                        "scene_id": sid,
+                        "claim": f"{sid}[{idx}] 年代倒錯: {excerpt}",
+                        "finding": (
+                            f"出現順 [{appearance}] が数値順 [{expected}] と"
+                            f"一致しない{hint_note}。音声視聴で先発・後発の関係が"
+                            f"逆に誤解される可能性"
+                        ),
+                        "suggestion": (
+                            "出現順を数値順に揃える (例: 1817年 → 1821年 → ...)。"
+                            "または「先んじて」「先に」等の時系列マーカーを追加"
+                        ),
+                    }
+                )
 
     return issues
 
@@ -1170,7 +1222,14 @@ def aggregate_report(
     else:
         overall = "PASS"
 
-    return {
+    # 実行 agent の manifest と fact 検証層の有無を記録。
+    # ある回 で最終 QA が content/consistency のみ (fact 不在) のまま事実誤りが
+    # 素通りし、「どの agent が走ったか」「fact が走っていない」の記録も警告も
+    # 無かった。manifest を残し、fact 層が無ければ silent に通さず WARN にする。
+    agents_run = list(agent_results.keys())
+    fact_layer_present = ("fact" in agent_results) or ("fact_grounding" in agent_results)
+
+    report = {
         "episode": episode_id,
         "gate": gate,
         "timestamp": datetime.now().isoformat(),
@@ -1181,8 +1240,25 @@ def aggregate_report(
             "warning": warning,
             "info": info,
         },
+        "agents_run": agents_run,
+        "fact_layer_present": fact_layer_present,
         "agents": agent_results,
     }
+
+    # fact 検証は script gate (narration の事実正確性) の関心事。fact 層が
+    # 走っていなければ「外部事実の正誤・cross-ep 矛盾は未検証」を明示し、
+    # overall が PASS なら WARN に格上げ (FAIL/ERROR は据え置き、exit code は 0 のまま)。
+    if gate == "script" and not fact_layer_present:
+        report["fact_layer_warning"] = (
+            "FactChecker (fact/fact_grounding) が未実行です。外部事実の正誤と "
+            "cross-episode 矛盾 (例: 本 ep と他 ep で同一人物の逸話の結論が逆) は "
+            "未検証のままです。verified_facts / key_episodes を独立 verify するか、"
+            "--agents に fact を含めて再実行してください。"
+        )
+        if overall == "PASS":
+            report["overall_status"] = "WARN"
+
+    return report
 
 
 def _safe(text: str) -> str:
@@ -1211,7 +1287,18 @@ def print_report(report: dict):
         f"{report['summary']['info']} info"
     )
     print(f"  Time: {report['timestamp']}")
+    print(
+        f"  Agents run: {', '.join(report.get('agents_run', list(report.get('agents', {}).keys())))}"
+    )
     print(f"{'=' * 60}")
+
+    # fact 検証層が走っていない場合は目立つ banner を出す (silent gap 防止)。
+    if report.get("fact_layer_warning"):
+        print(f"\n{'!' * 60}")
+        print("  [WARN] FACT VERIFICATION LAYER NOT RUN")
+        print(f"{'!' * 60}")
+        print(f"  {_safe(report['fact_layer_warning'])}")
+        print(f"{'!' * 60}")
 
     for agent_key, result in report["agents"].items():
         agent_name = AGENTS.get(agent_key, {}).get("name", agent_key)
@@ -1384,7 +1471,7 @@ def main():
             debug=args.debug,
         )
 
-    # Day 16 強化 B: 決定論 である調 lint (LLM StyleChecker 盲点補完)。
+    # 強化 B: 決定論 である調 lint (LLM StyleChecker 盲点補完)。
     # script gate のみ (narration 対象)。Claude 不要・即時。
     if args.gate == "script":
         dl = run_dearu_lint(scene_definition)

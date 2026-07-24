@@ -26,8 +26,6 @@ Used by: Episode 027 (Eratosthenes), interlude — sieve of Eratosthenes.
 
 from manim import (
     FadeIn,
-    Indicate,
-    MathTex,
     Rectangle,
     Scene,
     Text,
@@ -76,7 +74,7 @@ class SieveOfEratosthenes(Scene):
         cell_w = 0.78
         cell_h = 0.48
         grid_w = cols * cell_w
-        grid_h = rows * cell_h
+        rows * cell_h
         ox = -grid_w / 2 + cell_w / 2
         # Center the grid in the band between y = +2.6 (below title) and y = -1.6
         # (above footer). Band center is ≈ +0.5.
@@ -90,8 +88,9 @@ class SieveOfEratosthenes(Scene):
             c = (n - 1) % cols
             x = ox + c * cell_w
             y = oy - r * cell_h
-            rect = Rectangle(width=cell_w * 0.88, height=cell_h * 0.84,
-                             color=TEXT_DIM, stroke_width=1.4)
+            rect = Rectangle(
+                width=cell_w * 0.88, height=cell_h * 0.84, color=TEXT_DIM, stroke_width=1.4
+            )
             rect.move_to([x, y, 0])
             txt = Text(str(n), font=FONT, font_size=20, color=TEXT_WHITE)
             txt.move_to([x, y, 0])
@@ -113,7 +112,9 @@ class SieveOfEratosthenes(Scene):
             r, t = cells[p]
             return [
                 r.animate.set_stroke(color, width=3.0),
-                t.animate.set_color(color).set_weight("BOLD") if hasattr(t, "set_weight") else t.animate.set_color(color),
+                t.animate.set_color(color).set_weight("BOLD")
+                if hasattr(t, "set_weight")
+                else t.animate.set_color(color),
             ]
 
         # Helper: mark multiples of p (excluding p itself) as composite (gray)
@@ -130,7 +131,7 @@ class SieveOfEratosthenes(Scene):
         primes_sieved = [2, 3, 5, 7]
         prime_colors = [ACCENT_CYAN, ACCENT_PINK, ACCENT_GOLD, ACCENT_CYAN]
 
-        for p, c in zip(primes_sieved, prime_colors):
+        for p, c in zip(primes_sieved, prime_colors, strict=False):
             anims_p = highlight_prime(p, c)
             self.play(*anims_p, run_time=0.5)
             mult_anims = mark_multiples(p)
@@ -150,7 +151,9 @@ class SieveOfEratosthenes(Scene):
         # Footer
         footer = Text(
             "残った 15 個が素数 ── 判定は √49 = 7 まででよい",
-            font=FONT, font_size=16, color=TEXT_DIM,
+            font=FONT,
+            font_size=16,
+            color=TEXT_DIM,
         )
         footer.move_to([0, -1.95, 0])
         self.play(FadeIn(footer), run_time=0.6)

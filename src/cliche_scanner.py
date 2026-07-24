@@ -32,8 +32,8 @@ Design twins:
     Both shift errors left of the expensive image/script generation step.
 
 Usage (standalone):
-    python -m cliche_scanner episodes/021_godel/scene_definition.json
-    python -m cliche_scanner --llm-review episodes/021_godel/scene_definition.json
+    python -m cliche_scanner examples/moriarty/scene_definition.json
+    python -m cliche_scanner --llm-review examples/moriarty/scene_definition.json
 
 Usage (from image_generator):
     from cliche_scanner import scan_tasks
@@ -53,7 +53,7 @@ from pathlib import Path
 
 # Windows cp932 console: reconfigure stdout/stderr to UTF-8 so em-dash and
 # similar Unicode in rationale text don't crash the CLI. Pattern from
-# Day 6 R-1 follow-up (qa_report_reminder.py).
+# R-1 follow-up (qa_report_reminder.py).
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     try:
         sys.stdout.reconfigure(encoding="utf-8")

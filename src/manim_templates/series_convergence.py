@@ -14,8 +14,6 @@ Duration-aware: reads target duration from _manim_params.json.
 Used by: Episode 004 (Ramanujan), math_05
 """
 
-import math
-
 from manim import (
     DOWN,
     LEFT,
@@ -96,41 +94,14 @@ class PiSeries(Scene):
         self.wait(1.0)
 
         # Animate terms being added (4 terms to fit above subtitle area)
-        pi_ref = math.pi
-        pi_str_full = "3.14159265358979323846264338327950288"  # 35 digits
-
         n_terms_list = [1, 2, 3, 4]
         # Reserve time: 1.0 intro + 0.6*4 fade + wait_per*4 + 0.6 note_fade + 1.5 final
         anim_overhead = 1.0 + 0.6 * len(n_terms_list) + 0.6 + 1.5
         wait_per = max(0.5, (duration - anim_overhead) / (len(n_terms_list) + 1))
 
         term_display = VGroup()
-        prev_entry = None
 
-        for idx, n in enumerate(n_terms_list):
-            approx = partial_sum_pi(n)
-            # Count correct digits
-            approx_str = f"{approx:.35f}"
-            correct = 0
-            for i, (a, b) in enumerate(zip(approx_str, f"{pi_ref:.35f}", strict=False)):
-                if a == b:
-                    correct += 1
-                else:
-                    break
-
-            digits_correct = max(0, correct - 2)  # subtract "3."
-
-            entry = VGroup(
-                MathTex(f"k=0..{n - 1}", font_size=24, color=ACCENT_CYAN),
-                Text(f"{approx:.10f}...", font=FONT, font_size=22, color=TEXT_WHITE),
-                MathTex(
-                    f"\\approx {digits_correct * 8 // max(digits_correct, 1)}",
-                    font_size=20,
-                    color=TEXT_DIM,
-                ),
-                Text(f"{n * 8}" if n > 0 else "8", font=FONT, font_size=28, color=highlight_color),
-                Text(" digits", font=FONT, font_size=20, color=TEXT_DIM),
-            )
+        for _idx, n in enumerate(n_terms_list):
             # Simplified: show terms count and digit accuracy
             term_word = " term " if n == 1 else " terms "
             row = VGroup(

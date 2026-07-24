@@ -110,7 +110,7 @@ class CompoundInterest(Scene):
         # Animate bars
         anim_time = max(0.5, (duration - 4.0) / len(ns))
         bars = VGroup()
-        for i, (n, label_t, val) in enumerate(zip(ns, labels_text, values, strict=False)):
+        for i, (_n, label_t, val) in enumerate(zip(ns, labels_text, values, strict=False)):
             h = (val / max(values)) * max_height
             x = x_start + i * x_gap
 

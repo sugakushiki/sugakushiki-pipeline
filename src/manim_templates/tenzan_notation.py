@@ -379,6 +379,8 @@ class TenzanNotation(Scene):
         summary.move_to([0, -1.6, 0])
         self.play(FadeIn(summary), run_time=0.8)
         self.wait(max(duration - anim_time - 3.0, 1.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -387,7 +389,6 @@ LINT_FACTUAL_CLAIMS = {
     "system_of_equations": {"people": [], "years": []},
     "symbolic_manipulation": {"people": [], "years": []},
 }
-
 
 
 # ---------------------------------------------------------------------------

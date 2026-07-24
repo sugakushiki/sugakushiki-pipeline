@@ -61,10 +61,8 @@ Used by: Episode 028 (Weierstrass), pillar B - the Weierstrass function.
 import math
 
 from manim import (
-    Arrow,
     Axes,
     Create,
-    DashedLine,
     Dot,
     FadeIn,
     Line,
@@ -97,7 +95,7 @@ def _weierstrass_partial(x, N, a=WF_A, b=WF_B):
     """Partial sum sum_{n=0}^{N} a^n cos(b^n pi x)."""
     s = 0.0
     for n in range(N + 1):
-        s += (a ** n) * math.cos((b ** n) * math.pi * x)
+        s += (a**n) * math.cos((b**n) * math.pi * x)
     return s
 
 
@@ -139,7 +137,9 @@ class WeierstrassFunction(Scene):
             axis_config={"color": TEXT_DIM, "stroke_width": 1.6},
         )
         axes.move_to([0, 0.5, 0])
-        curve = axes.plot(lambda x: math.sin(x), x_range=[0, 3.1], color=ACCENT_CYAN, stroke_width=3.0)
+        curve = axes.plot(
+            lambda x: math.sin(x), x_range=[0, 3.1], color=ACCENT_CYAN, stroke_width=3.0
+        )
         self.play(Create(axes), Create(curve), run_time=0.9)
 
         # Animate four tangent lines at x = 0.6, 1.2, 1.8, 2.4
@@ -156,7 +156,9 @@ class WeierstrassFunction(Scene):
 
         msg = Text(
             "── けれども、本当にいつもそうだろうか？",
-            font=FONT, font_size=22, color=ACCENT_PINK,
+            font=FONT,
+            font_size=22,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.85, 0])
         self.play(FadeIn(msg), run_time=0.7)
@@ -174,12 +176,14 @@ class WeierstrassFunction(Scene):
         # so the curve area (top y <= 1.3) does NOT overlap any text.
         formula = MathTex(
             r"f_N(x) = \sum_{n=0}^{N} a^n \cos(b^n \pi x)",
-            font_size=22, color=ACCENT_GOLD,
+            font_size=22,
+            color=ACCENT_GOLD,
         )
         formula.move_to([0, 2.50, 0])
         params_lbl = MathTex(
             r"a = \tfrac{1}{2},\; b = 13",
-            font_size=20, color=ACCENT_PINK,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         params_lbl.move_to([0, 2.05, 0])
         self.play(FadeIn(formula), FadeIn(params_lbl), run_time=0.6)
@@ -203,7 +207,8 @@ class WeierstrassFunction(Scene):
             curve = axes.plot(
                 lambda x, N=N: _weierstrass_partial(x, N),
                 x_range=[-1.0, 1.0, 1.0 / 600],
-                color=ACCENT_CYAN, stroke_width=2.4,
+                color=ACCENT_CYAN,
+                stroke_width=2.4,
             )
             # Counter showing current N — placed at lower-right margin.
             n_label = MathTex(f"N = {N}", font_size=26, color=ACCENT_GOLD)
@@ -211,7 +216,9 @@ class WeierstrassFunction(Scene):
 
             # Fade previous (last drawn) curves to dim, then draw new
             if len(prev_curves) > 0:
-                self.play(prev_curves.animate.set_color(TEXT_DIM).set_stroke(opacity=0.35), run_time=0.3)
+                self.play(
+                    prev_curves.animate.set_color(TEXT_DIM).set_stroke(opacity=0.35), run_time=0.3
+                )
             if N == 1:
                 self.play(Create(curve), FadeIn(n_label), run_time=0.9)
                 cur_n_label = n_label
@@ -241,7 +248,7 @@ class WeierstrassFunction(Scene):
         N = 4
         groups = VGroup()
 
-        for (half_range, label_text), cx in zip(zoom_levels, x_centers):
+        for (half_range, label_text), cx in zip(zoom_levels, x_centers, strict=False):
             axes = Axes(
                 x_range=[-half_range, half_range, half_range],
                 y_range=[-1.8, 1.8, 1],
@@ -254,10 +261,14 @@ class WeierstrassFunction(Scene):
             curve = axes.plot(
                 lambda x: _weierstrass_partial(x, N),
                 x_range=[-half_range, half_range, half_range / 200],
-                color=ACCENT_CYAN, stroke_width=2.0,
+                color=ACCENT_CYAN,
+                stroke_width=2.0,
             )
             zoom_lbl = Text(
-                label_text, font=FONT, font_size=22, color=ACCENT_GOLD,
+                label_text,
+                font=FONT,
+                font_size=22,
+                color=ACCENT_GOLD,
             )
             zoom_lbl.move_to([cx, -1.20, 0])
             groups.add(VGroup(axes, curve, zoom_lbl))
@@ -267,7 +278,9 @@ class WeierstrassFunction(Scene):
 
         msg = Text(
             "── どの倍率にも、同じような細かい揺れが現れる",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.92, 0])
         self.play(FadeIn(msg), run_time=0.6)
@@ -294,7 +307,8 @@ class WeierstrassFunction(Scene):
         curve = axes.plot(
             lambda x: _weierstrass_partial(x, N),
             x_range=[-0.30, 0.30, 0.30 / 400],
-            color=ACCENT_CYAN, stroke_width=2.2,
+            color=ACCENT_CYAN,
+            stroke_width=2.2,
         )
         self.play(Create(axes), Create(curve), run_time=0.8)
 
@@ -309,7 +323,7 @@ class WeierstrassFunction(Scene):
         colors = [ACCENT_GOLD, ACCENT_CYAN, ACCENT_PINK, TEXT_WHITE]
         h_vals = [0.10, 0.05, 0.02, 0.01]
         slope_rows = VGroup()
-        for h, col in zip(h_vals, colors):
+        for h, col in zip(h_vals, colors, strict=False):
             y_h = _weierstrass_partial(x0 + h, N)
             slope = (y_h - y0) / h
             # Draw secant through (x0, y0) and (x0+h, y_h), extended slightly
@@ -321,15 +335,18 @@ class WeierstrassFunction(Scene):
 
             row = MathTex(
                 rf"h = {h:.2f},\;\;\text{{slope}} \approx {slope:+.2f}",
-                font_size=22, color=col,
+                font_size=22,
+                color=col,
             )
             row.move_to([3.2, 1.7 - 0.45 * len(slope_rows), 0])
             slope_rows.add(row)
             self.play(FadeIn(row), run_time=0.25)
 
         verdict = Text(
-            "h を小さくしても傾きは一つに定まらない", font=FONT,
-            font_size=20, color=ACCENT_PINK,
+            "h を小さくしても傾きは一つに定まらない",
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         verdict.move_to([0, -1.85, 0])
         self.play(FadeIn(verdict), run_time=0.6)

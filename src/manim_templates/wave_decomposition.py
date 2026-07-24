@@ -83,12 +83,12 @@ def _calc_wait_scale(duration, anim_time, default_wait_total):
         return 1.0
     target_waits = max(duration - anim_time, default_wait_total * 0.3)
     return max(0.3, min(target_waits / default_wait_total, 5.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template with no on-screen person/year claims — declared empty under the
 # lint's "default" fallback key (checked, not silently skipped).
 LINT_FACTUAL_CLAIMS = {"default": {"people": [], "years": []}}
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +259,8 @@ class WaveDecomposition(Scene):
 
         for i, comp in enumerate(components):
             color = COMPONENT_COLORS[i % len(COMPONENT_COLORS)]
-            freq = comp["frequency"]
-            amp = comp["amplitude"]
+            comp["frequency"]
+            comp["amplitude"]
 
             # Show individual component briefly
             comp_graph = axes.plot(
@@ -284,7 +284,7 @@ class WaveDecomposition(Scene):
                 stroke_width=4.0,
             )
 
-            # Day 14 fix: separate MathTex (number) from Text (Japanese)
+            # fix: separate MathTex (number) from Text (Japanese)
             # MathTex cannot render Japanese chars without \usepackage{CJK}.
             number_label = MathTex(
                 f"{i + 1}",

@@ -121,6 +121,14 @@ oil painting style, atmospheric, cinematic composition,
 warm muted tones, historical accuracy, depth of field
 ```
 
+### 構造的・幾何的オブジェクトを小道具に含める場合の注意
+
+Gemini Flash は「正確な個数・段構造」の再現が苦手。例: ハノイの塔を「3本柱・大→小の円盤」と指定しても、柱を 4〜5 本にしたり円盤を同サイズの円柱／円錐に崩す。対策:
+
+- **具体的な比喩で構造を固定**: 逓減は `a graduated stack like a small pagoda / wedding cake, each disk clearly SMALLER than the one below`、本数は `EXACTLY THREE pegs, the other two bare`。`stepped pyramid` だけだと円錐に融解しやすい。
+- **複数ロールして採用**: 個数・構造は確率的。5〜8 枚生成し正確な 1 枚を選ぶ (`image_generator.generate_image_flash` を直接呼び候補生成 → 目視選定 → `images/{scene}.png` へ差替 + `.keep` 保護)。
+- **正確性が本質的なら Manim/Pillow** (§1 の判断基準)。器具が「情感ある小道具」に留まる場合のみ Gemini + 上記で妥協。
+
 ---
 
 ## 4. 画像生成API

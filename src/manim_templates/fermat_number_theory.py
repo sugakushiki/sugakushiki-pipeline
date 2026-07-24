@@ -77,7 +77,6 @@ class FermatNumberTheory(Scene):
                    5^6=15625≡1, 6^6=46656≡1.
         """
         duration = self._duration
-        highlight = self._highlight_color
 
         p = 7
         a_values = [1, 2, 3, 4, 5, 6]
@@ -193,7 +192,6 @@ class FermatNumberTheory(Scene):
         Concrete examples: 5=1²+2², 13=2²+3², 17=1²+4², 29=2²+5², 37=1²+6²
         """
         duration = self._duration
-        highlight = self._highlight_color
 
         # Title
         title = Text("Christmas Theorem (1640)", font=FONT, font_size=26, color=TEXT_DIM)

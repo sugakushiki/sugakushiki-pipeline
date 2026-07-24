@@ -33,12 +33,12 @@ def _calc_wait_scale(duration, anim_time, default_wait_total):
         return 1.0
     target_waits = max(duration - anim_time, default_wait_total * 0.3)
     return max(0.3, min(target_waits / default_wait_total, 5.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template with no on-screen person/year claims — declared empty under the
 # lint's "default" fallback key (checked, not silently skipped).
 LINT_FACTUAL_CLAIMS = {"default": {"people": [], "years": []}}
-
-
 
 
 class ProbabilisticMethod(Scene):

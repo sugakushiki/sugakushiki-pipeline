@@ -488,7 +488,7 @@ Manimで生成するアニメーション。テンプレートIDまたはカス�
 ## 8. ファイル命名規則
 
 ```
-episodes/001_erdos/
+examples/moriarty/
 ├── scene_definition.json        # シーン定義（パイプラインの入力）
 ├── audio/
 │   ├── intro_01.wav             # シーン別結合音声

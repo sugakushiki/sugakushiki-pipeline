@@ -214,7 +214,7 @@ def call_claude(
         start_time = time.time()
         print(f"  Claude Code ({model}) を実行中...")
 
-        exit_code = os.system(cmd)
+        os.system(cmd)
 
         elapsed = time.time() - start_time
         print(f"  完了 ({elapsed:.1f}秒 / {elapsed / 60:.1f}分)")

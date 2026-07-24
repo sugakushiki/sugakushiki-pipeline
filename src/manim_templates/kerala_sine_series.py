@@ -148,7 +148,9 @@ class KeralaSineSeries(Scene):
         current_graph = None
         degree_label = None
 
-        for i, (n_terms, deg, color) in enumerate(zip(n_terms_list, degrees, colors, strict=False)):
+        for _i, (n_terms, deg, color) in enumerate(
+            zip(n_terms_list, degrees, colors, strict=False)
+        ):
             # Plot partial sum, clipped to a reasonable y range
             def make_fn(nt):
                 def fn(x):
@@ -253,7 +255,9 @@ class KeralaSineSeries(Scene):
         current_graph = None
         degree_label = None
 
-        for i, (n_terms, deg, color) in enumerate(zip(n_terms_list, degrees, colors, strict=False)):
+        for _i, (n_terms, deg, color) in enumerate(
+            zip(n_terms_list, degrees, colors, strict=False)
+        ):
 
             def make_fn(nt):
                 def fn(x):

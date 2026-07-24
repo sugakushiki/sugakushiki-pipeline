@@ -120,7 +120,6 @@ class KonigsbergBridges(Scene):
     # -------------------------------------------------------------------
     def build_map(self):
         duration = self._duration
-        highlight = self._highlight_color
 
         # --- Layout plan
         # title:    y = +3.15
@@ -206,7 +205,6 @@ class KonigsbergBridges(Scene):
     # -------------------------------------------------------------------
     def build_abstract(self):
         duration = self._duration
-        highlight = self._highlight_color
 
         # --- Layout plan
         # title:       y = +3.15

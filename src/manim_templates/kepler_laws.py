@@ -38,7 +38,6 @@ import math
 import numpy as np
 from manim import (
     Brace,
-    DashedLine,
     Dot,
     Ellipse,
     FadeIn,
@@ -171,7 +170,9 @@ class KeplerLaws(Scene):
 
         self.play(FadeIn(title), run_time=0.7)
         self.play(FadeIn(ellipse), FadeIn(major), FadeIn(v_left), FadeIn(v_right), run_time=1.0)
-        self.play(FadeIn(sun_dot), FadeIn(sun_label), FadeIn(empty_dot), FadeIn(empty_label), run_time=0.8)
+        self.play(
+            FadeIn(sun_dot), FadeIn(sun_label), FadeIn(empty_dot), FadeIn(empty_label), run_time=0.8
+        )
         self.play(FadeIn(planet_dot), FadeIn(planet_label), run_time=0.6)
         self.play(FadeIn(r1), FadeIn(r2), FadeIn(r1_lbl), FadeIn(r2_lbl), run_time=0.8)
         self.play(FadeIn(formula), run_time=0.7)

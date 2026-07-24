@@ -332,6 +332,8 @@ class HaltingProblem(Scene):
         ).move_to([0, -2.0, 0])
         self.play(FadeIn(conclusion), run_time=0.5)
         self.wait(max(duration - 7.0, 1.5))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -339,7 +341,6 @@ LINT_FACTUAL_CLAIMS = {
     "diagonal": {"people": [], "years": []},
     "paradox": {"people": [], "years": []},
 }
-
 
 
 SCENES = {

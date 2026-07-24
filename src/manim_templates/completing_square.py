@@ -419,6 +419,8 @@ class CompletingSquare(Scene):
 
         self.play(FadeIn(highlight_box), FadeIn(note), run_time=0.6)
         self.wait(max(duration - anim_time - n_forms * 0.8, 1.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -427,7 +429,6 @@ LINT_FACTUAL_CLAIMS = {
     "proof": {"people": [], "years": []},
     "six_types": {"people": [], "years": []},
 }
-
 
 
 # ---------------------------------------------------------------------------

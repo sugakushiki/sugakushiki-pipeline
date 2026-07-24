@@ -87,6 +87,61 @@ def _scene_narration_text(scene):
     return " ".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# backstop: data-driven reused templates must carry their data param.
+# ---------------------------------------------------------------------------
+# Reused, data-driven templates fall back to a built-in self-test default when
+# their required data param is absent -- and that default is ANOTHER episode's
+# data. timeline_recap with empty params {} silently renders Laplace's life
+# events (誕生1749 / 大不等性 / 娘を亡くす) under the current episode's title.
+# It recurred in ある回 (Germain) / ある回 (Fibonacci) / ある回 (Cauchy) / ある回
+# (Daniel Bernoulli). The template's own guard only fires on PARTIAL params; a
+# fully-empty {} is indistinguishable from the standalone self-test, so it
+# cannot raise there. This pipeline-scope check asserts the data param so an
+# empty-params reuse never reaches the assembled video (fail fast, no silent
+# failures; see feedback_pipeline_design_principles).
+_REQUIRED_TEMPLATE_PARAMS = {
+    "timeline_recap": "milestones",
+}
+
+
+def check_reused_template_params(scene_def):
+    """Return violations for data-driven reused templates missing their param.
+
+    A violation is a dict {scene_id, template, param} for each manim scene whose
+    template is in _REQUIRED_TEMPLATE_PARAMS but whose visual.params lacks a
+    non-empty value for the required key. The pipeline runs this as a fail-fast
+    preflight before the (expensive) visuals render, so a template's self-test
+    default never silently ships another episode's data.
+
+    Args:
+        scene_def: scene_definition.json dict
+
+    Returns:
+        list of dicts {"scene_id", "template", "param"} (empty if all OK).
+    """
+    violations = []
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual", {})
+            if visual.get("type") != "manim":
+                continue
+            template = visual.get("template")
+            req = _REQUIRED_TEMPLATE_PARAMS.get(template)
+            if not req:
+                continue
+            params = visual.get("params") or {}
+            if not params.get(req):  # missing, None, empty list/str/dict
+                violations.append(
+                    {
+                        "scene_id": scene.get("scene_id", "?"),
+                        "template": template,
+                        "param": req,
+                    }
+                )
+    return violations
+
+
 def lint_manim_factual_claims(scene_def, manim_dir):
     """warn when narration is missing factual claims (people / years)
     hardcoded in Manim templates' LINT_FACTUAL_CLAIMS metadata.
@@ -127,6 +182,25 @@ def lint_manim_factual_claims(scene_def, manim_dir):
             mode = visual.get("params", {}).get("mode")
             sid = scene.get("scene_id", "?")
             tag = f"{template}/{mode}" if mode else template
+            _claims_all = _extract_claims_via_ast(template, manim_dir)
+
+            # multi-mode template selected without an explicit mode. The
+            # render then falls back to the template's DEFAULT mode, which may
+            # not match the narration. ある回 failure mode: math_06
+            # 'mandelbrot_julia' had no mode -> defaulted to 'iteration' and
+            # never drew the Mandelbrot set the narration describes (the
+            # showpiece scene showed a single diverging orbit instead). math_02
+            # /03/04 had the same silent-mismatch. LINT_FACTUAL_CLAIMS is keyed
+            # by mode, so >1 key == multi-mode. Warn so the operator sets
+            # visual.params.mode explicitly (no silent default mismatch).
+            if mode is None and isinstance(_claims_all, dict) and len(_claims_all) > 1:
+                _modes = ", ".join(sorted(_claims_all.keys()))
+                print(
+                    f"  [LINT] {sid} ({template}): multi-mode template but no "
+                    f"explicit visual.params.mode -> renders DEFAULT mode "
+                    f"(may mismatch narration). Modes: {_modes}"
+                )
+                warn_count += 1
 
             # No-silent-failures: a manim scene whose template carries no
             # LINT_FACTUAL_CLAIMS metadata cannot have its on-screen people /
@@ -134,7 +208,7 @@ def lint_manim_factual_claims(scene_def, manim_dir):
             # silently — a template selected by name can render an unrelated
             # person/year (the exact failure mode this lint exists to catch).
             # Missing template files are left to visual_generator.
-            if _extract_claims_via_ast(template, manim_dir) is None:
+            if _claims_all is None:
                 if os.path.exists(os.path.join(manim_dir, f"{template}.py")):
                     print(
                         f"  [LINT] {sid} ({tag}): template has no "

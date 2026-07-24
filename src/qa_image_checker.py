@@ -14,8 +14,8 @@ Role distinction:
     Both use the same model via Claude Code CLI but serve different purposes.
 
 Usage:
-    python src/qa_image_checker.py episodes/001_erdos/scene_definition.json
-    python src/qa_image_checker.py episodes/001_erdos/scene_definition.json --output qa_report_images.json
+    python src/qa_image_checker.py examples/moriarty/scene_definition.json
+    python src/qa_image_checker.py examples/moriarty/scene_definition.json --output qa_report_images.json
 """
 
 import argparse
@@ -210,12 +210,20 @@ issuesがない場合は [] とすること。"""
 
 
 def evaluate_consistency(scenes_with_images: list[dict]) -> dict:
-    """Check cross-scene consistency of the main subject across person/intro scenes."""
-    # intro + person セクションのみ対象（主人公が登場する可能性が高い）
+    """Check cross-scene consistency of the main subject across person/intro scenes.
+
+    ある回 強化: visual.is_subject=false のシーン (脇役・別人物、例 テオン/シネシオス) は
+    除外する。従来は intro+person 全シーンを「主人公」前提で比較したため、脇役を別人物
+    として「不統一」と誤検出していた。無印は is_subject=true 扱い (後方互換)。主題者シーンが2枚未満なら
+    比較対象なしとして skip する。
+    """
+    # intro + person セクションかつ主題者シーンのみ対象 (脇役は is_subject=false で除外)
     target = [
         s
         for s in scenes_with_images
-        if s["scene"].get("section_id") in ("intro", "person") and s["image_path"] is not None
+        if s["scene"].get("section_id") in ("intro", "person")
+        and s["image_path"] is not None
+        and s["scene"].get("visual", {}).get("is_subject", True)
     ][:8]  # 最大8枚
 
     if len(target) < 2:
@@ -412,9 +420,7 @@ def main():
     # output across the board), the issues_count would naively report 0 issues = PASS.
     # That would mask the actual silent failure.
     # Treat "all scenes errored" as ERROR status instead of PASS.
-    scenes_errored = sum(
-        1 for r in scene_results.values() if isinstance(r, dict) and "error" in r
-    )
+    scenes_errored = sum(1 for r in scene_results.values() if isinstance(r, dict) and "error" in r)
     total_scenes = len(scenes_with_images)
     silent_fail_all = total_scenes > 0 and scenes_errored == total_scenes
 
@@ -453,9 +459,12 @@ def main():
 
     # ── サマリー表示 ──────────────────────────────────────────
     status_icon = (
-        "[PASS]" if status == "PASS"
-        else "[WARN]" if status == "WARN"
-        else "[ERROR]" if status == "ERROR"
+        "[PASS]"
+        if status == "PASS"
+        else "[WARN]"
+        if status == "WARN"
+        else "[ERROR]"
+        if status == "ERROR"
         else "[FAIL]"
     )
     if status == "ERROR":

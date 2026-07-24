@@ -207,6 +207,8 @@ class TaxicabAnimation(Scene):
         self.play(FadeIn(both), run_time=0.8)
         self.play(FadeIn(note), run_time=0.6)
         self.wait(wait_unit * 2)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -214,7 +216,6 @@ LINT_FACTUAL_CLAIMS = {
     "static": {"people": [], "years": []},
     "animation": {"people": [], "years": []},
 }
-
 
 
 # ---------------------------------------------------------------------------

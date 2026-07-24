@@ -64,11 +64,11 @@ def _calc_wait_scale(duration, anim_time, default_wait_total):
         return 1.0
     target_waits = max(duration - anim_time, default_wait_total * 0.3)
     return max(0.3, min(target_waits / default_wait_total, 5.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template; "default" is the lint's fallback key when no mode is given.
 LINT_FACTUAL_CLAIMS = {"default": {"people": [["エルデシュ", "Erdős"]], "years": []}}
-
-
 
 
 class RandomGraphColoring(Scene):

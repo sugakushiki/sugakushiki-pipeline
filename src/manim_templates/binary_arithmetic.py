@@ -134,8 +134,8 @@ class BinaryArithmetic(Scene):
         # Show 0..15 in two columns (8 rows each)
         rows_y_start = 1.7
         row_step = 0.42
-        col_x_left = [-3.4, -1.0]   # decimal, binary
-        col_x_right = [1.4, 3.4]    # decimal, binary
+        col_x_left = [-3.4, -1.0]  # decimal, binary
+        col_x_right = [1.4, 3.4]  # decimal, binary
 
         anim_budget = (duration - 1.5 - 0.5) / 16
         per_pair = max(0.18, anim_budget * 2)
@@ -146,13 +146,9 @@ class BinaryArithmetic(Scene):
             y = rows_y_start - k * row_step
 
             d_left = MathTex(str(n_left), font_size=26, color=TEXT_WHITE)
-            b_left = MathTex(
-                _to_binary(n_left), font_size=26, color=ACCENT_CYAN
-            )
+            b_left = MathTex(_to_binary(n_left), font_size=26, color=ACCENT_CYAN)
             d_right = MathTex(str(n_right), font_size=26, color=TEXT_WHITE)
-            b_right = MathTex(
-                _to_binary(n_right), font_size=26, color=ACCENT_CYAN
-            )
+            b_right = MathTex(_to_binary(n_right), font_size=26, color=ACCENT_CYAN)
 
             d_left.move_to([col_x_left[0], y, 0])
             b_left.move_to([col_x_left[1], y, 0])
@@ -282,9 +278,7 @@ class BinaryArithmetic(Scene):
         gears = []
         labels = []
         digit_labels = []
-        for x, label, digit in zip(
-            col_x, col_labels_text, col_digits, strict=True
-        ):
+        for x, label, digit in zip(col_x, col_labels_text, col_digits, strict=True):
             # Gear: large circle with small dot teeth
             big = Circle(radius=0.7, color=ACCENT_CYAN, stroke_width=3)
             big.move_to([x, 0.6, 0])
@@ -324,8 +318,11 @@ class BinaryArithmetic(Scene):
             x1 = col_x[i] + 0.78
             x2 = col_x[i + 1] - 0.78
             ar = Arrow(
-                [x1, 0.6, 0], [x2, 0.6, 0],
-                color=ACCENT_PINK, stroke_width=3, buff=0.05,
+                [x1, 0.6, 0],
+                [x2, 0.6, 0],
+                color=ACCENT_PINK,
+                stroke_width=3,
+                buff=0.05,
             )
             carry_arrows.add(ar)
         carry_label = Text(
@@ -363,8 +360,8 @@ class BinaryArithmetic(Scene):
 
         # Eight trigrams: each is 3 bits, top bit at top
         # Layout: 2 rows × 4 columns
-        positions_row1 = [-4.5, -1.5, 1.5, 4.5]   # 0..3
-        positions_row2 = [-4.5, -1.5, 1.5, 4.5]   # 4..7
+        positions_row1 = [-4.5, -1.5, 1.5, 4.5]  # 0..3
+        positions_row2 = [-4.5, -1.5, 1.5, 4.5]  # 4..7
         row1_y = 1.4
         row2_y = -0.6
 

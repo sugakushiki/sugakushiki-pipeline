@@ -11,12 +11,11 @@ import random
 
 from manim import *
 from style import ACCENT_CYAN, ACCENT_GOLD, BG_COLOR, TEXT_DIM, load_params
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template with no on-screen person/year claims — declared empty under the
 # lint's "default" fallback key (checked, not silently skipped).
 LINT_FACTUAL_CLAIMS = {"default": {"people": [], "years": []}}
-
-
 
 
 class ErdosWander(Scene):
@@ -25,7 +24,7 @@ class ErdosWander(Scene):
     def construct(self):
         self.camera.background_color = BG_COLOR
         params = load_params()
-        style = params.get("style", "abstract_dots")
+        params.get("style", "abstract_dots")
 
         random.seed(42)  # reproducible layout
 
@@ -57,7 +56,7 @@ class ErdosWander(Scene):
         random.shuffle(visit_order)
 
         edges = VGroup()
-        for i, target_idx in enumerate(visit_order[:12]):
+        for _i, target_idx in enumerate(visit_order[:12]):
             target = positions[target_idx]
 
             # Draw faint trail

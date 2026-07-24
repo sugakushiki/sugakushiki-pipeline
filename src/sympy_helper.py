@@ -15,8 +15,6 @@ Design: see docs/SYMPY_HELPER_DESIGN.md
 
 from __future__ import annotations
 
-from typing import Union
-
 from sympy import (
     Matrix,
     Rational,
@@ -28,7 +26,7 @@ from sympy import (
     sympify,
 )
 
-Number = Union[int, Rational]
+Number = int | Rational
 
 
 # ---------------------------------------------------------------------------

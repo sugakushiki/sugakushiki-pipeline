@@ -64,6 +64,16 @@ QA SourceManager warning が出ている各 unsourced_claim について:
 - なければ `narration[i].replace('|', '')` の flat 版で OK
 - 配列の一部 index だけ修正する場合、**修正しない index にも必ず `narration[i]` と同じ文字列をコピー** (空文字は VOICEVOX が極小無音 wav を返して短時間の字幕高速通過を起こす、過去のケースで発覚)
 
+### Cloud TTS: `narration_speech_cloud` も同期対象 (2026-07-04〜)
+
+`tts.engine=cloud` の ep は Cloud 用の任意フィールド **`narration_speech_cloud`** を持つ。sync surface が **2本** になったので、`narration` を編集したら **`narration_speech`(VOICEVOX) と `narration_speech_cloud`(Cloud) の両方**を同 index で同期する。
+
+- `narration_speech_cloud` は VOICEVOX と別読み: **孤立助詞のみ** は→「わ」/へ→「え」(gen_cloud_readings が コンマ孤立の `、は`/`、へ` を自動変換。**語中の は を わ にしない** ── 全 は を わ にする blanket-わ は Chirp3-HD が独立わの境目に不自然な間を挿入する)、外国人名カタカナ化、全/半角スペース除去、**辞書非適用** (Cloud は verbatim 送信)。VOICEVOX の kana 補正をそのまま流用しない。
+- **cloud の生成主体は gen_cloud_readings** (LLM ではない): script_generator は LLM が出力した `narration_speech_cloud` を strip し、gen_cloud が narration から native は で再生成する。手書きで既存 cloud を調整する場合のみ上記の孤立助詞ルールに従う (config に「LLM に narration_speech_cloud を用意させる」指示を書かない)。
+- 未設定なら cloud は `narration_speech`→`narration` に fallback し「読み未検証」WARN。
+- `validate_narration_speech()` は両フィールドの空要素を fail-fast、`lint_narration_markers()` は両フィールドの長さ不一致を WARN。
+- Cloud 読みの検証は `scripts/stt_qa.py` (Gemini STT)。VOICEVOX の pronunciation_check/reading_guard は cloud には走らない。
+
 ### 自動検証
 
 `audio_generator.py` の `lint_narration_markers()` が narration vs narration_speech の drift を WARN として検出 (speech 側の漢字欠落 + 数字列不一致を subseq 比較)。

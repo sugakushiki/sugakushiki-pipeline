@@ -43,13 +43,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 # Windows console は cp932、Japanese print の文字化け回避
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -87,6 +88,31 @@ def find_reference_photos(episode_dir: Path) -> list[Path]:
     return refs
 
 
+def has_subject_portrait_scenes(scene_def: dict) -> bool:
+    """True if the episode has >=1 subject portrait scene that relies on a reference.
+
+    A subject portrait = a ken_burns scene with use_reference != false and
+    is_subject != false (no_human scenes are excluded: they intentionally have no
+    person, so a missing reference is not a defect for them). When such scenes exist
+    but no usable reference photo is found, "no reference" is a DEFECT (portraits
+    generated text-only -> drift from the real person), not a benign skip.
+    """
+    sections = scene_def.get("sections") or [{"scenes": scene_def.get("scenes", [])}]
+    for sec in sections:
+        for sc in sec.get("scenes", []):
+            v = sc.get("visual", {})
+            if v.get("type") != "ken_burns":
+                continue
+            if v.get("use_reference", True) is False:
+                continue
+            if v.get("is_subject", True) is False:
+                continue
+            if v.get("no_human", False) is True:
+                continue
+            return True
+    return False
+
+
 def describe_reference_vision(client, image_path: Path) -> str:
     """Gemini Flash Vision に reference 写真の人物特徴を describe させる."""
     from PIL import Image
@@ -109,9 +135,7 @@ def describe_reference_vision(client, image_path: Path) -> str:
     return response.text.strip()
 
 
-def check_prompt_vs_reference(
-    client, image_path: Path, scene_id: str, source_prompt: str
-) -> dict:
+def check_prompt_vs_reference(client, image_path: Path, scene_id: str, source_prompt: str) -> dict:
     """Sonnet 互換 prompt で reference 写真と source_prompt の整合性判定."""
     from PIL import Image
 
@@ -153,7 +177,7 @@ mismatches は実際の矛盾のみ、許容差 (年齢差 etc.) は除外。"""
     # Strip code fences if present
     if text.startswith("```"):
         lines = text.split("\n")
-        text = "\n".join(l for l in lines if not l.startswith("```"))
+        text = "\n".join(ln for ln in lines if not ln.startswith("```"))
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
@@ -166,16 +190,70 @@ mismatches は実際の矛盾のみ、許容差 (年齢差 etc.) は除外。"""
         }
 
 
+# Classify a mismatch string as IDENTITY (facial hair / head hair / bone / gender)
+# vs AGE. IDENTITY = the source_prompt contradicts WHO the subject is = a shipped-defect risk. AGE
+# (young/old version) is usually intentional age variation and far lower signal, so
+# it must not drown out an identity mismatch. Unclassified -> identity (fail safe:
+# never hide a possible identity contradiction).
+_IDENTITY_KW = (
+    "顔の毛",
+    "ひげ",
+    "髭",
+    "口ひげ",
+    "もみあげ",
+    "beard",
+    "mustache",
+    "moustache",
+    "sideburn",
+    "clean-shaven",
+    "頭髪",
+    "髪",
+    "hair",
+    "禿",
+    "balding",
+    "骨格",
+    "bone",
+    "性別",
+    "gender",
+    "ハンドルバー",
+)
+_AGE_KW = ("年齢", "age", "elderly", "young", "歳", "老", "若")
+
+
+def classify_mismatch(mm: str) -> str:
+    """'identity' if the mismatch is about facial hair / head hair / bone / gender;
+    'age' if it is only about age. Identity dominates when both appear."""
+    low = mm.lower()
+    if any(k in mm or k.lower() in low for k in _IDENTITY_KW):
+        return "identity"
+    if any(k in mm or k.lower() in low for k in _AGE_KW):
+        return "age"
+    return "identity"
+
+
 def detect_has_person_prompt(prompt: str) -> bool:
     """簡易: prompt に person-indicating words が含まれるか."""
-    import re as _re
 
     keywords = [
-        "Portrait of", "portrait of",
-        "a young", "an elderly", "a middle-aged", "an old",
-        "German man", "German woman", "Russian man", "Russian woman",
-        "French mathematician", "Italian", "Greek scholar",
-        " man,", " woman,", " man ", " woman ", " man.", " woman.",
+        "Portrait of",
+        "portrait of",
+        "a young",
+        "an elderly",
+        "a middle-aged",
+        "an old",
+        "German man",
+        "German woman",
+        "Russian man",
+        "Russian woman",
+        "French mathematician",
+        "Italian",
+        "Greek scholar",
+        " man,",
+        " woman,",
+        " man ",
+        " woman ",
+        " man.",
+        " woman.",
     ]
     return any(k in prompt for k in keywords)
 
@@ -195,6 +273,30 @@ def main() -> int:
     scene_def = load_scene_def(episode_dir)
     ref_photos = find_reference_photos(episode_dir)
     if not ref_photos:
+        # Only a benign SKIP if the episode genuinely uses no subject portrait.
+        # If subject portraits DO exist, "no usable reference" is a DEFECT: the lint
+        # can't run and those portraits were likely generated text-only (drift from
+        # the real person) -- the exact ある回 regression. Fail loud (WARN), still
+        # return without hard-failing.
+        if has_subject_portrait_scenes(scene_def):
+            banner = (
+                f"[WARN] subject portraits exist but no usable reference photo in "
+                f"{episode_dir}/images/wiki_*.* -> lint cannot run; 主題肖像は "
+                f"text-only 生成の可能性大 (本人と乖離)。wikimedia_credits.json の "
+                f"solo_portrait を確認してください "
+                f"。"
+            )
+            print(f"\n{'=' * 60}")
+            print(banner)
+            print("NO_USABLE_REFERENCE: 1")  # parseable marker for the pipeline roll-up
+            print(banner, file=sys.stderr)  # roll-up (stderr)
+            try:
+                import pipeline_log
+
+                pipeline_log.emit_stderr_warn_summary("portrait_no_reference", 1)
+            except Exception:
+                pass
+            return 0
         print(f"[SKIP] No reference photos in {episode_dir}/images/wiki_*.*")
         return 0
 
@@ -254,18 +356,49 @@ def main() -> int:
             print(f"  status: {status}")
             print(f"  ref:    {result.get('ref_features', '')[:120]}")
             print(f"  prompt: {result.get('prompt_features', '')[:120]}")
+            cats = []
             for mm in result.get("mismatches", []):
-                print(f"  MISMATCH: {mm}")
+                c = classify_mismatch(mm)
+                cats.append((c, mm))
+                print(f"  MISMATCH [{'IDENTITY' if c == 'identity' else 'AGE'}]: {mm}")
+            result["_categorized"] = cats
 
-    # Summary
-    n_mismatch = sum(1 for r in results if r.get("status") == "MISMATCH")
+    # Summary -- separate IDENTITY (facial hair / hair / bone / gender) from AGE.
+    id_scenes = [r for r in results if any(c == "identity" for c, _ in r.get("_categorized", []))]
+    age_scenes = [r for r in results if r.get("status") == "MISMATCH" and r not in id_scenes]
+    n_identity, n_age = len(id_scenes), len(age_scenes)
     print(f"\n{'=' * 60}")
-    print(f"Lint summary: {len(results)} scenes checked, {n_mismatch} MISMATCH(es)")
+    print(
+        f"Lint summary: {len(results)} scenes checked, "
+        f"{n_identity} IDENTITY mismatch scene(s), {n_age} AGE-only mismatch scene(s)"
+    )
+    print(f"IDENTITY_MISMATCHES: {n_identity}")  # parseable marker for the pipeline roll-up
+    if n_identity:
+        print(
+            "  [!] IDENTITY mismatch = source_prompt が reference と顔の毛/頭髪/骨格で矛盾 "
+            "-- 本人の風貌が誤って伝わる恐れ。出荷前に必ず確認。"
+        )
+        for r in id_scenes:
+            for c, mm in r.get("_categorized", []):
+                if c == "identity":
+                    print(f"      {r['scene_id']}: {mm}")
 
     if args.json:
-        print(json.dumps({"results": results, "mismatch_count": n_mismatch}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "results": results,
+                    "identity_mismatches": n_identity,
+                    "age_mismatches": n_age,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
 
-    return 0 if n_mismatch == 0 else 1
+    # exit 2 = IDENTITY mismatch (real subject-fidelity defect), 1 = AGE-only
+    # (usually intentional young/old version), 0 = clean.
+    return 2 if n_identity else (1 if n_age else 0)
 
 
 if __name__ == "__main__":

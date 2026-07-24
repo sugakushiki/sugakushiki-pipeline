@@ -82,13 +82,13 @@ def _calc_wait_scale(duration, anim_time, default_wait_total):
         return 1.0
     target_waits = max(duration - anim_time, default_wait_total * 0.3)
     return max(0.3, min(target_waits / default_wait_total, 5.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template; "default" is the lint's fallback key when no mode is given.
 LINT_FACTUAL_CLAIMS = {
     "default": {"people": [["フーリエ", "Fourier"], ["ギブス", "Gibbs"]], "years": []}
 }
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,6 @@ class FourierSquareWave(Scene):
         # --- Build up harmonics one by one ---
         current_graph = None
         term_label = None
-        formula_parts = []
 
         colors = [
             ACCENT_CYAN,
@@ -208,12 +207,6 @@ class FourierSquareWave(Scene):
                 stroke_width=2.0,
                 stroke_opacity=0.5,
             )
-
-            # Label showing current term
-            if k == 1:
-                formula_str = r"\sin(x)"
-            else:
-                formula_str = r"+ \frac{\sin(" + str(k) + r"x)}{" + str(k) + r"}"
 
             # Label showing which odd harmonics are included
             harmonics_so_far = ", ".join(str(2 * j + 1) for j in range(n_terms))
@@ -330,9 +323,6 @@ class FourierSquareWave(Scene):
     def build_single(self, n_terms):
         """Show a specific number of terms (quick or static display)."""
         dur = self._duration
-        anim_time = 3.0
-        default_wait_total = dur - anim_time
-        ws = 1.0  # simple hold
 
         axes = Axes(
             x_range=[-3.5, 3.5, 1],

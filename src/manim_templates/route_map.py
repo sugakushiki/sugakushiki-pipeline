@@ -213,9 +213,7 @@ class RouteMap(Scene):
             color = PERIOD_COLORS.get(category, ACCENT_CYAN)
 
             if city_from and city_from not in drawn_cities:
-                self._draw_city(
-                    city_from, city_positions, label_dirs, color, city_label_offsets
-                )
+                self._draw_city(city_from, city_positions, label_dirs, color, city_label_offsets)
                 drawn_cities.add(city_from)
 
             pos_from = city_positions.get(city_from, [0, 0, 0])
@@ -243,9 +241,7 @@ class RouteMap(Scene):
                     self.play(Create(arrow), run_time=0.6)
 
             if city_to and city_to not in drawn_cities:
-                self._draw_city(
-                    city_to, city_positions, label_dirs, color, city_label_offsets
-                )
+                self._draw_city(city_to, city_positions, label_dirs, color, city_label_offsets)
                 drawn_cities.add(city_to)
 
             self.wait(wait_per)
@@ -314,13 +310,14 @@ class RouteMap(Scene):
             self.wait(wait_per)
 
         self.wait(1.5)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
 LINT_FACTUAL_CLAIMS = {
     "default": {"people": [], "years": []},
 }
-
 
 
 # ---------------------------------------------------------------------------

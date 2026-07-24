@@ -327,6 +327,8 @@ class ChannelModel(Scene):
 
         self.play(FadeIn(ann_group), run_time=0.5)
         self.wait(2.0 * ws)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -335,7 +337,6 @@ LINT_FACTUAL_CLAIMS = {
     "noise": {"people": [], "years": []},
     "capacity": {"people": [], "years": []},
 }
-
 
 
 # -----------------------------------------------------------------------

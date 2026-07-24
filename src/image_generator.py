@@ -2,10 +2,10 @@
 image_generator.py - Generate images for ken_burns scenes via Gemini API
 
 Usage:
-    python image_generator.py scene_definition.json --output-dir episodes/001_erdos --list
-    python image_generator.py scene_definition.json --output-dir episodes/001_erdos --generate
-    python image_generator.py scene_definition.json --output-dir episodes/001_erdos --generate --scene intro_02
-    python image_generator.py scene_definition.json --output-dir episodes/001_erdos --generate --backend imagen
+    python image_generator.py scene_definition.json --output-dir examples/moriarty --list
+    python image_generator.py scene_definition.json --output-dir examples/moriarty --generate
+    python image_generator.py scene_definition.json --output-dir examples/moriarty --generate --scene intro_02
+    python image_generator.py scene_definition.json --output-dir examples/moriarty --generate --backend imagen
 
 Curation workflow:
     1. Run --generate to create all images
@@ -179,7 +179,7 @@ def remove_from_keep(images_dir: str, scene_ids: list[str]):
 # ---------------------------------------------------------------------------
 # Scene definition parsing
 # ---------------------------------------------------------------------------
-# Day 16 強化 A: source_prompt staleness 検出。
+# 強化 A: source_prompt staleness 検出。
 # scene_definition.json の visual.source_prompt (+ no_human / use_reference)
 # を変更しても既存 PNG があると image_generator がスキップしていた
 #。生成時に有効 prompt の fingerprint を sidecar に保存し、
@@ -213,18 +213,26 @@ def _save_image_meta(images_dir: str, meta: dict) -> None:
         print(f"  [WARN] _image_meta.json 書き込み失敗 (再生成判定が無効化): {e}")
 
 
-def _prompt_fingerprint(task: dict) -> str:
+def _prompt_fingerprint(task: dict, appearance: str = "") -> str:
     """画像生成に影響する user 制御入力の安定 hash。
 
     source_prompt + no_human + use_reference を対象 (これらが変われば
     生成画像が変わる)。age 推定や reference 選択は narration/写真由来で
     user 直接編集の範囲外なので fingerprint には含めない。
+
+    強化: appearance (subject_appearance / 顔特徴記述) は use_reference
+    シーンの生成 prompt に _build_reference_prompt で注入されるため、reference
+    使用シーンでは fingerprint に含める。
+    appearance を渡さない呼び出し ('') は legacy fingerprint (appearance 非対象)
+    を返し、旧 meta の後方互換判定に使う (deploy 時の一斉再生成を回避)。
     """
     basis = (
         f"{task.get('prompt', '')}"
         f"|nh={task.get('no_human', False)}"
         f"|ur={task.get('use_reference', True)}"
     )
+    if appearance and task.get("use_reference", True):
+        basis += f"|ap={appearance}"
     return hashlib.sha1(basis.encode("utf-8")).hexdigest()
 
 
@@ -314,6 +322,7 @@ def extract_image_tasks(scene_def: dict, images_dir: str) -> list:
                     "kept": scene["scene_id"] in kept_set,
                     "use_reference": use_reference,
                     "no_human": no_human,
+                    "is_subject": v.get("is_subject", True),
                     "cliche_acks": cliche_acks,
                 }
             )
@@ -481,7 +490,7 @@ def should_use_reference_photo(
 
 
 def detect_non_subject_person(prompt: str, subject_en: str) -> str | None:
-    """Day 19 強化 B: Detect if a scene's source_prompt mainly depicts a NON-subject person.
+    """強化 B: Detect if a scene's source_prompt mainly depicts a NON-subject person.
 
     ある回 で math_13 (Hermite) と closing_01 (Kovalevskaya) が Weierstrass の
     reference 写真を渡されて顔汚染した case の構造防御。
@@ -514,51 +523,156 @@ def detect_non_subject_person(prompt: str, subject_en: str) -> str | None:
     # Filter out common false positives (months, days, place names with caps).
     # NOTE: this list is intentionally broad to suppress false positives in
     # generic descriptive prose ("Young Victorian-era scholar", "The Strand
-    # Magazine", "Royal Academy") — moriarty Day 19 test exposed cases.
+    # Magazine", "Royal Academy") — moriarty test exposed cases.
     EXCLUDE = {
         # Months/days
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
-        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
-        "Saturday", "Sunday",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
         # Places (common cities/regions in 18-19c European math episodes)
-        "Berlin", "Paris", "London", "Rome", "Athens", "Madrid", "Vienna",
-        "Prussia", "Westphalia", "Stockholm", "Munich", "Bonn",
-        "Munster", "Gottingen", "Heidelberg", "Strand",
+        "Berlin",
+        "Paris",
+        "London",
+        "Rome",
+        "Athens",
+        "Madrid",
+        "Vienna",
+        "Prussia",
+        "Westphalia",
+        "Stockholm",
+        "Munich",
+        "Bonn",
+        "Munster",
+        "Gottingen",
+        "Heidelberg",
+        "Strand",
         # Nationality/era adjectives that often appear as "<Adj> <NameWord>"
-        "Prussian", "German", "French", "British", "English", "Russian",
-        "Greek", "Italian", "Dutch", "Spanish", "Swiss", "Bohemian",
-        "American", "European", "Asian", "African", "Indian", "Chinese",
-        "Japanese", "Persian", "Arab", "Arabic", "Jewish", "Hindu",
+        "Prussian",
+        "German",
+        "French",
+        "British",
+        "English",
+        "Russian",
+        "Greek",
+        "Italian",
+        "Dutch",
+        "Spanish",
+        "Swiss",
+        "Bohemian",
+        "American",
+        "European",
+        "Asian",
+        "African",
+        "Indian",
+        "Chinese",
+        "Japanese",
+        "Persian",
+        "Arab",
+        "Arabic",
+        "Jewish",
+        "Hindu",
         # Era / period descriptors
-        "Victorian", "Edwardian", "Georgian", "Elizabethan", "Tudor",
-        "Hellenistic", "Roman", "Medieval", "Renaissance", "Baroque",
-        "Classical", "Modern", "Contemporary", "Ancient",
+        "Victorian",
+        "Edwardian",
+        "Georgian",
+        "Elizabethan",
+        "Tudor",
+        "Hellenistic",
+        "Roman",
+        "Medieval",
+        "Renaissance",
+        "Baroque",
+        "Classical",
+        "Modern",
+        "Contemporary",
+        "Ancient",
         # Age / size adjectives often capitalized at sentence start
-        "Young", "Old", "Elderly", "Middle", "Aged", "Senior", "Junior",
-        "Little", "Big", "Tall", "Short", "Heavy", "Slim", "Slender",
+        "Young",
+        "Old",
+        "Elderly",
+        "Middle",
+        "Aged",
+        "Senior",
+        "Junior",
+        "Little",
+        "Big",
+        "Tall",
+        "Short",
+        "Heavy",
+        "Slim",
+        "Slender",
         # Articles/determiners that get capitalized sentence-initially
-        "The", "An", "A", "His", "Her", "Their", "This", "That", "These",
-        "Those", "Some", "Every",
+        "The",
+        "An",
+        "A",
+        "His",
+        "Her",
+        "Their",
+        "This",
+        "That",
+        "These",
+        "Those",
+        "Some",
+        "Every",
         # Institution words
-        "Europe", "Academy", "Royal", "Sciences", "Science",
-        "University", "Theological", "Philosophical",
-        "Mathematical", "Society", "Acta", "Cours", "Crelle",
-        "College", "Institute", "Library", "Museum", "Cathedral",
-        "Church", "Temple", "Palace", "Hall", "Studio", "Office",
+        "Europe",
+        "Academy",
+        "Royal",
+        "Sciences",
+        "Science",
+        "University",
+        "Theological",
+        "Philosophical",
+        "Mathematical",
+        "Society",
+        "Acta",
+        "Cours",
+        "Crelle",
+        "College",
+        "Institute",
+        "Library",
+        "Museum",
+        "Cathedral",
+        "Church",
+        "Temple",
+        "Palace",
+        "Hall",
+        "Studio",
+        "Office",
         # Generic role words ("Portrait of"/"Image of" wrappers)
-        "Portrait", "Image", "Photograph", "Drawing", "Painting", "Sketch",
-        "Scene", "View", "Shot", "Composition",
+        "Portrait",
+        "Image",
+        "Photograph",
+        "Drawing",
+        "Painting",
+        "Sketch",
+        "Scene",
+        "View",
+        "Shot",
+        "Composition",
     }
     # Extract all capitalized words and look for consecutive non-EXCLUDE pairs.
-    # Day 19 moriarty fix: "Young Charles Darwin" should NOT skip "Charles
+    # moriarty fix: "Young Charles Darwin" should NOT skip "Charles
     # Darwin" just because "Young Charles" hits EXCLUDE on the first word.
     # We iterate through all capitalized-word positions and find a pair where
     # BOTH words are non-EXCLUDE AND adjacent (separated by whitespace only).
-    cap_words = [
-        (m.start(), m.group())
-        for m in _re.finditer(r"\b[A-Z][a-z]+\b", prompt)
-    ]
+    cap_words = [(m.start(), m.group()) for m in _re.finditer(r"\b[A-Z][a-z]+\b", prompt)]
     for i in range(len(cap_words) - 1):
         pos_a, word_a = cap_words[i]
         pos_b, word_b = cap_words[i + 1]
@@ -583,26 +697,34 @@ def should_use_reference_photo_with_subject_guard(
     subject_en: str,
     scene_id: str = "",
 ) -> tuple[bool, str | None]:
-    """Day 19 強化 B: should_use_reference_photo + subject mismatch guard.
+    """強化 B: should_use_reference_photo + subject mismatch guard.
 
     Returns (use_reference_decision, warning_message_or_None).
     If the scene depicts a non-subject person (detect_non_subject_person hits),
-    force use_reference=False and return a warning. This prevents the Day 19
+    force use_reference=False and return a warning. This prevents the
     ある回 case where Hermite/Kovalevskaya scenes received Weierstrass photo.
     """
     base = should_use_reference_photo(global_use_reference, has_person, scene_use_reference)
     if not base:
         return False, None
+    # fix: the auto-detection of a "non-subject person" fires on ANY pair of
+    # adjacent capitalised words — including place/institution names (e.g. "Dunsink
+    # Observatory") and merely-mentioned secondary people (e.g. "Zerah Colburn",
+    # "Catherine Disney") in a scene that still DEPICTS the subject. Force-dropping
+    # the reference there made most subject portraits fall back to text-only
+    # generation (idealised, generic faces). The reference decision must instead be
+    # driven by the EXPLICIT flags (visual.use_reference / is_subject); the fuzzy
+    # detection is demoted to an advisory WARNING only.
     non_subj = detect_non_subject_person(prompt, subject_en)
     if non_subj:
         warn = (
-            f"  [REF-GUARD] {scene_id}: detected non-subject person "
-            f"'{non_subj}' in prompt while subject is '{subject_en}'. "
-            f"Forcing use_reference=False to avoid identity contamination. "
-            f"Set visual.use_reference=false explicitly to silence this warning."
+            f"  [REF-GUARD] {scene_id}: prompt mentions '{non_subj}' (possible non-subject "
+            f"person/place) while subject is '{subject_en}'. Reference is STILL USED "
+            f"(scene likely depicts the subject). If this scene actually depicts a "
+            f"non-subject, set visual.use_reference=false (or is_subject=false) explicitly."
         )
-        return False, warn
-    return True, None
+        return base, warn
+    return base, None
 
 
 def generate_image_imagen(
@@ -672,6 +794,144 @@ def generate_image_imagen(
 # Uses Gemini Flash's image+text → image capability to transform a real
 # photograph into an oil painting at a different age.
 # ---------------------------------------------------------------------------
+
+# Count of dirs where wiki_* references exist but NONE are usable as a solo
+# portrait even after Vision (fail-loud backstop). Surfaced to the pipeline
+# advisory roll-up from __main__ via pipeline_log.emit_stderr_warn_summary.
+_REF_TEXTONLY_HITS = 0
+
+
+def _vision_count_people(image_path: str) -> int | None:
+    """Return how many distinct real human people have a visible face in the image.
+
+    Uses Gemini Vision (gemini-2.5-flash), matching the call shape of
+    scripts/portrait_prompt_lint.describe_reference_vision. Used ONLY to recover a
+    text-heuristic-dropped photo that is actually a solo portrait.
+
+    Graceful degrade: returns None on ANY error, and when google-genai is not
+    installed or GOOGLE_API_KEY is missing (the caller treats None as "cannot
+    confirm solo" -> not promoted). Never raises, so the images step can't crash.
+    """
+    try:
+        _load_dotenv()
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            return None
+        from google import genai
+        from PIL import Image
+
+        client = genai.Client(api_key=api_key)
+        img = Image.open(image_path)
+        prompt = (
+            "Look at this photograph and count the distinct real human people whose "
+            "face is visible in it. Reply with ONLY a single integer "
+            "(for example 0, 1, 2, ...) and nothing else."
+        )
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[img, prompt],
+        )
+        text = (response.text or "").strip()
+        m = re.search(r"\d+", text)
+        return int(m.group()) if m else None
+    except Exception as e:
+        print(
+            f"  [PHOTO] Vision face-count failed for {os.path.basename(image_path)}: {str(e)[:120]}"
+        )
+        return None
+
+
+def _set_solo_portrait_in_credits(credits_path: str, filename: str) -> None:
+    """Persist solo_portrait=True for `filename` in wikimedia_credits.json.
+
+    Called when Vision confirms a text-heuristic-dropped photo is actually a solo
+    portrait, so the correction sticks (later runs skip the Vision call). Writes
+    back with encoding='utf-8', ensure_ascii=False, indent=2.
+    """
+    if not credits_path or not os.path.exists(credits_path):
+        return
+    try:
+        with open(credits_path, encoding="utf-8") as f:
+            credits = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(
+            f"  [PHOTO] Could not read {os.path.basename(credits_path)} to persist "
+            f"solo_portrait: {e}"
+        )
+        return
+    changed = False
+    for p in credits.get("photos", []):
+        if p.get("filename") == filename:
+            p["solo_portrait"] = True
+            changed = True
+    if not changed:
+        return
+    try:
+        with open(credits_path, "w", encoding="utf-8") as f:
+            json.dump(credits, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"  [PHOTO] Could not write {os.path.basename(credits_path)}: {e}")
+
+
+def _demote_group_photo_in_credits(credits_path: str, filename: str, n_people: int) -> None:
+    """Persist solo_portrait=False + usage="unused" for a ref Vision found to be a
+    GROUP photo. Mirror of _set_solo_portrait_in_credits (the promote path):
+    is_solo_portrait() is a text heuristic that can mis-tag a group photo as solo
+, which would then contaminate the identity
+    reference. Persisting the demotion stops it being used AND being credited.
+    """
+    if not credits_path or not os.path.exists(credits_path):
+        return
+    try:
+        with open(credits_path, encoding="utf-8") as f:
+            credits = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+    changed = False
+    for p in credits.get("photos", []):
+        if p.get("filename") == filename:
+            p["solo_portrait"] = False
+            p["usage"] = "unused"
+            p["unused_reason"] = (
+                f"Vision face-count = {n_people} (group photo mis-tagged solo; "
+                "not a valid identity reference)"
+            )
+            changed = True
+    if not changed:
+        return
+    try:
+        with open(credits_path, "w", encoding="utf-8") as f:
+            json.dump(credits, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"  [PHOTO] Could not write {os.path.basename(credits_path)}: {e}")
+
+
+def _warn_refs_present_but_unusable() -> None:
+    """Fail-loud backstop (Part B): wiki_* reference photos exist but none are usable
+    as a solo portrait even after Vision -> subject portraits fall back to text-only
+    generation and drift from the real person. Advisory only:
+    emits a prominent WARN to stderr for the pipeline roll-up, never halts the build.
+    """
+    global _REF_TEXTONLY_HITS
+    _REF_TEXTONLY_HITS += 1
+    try:
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    msg = (
+        "  [WARN] 参照写真は存在するのに使える solo portrait が 0 件 "
+        "-> 主題肖像が text-only 生成になり本人と乖離します。"
+        "wikimedia_credits.json の solo_portrait を確認してください "
+        "。"
+    )
+    print(msg, file=sys.stderr)
+    try:
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 def _find_reference_photos(images_dir: str) -> list[str]:
     """Find solo-portrait Wikimedia photos (wiki_*.jpg/png) for use as references.
 
@@ -711,10 +971,108 @@ def _find_reference_photos(images_dir: str) -> list[str]:
                 # No credits info → include all (backward compat)
                 refs.append(os.path.join(images_dir, f))
 
-    if skipped:
-        print(f"  [PHOTO] Skipped {len(skipped)} group photo(s) as reference: {', '.join(skipped)}")
+    # misreading: Vision-validate the INCLUDED refs (symmetric to the promote path
+    # below). is_solo_portrait() is a TEXT heuristic on the Wikimedia title/
+    # description; a group photo whose text lacks group keywords is mis-tagged
+    # solo=true and would be used as an identity reference, contaminating every
+    # subject portrait. Demote refs Vision confirms are
+    # groups (count >= 2); keep on None (no API key -> identical to the legacy
+    # fast path) / 0 / 1 to avoid false demotion. Bounded: 1-3 refs, once per build.
+    if refs:
+        kept = []
+        for rp in refs:
+            n_people = _vision_count_people(rp)
+            if n_people is not None and n_people >= 2:
+                fname = os.path.basename(rp)
+                skipped.append(fname)
+                _demote_group_photo_in_credits(credits_path, fname, n_people)
+                print(
+                    f"  [PHOTO] Vision override: {fname} shows {n_people} people "
+                    f"-> demoted (mis-tagged solo, NOT used as reference)"
+                )
+            else:
+                kept.append(rp)
+        refs = kept
+
+    # Common case: references already usable -> return as-is.
+    if refs:
+        if skipped:
+            print(
+                f"  [PHOTO] Skipped {len(skipped)} group photo(s) as reference: "
+                f"{', '.join(skipped)}"
+            )
+        return refs
+
+    # refs is empty. If wiki_* files exist that the TEXT heuristic dropped, run a
+    # Gemini Vision face-count to recover mis-tagged solo portraits. Group photos (Vision count >= 2) stay skipped.
+    promoted = []
+    for fname in skipped:
+        n_people = _vision_count_people(os.path.join(images_dir, fname))
+        if n_people == 1:
+            refs.append(os.path.join(images_dir, fname))
+            promoted.append(fname)
+            _set_solo_portrait_in_credits(credits_path, fname)
+            print(
+                f"  [PHOTO] Vision override: {fname} shows 1 person "
+                f"-> promoted to solo reference (credits updated)"
+            )
+
+    remaining_skipped = [f for f in skipped if f not in promoted]
+    if remaining_skipped:
+        print(
+            f"  [PHOTO] Skipped {len(remaining_skipped)} group photo(s) as reference: "
+            f"{', '.join(remaining_skipped)}"
+        )
+
+    # Fail-loud backstop: wiki_* references exist but none are usable even after
+    # Vision (bad tags + no API key, or genuinely all group photos). WARN, no halt.
+    if not refs and skipped:
+        _warn_refs_present_but_unusable()
 
     return refs
+
+
+def _mark_reference_photos_unused(images_dir: str) -> None:
+    """Downgrade usage="reference" -> "unused" in wikimedia_credits.json.
+
+    Called when reference photos were fetched but the GLOBAL reference gate is
+    OFF (e.g. an ancient figure with no birth_year, so use_reference evaluates
+    False and NO photo is passed to Gemini -> images are text-only/imaginative).
+    credits_generator credits by usage label, so without this it would falsely
+    credit un-used photos -- a wrong CC BY-SA festival photo mis-fetched for
+    "Euclid of Alexandria" entered ある回's public description this way. Only
+    touches usage=="reference" without a scene_id (scene-assigned photos, which
+    ARE composited, are left intact). Idempotent.
+    """
+    episode_dir = os.path.dirname(images_dir)
+    credits_path = os.path.join(episode_dir, "wikimedia_credits.json")
+    if not os.path.exists(credits_path):
+        return
+    try:
+        with open(credits_path, encoding="utf-8") as f:
+            credits = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+    changed = 0
+    for ph in credits.get("photos", []):
+        if ph.get("usage") == "reference" and not ph.get("scene_id"):
+            ph["usage"] = "unused"
+            ph["unused_reason"] = (
+                "global reference gate off (no birth_year / non-flash backend): "
+                "fetched but never passed to Gemini"
+            )
+            changed += 1
+    if not changed:
+        return
+    try:
+        with open(credits_path, "w", encoding="utf-8") as f:
+            json.dump(credits, f, ensure_ascii=False, indent=1)
+        print(
+            f"  [PHOTO] {changed} fetched reference photo(s) marked unused "
+            f"(global gate off; not credited in description)"
+        )
+    except OSError:
+        pass
 
 
 def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = "") -> int | None:
@@ -740,30 +1098,13 @@ def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = ""
         if 0 < age < 120:
             return age
 
-    # Strategy 3: Era keywords
-    _ERA_AGES = {
-        "幼少": 5,
-        "幼い": 5,
-        "子供": 8,
-        "少年": 10,
-        "青年": 20,
-        "若い": 22,
-        "学生": 20,
-        "大学": 20,
-        "中年": 45,
-        "壮年": 50,
-        "晩年": 75,
-        "老年": 75,
-        "最晩年": 80,
-        "死去": 80,
-        "亡くな": 80,
-        "逝去": 80,
-    }
-    for keyword, age in _ERA_AGES.items():
-        if keyword in narration:
-            return age
-
-    # Strategy 4: English age from source_prompt (e.g., "in his late 70s")
+    # Strategy 3: Explicit age directive in the source_prompt (e.g. "in his 50s").
+    # This is scene- and subject-specific (the artist's directive for THIS portrait),
+    # so it OUTRANKS the ambient narration era-keywords in Strategy 4 below. Those
+    # keywords can false-match on OTHER people in the scene: ある回 ("戦後
+    # ...一世代を育てました ... 学生寮 ...") matched 学生→age 20 for a 50s teaching
+    # scene, overriding the prompt's clear "in his 50s" and producing a young solo
+    # portrait under reference conditioning.
     if source_prompt:
         prompt_lower = source_prompt.lower()
 
@@ -805,6 +1146,31 @@ def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = ""
         # 4d: "elderly" without specific age
         if "elderly" in prompt_lower:
             return 75
+
+    # Strategy 4: Era keywords in the narration (lowest priority -- ambient and
+    # greedy, so it only runs when the narration has no year / no 歳 and the
+    # source_prompt gave no explicit age above).
+    _ERA_AGES = {
+        "幼少": 5,
+        "幼い": 5,
+        "子供": 8,
+        "少年": 10,
+        "青年": 20,
+        "若い": 22,
+        "学生": 20,
+        "大学": 20,
+        "中年": 45,
+        "壮年": 50,
+        "晩年": 75,
+        "老年": 75,
+        "最晩年": 80,
+        "死去": 80,
+        "亡くな": 80,
+        "逝去": 80,
+    }
+    for keyword, age in _ERA_AGES.items():
+        if keyword in narration:
+            return age
 
     return None
 
@@ -873,6 +1239,11 @@ def _build_reference_prompt(
     prompt = (
         f"Using this photograph as a reference for the person's identity, "
         f"create an oil painting in academic realism style. "
+        f"Render the face faithfully and true to life from the reference photograph; "
+        f"do NOT beautify, glamorize, smooth, slim or idealize the face, and do not make the "
+        f"person look younger, more handsome or more conventionally attractive than they really "
+        f"were. Preserve their real, plain, characteristic features (hairline and any baldness, "
+        f"side-whiskers/facial hair, lines, build and bearing). "
         f"{identity_desc}"
         f"{transform} "
         f"The subject should appear as {age_desc}. "
@@ -1290,7 +1661,7 @@ def generate_all(
     os.makedirs(images_dir, exist_ok=True)
     tasks = extract_image_tasks(scene_def, images_dir)
 
-    # Day 16 強化 A: source_prompt staleness 判定用 meta をロード。
+    # 強化 A: source_prompt staleness 判定用 meta をロード。
     image_meta = _load_image_meta(images_dir)
 
     # cliche scanner: scan all source_prompts for unverified
@@ -1340,16 +1711,25 @@ def generate_all(
             elif regen:
                 pass  # regenerate non-kept (kept already filtered above)
             else:
-                # Day 16 強化 A: source_prompt staleness 判定。
+                # 強化 A: source_prompt staleness 判定。
                 # meta に記録があり fingerprint 不一致なら source_prompt 等が
                 # 変更された → 自動再生成 (手動 png 削除を不要に)。
                 # meta 記録が無い (旧資産/初回) 場合は従来通りスキップ
                 # (全既存画像の一斉再生成という破壊的挙動を避ける)。
+                #
+                # 強化: subject_appearance 変更も検出対象に。current_fp は
+                # appearance 込み、legacy_fp は appearance 非対象。stored が
+                # legacy_fp と一致するなら appearance 追跡前の旧 meta なので
+                # stale 扱いにせず次回 save で migration (deploy 時の一斉再生成を
+                # 回避)。どちらとも不一致なら source_prompt か subject_appearance
+                # が実際に変更された → 自動再生成。
                 sid = t["scene_id"]
                 stored = image_meta.get(sid)
-                if stored is not None and stored != _prompt_fingerprint(t):
+                current_fp = _prompt_fingerprint(t, appearance)
+                legacy_fp = _prompt_fingerprint(t)
+                if stored is not None and stored != current_fp and stored != legacy_fp:
                     print(
-                        f"  [STALE] {sid}: source_prompt 変更検出 "
+                        f"  [STALE] {sid}: source_prompt/subject_appearance 変更検出 "
                         f"→ 自動再生成 (手動 png 削除不要)"
                     )
                     # fall through to regenerate
@@ -1371,6 +1751,16 @@ def generate_all(
     # ── Reference photo detection ─────────────────────────────
     ref_photos = _find_reference_photos(images_dir)
     use_reference = bool(ref_photos) and birth_year and backend == "flash"
+
+    # misreading: reference photos may be FETCHED (wikimedia_fetcher, labelled
+    # usage="reference") yet the global gate is OFF -- e.g. an ancient figure
+    # with no birth_year, so `use_reference` above is False and NO photo is ever
+    # passed to Gemini (images are text-only/imaginative). Record that ACTUAL
+    # usage in wikimedia_credits.json so credits_generator does not falsely
+    # credit them: a wrong CC BY-SA festival photo (mis-fetched for "Euclid of
+    # Alexandria") slipped into ある回's public description this way.
+    if ref_photos and not use_reference:
+        _mark_reference_photos_unused(images_dir)
 
     # 各リファレンス写真の推定年齢を計算
     ref_photo_ages = {}
@@ -1442,21 +1832,23 @@ def generate_all(
         # Also forced false when no_human=true (set in enumerate_image_tasks).
         scene_use_reference = t.get("use_reference", True)
 
-        # Day 19 強化 B: subject mismatch guard。
+        # 強化 B: subject mismatch guard。
         # subject_en 指定時は scene の prompt と subject 名を照合、別人物
         # scene なら use_reference を強制 false。
         if subject_en:
             decided, warn_msg = should_use_reference_photo_with_subject_guard(
-                use_reference, has_person, scene_use_reference,
-                current_prompt, subject_en, scene_id,
+                use_reference,
+                has_person,
+                scene_use_reference,
+                current_prompt,
+                subject_en,
+                scene_id,
             )
             if warn_msg:
                 print(warn_msg)
             ref_active = decided
         else:
-            ref_active = should_use_reference_photo(
-                use_reference, has_person, scene_use_reference
-            )
+            ref_active = should_use_reference_photo(use_reference, has_person, scene_use_reference)
 
         if ref_active:
             target_age = _estimate_scene_age(narration, birth_year, current_prompt)
@@ -1474,6 +1866,33 @@ def generate_all(
             label = "person" if has_person else "scene"
         else:
             label = "flash"
+
+        # 強化 (a): 主題者シーンが参照写真を使わず text-only 生成された
+        # 場合に警告。subject reference が存在し (global use_reference)、scene が
+        # 主題者の人物シーン (use_reference=true, is_subject=true, not no_human)
+        # なのに参照が使われなかった (ref_active False か age 推定失敗) → has_person
+        # keyword miss 等で「理想化された別人」が生成されるリスク。guard demote で
+        # 主因は解消したが残存経路を可視化する safety net。誤検出時は is_subject=false / no_human=true を明示。
+        ref_was_used = bool(ref_path and target_age is not None)
+        if (
+            use_reference
+            and t.get("use_reference", True)
+            and t.get("is_subject", True)
+            and not is_no_human_scene
+            and not ref_was_used
+        ):
+            if not has_person:
+                cause = "has_person=False (人物描写語が source_prompt に無い)"
+            elif target_age is None:
+                cause = "age 推定不可 (narration/prompt から年齢を取れず)"
+            else:
+                cause = "ref 写真選択不可"
+            print(
+                f"  [WARN] {scene_id}: 主題者シーンだが参照写真を使わず "
+                f"text-only 生成 ({cause}) -> 理想化リスク。"
+                f"脇役/人物なし scene なら is_subject=false か no_human=true を"
+                f"明示、主題者なら source_prompt に人物描写を補う"
+            )
 
         print(f"  [{i + 1}/{len(to_generate)}] {scene_id} ({label})...")
 
@@ -1570,9 +1989,11 @@ def generate_all(
 
         if final_ok:
             success += 1
-            # Day 16 強化 A: 生成成功時に有効 prompt の fingerprint を記録。
+            # 強化 A: 生成成功時に有効 prompt の fingerprint を記録。
             # 次回ビルドで source_prompt 変更を検出して自動再生成する。
-            image_meta[scene_id] = _prompt_fingerprint(t)
+            # 強化: appearance 込みで記録 (subject_appearance 変更検出用、
+            # 旧 meta を current_fp に migration)。
+            image_meta[scene_id] = _prompt_fingerprint(t, appearance)
             _save_image_meta(images_dir, image_meta)
         else:
             failed += 1
@@ -1767,7 +2188,7 @@ def main():
             appearance = config.get("subject_appearance", "")
         else:
             print("  [INFO] Appearance injection disabled (--no-appearance)")
-        # Day 19 強化 B: subject_en for non-subject-person guard
+        # 強化 B: subject_en for non-subject-person guard
         subject_en = config.get("subject_en") or config.get("mathematician", "")
 
     # Handle --keep / --unkeep commands
@@ -1839,3 +2260,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # ③ advisory roll-up: surface the fail-loud "references exist but none usable"
+    # backstop to the pipeline final summary via the X3 stderr channel (no-op unless
+    # run under the pipeline with hits). Mirrors visual_generator's DEAD-AIR roll-up.
+    if _REF_TEXTONLY_HITS:
+        try:
+            import pipeline_log
+
+            pipeline_log.emit_stderr_warn_summary("images", _REF_TEXTONLY_HITS)
+        except Exception:
+            pass

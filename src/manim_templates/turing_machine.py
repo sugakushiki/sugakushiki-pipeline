@@ -166,9 +166,8 @@ class TuringMachine(Scene):
         self.play(FadeIn(rule_label), run_time=0.3)
 
         prev_rule_text = None
-        current_head_idx = 4
 
-        for step_i, (h_idx, read_s, write_s, new_state, direction) in enumerate(steps):
+        for _step_i, (h_idx, read_s, write_s, new_state, direction) in enumerate(steps):
             # Show rule
             if direction == "HALT":
                 dir_ja = "停止"
@@ -222,7 +221,7 @@ class TuringMachine(Scene):
                     run_time=0.6,
                 )
                 head = new_head
-                current_head_idx = h_idx - 1
+                h_idx - 1
             elif direction == "HALT":
                 # Update state label
                 new_head = self._make_head(cells, h_idx, new_state)
@@ -360,6 +359,8 @@ class TuringMachine(Scene):
         self.play(FadeIn(insight), run_time=0.5)
         self.play(FadeIn(sub_insight), run_time=0.4)
         self.wait(max(duration - 6.0, 1.5))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -367,7 +368,6 @@ LINT_FACTUAL_CLAIMS = {
     "tape": {"people": [], "years": []},
     "universal": {"people": [], "years": []},
 }
-
 
 
 SCENES = {

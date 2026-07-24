@@ -204,7 +204,7 @@ class PolynomialRootsCubic(Scene):
         )
         self.play(
             *[FadeIn(d) for d in root_dots],
-            *[FadeIn(l) for l in root_labels],
+            *[FadeIn(lab) for lab in root_labels],
             FadeIn(triangle),
             run_time=1.0,
         )
@@ -274,7 +274,9 @@ class PolynomialRootsSwapAnimation(Scene):
             label.next_to(dot, d, buff=0.22)
             root_dots.append(dot)
             root_labels.append(label)
-        self.play(*[FadeIn(d) for d in root_dots], *[FadeIn(l) for l in root_labels], run_time=0.6)
+        self.play(
+            *[FadeIn(d) for d in root_dots], *[FadeIn(lab) for lab in root_labels], run_time=0.6
+        )
 
         perms = [
             (r"e", r"(1)(\omega)(\omega^2)", [0, 1, 2]),
@@ -286,7 +288,7 @@ class PolynomialRootsSwapAnimation(Scene):
         ]
 
         perm_entries = VGroup()
-        for i, (name, notation, _) in enumerate(perms):
+        for _i, (name, notation, _) in enumerate(perms):
             entry = MathTex(f"{name}: {notation}", font_size=30, color=WHITE).set_opacity(0.4)
             perm_entries.add(entry)
         perm_entries.arrange(DOWN, buff=0.32, aligned_edge=LEFT)
@@ -299,7 +301,7 @@ class PolynomialRootsSwapAnimation(Scene):
         time_per_perm = max(2.5, available / len(perms))
         current_arrangement = [0, 1, 2]
 
-        for pi, (name, notation, target) in enumerate(perms):
+        for pi, (_name, _notation, target) in enumerate(perms):
             self.play(perm_entries[pi].animate.set_opacity(1.0).set_color(GOLD), run_time=0.3)
             if pi == 0:
                 self.play(*[d.animate.scale(1.3) for d in root_dots], run_time=0.3)
@@ -372,6 +374,8 @@ class PolynomialRootsSwapAnimation(Scene):
 
         self.play(*[e.animate.set_color(GOLD).set_opacity(1.0) for e in perm_entries], run_time=0.6)
         self.wait(1.5)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -381,9 +385,9 @@ LINT_FACTUAL_CLAIMS = {
     "swap_animation": {"people": [], "years": []},
 }
 
-        # End FadeOut removed: leaves the last frame visible for FFmpeg
-        # to pad when audio exceeds animation length. Scene transitions
-        # are handled at video_assembler time, not inside Manim.
+# End FadeOut removed: leaves the last frame visible for FFmpeg
+# to pad when audio exceeds animation length. Scene transitions
+# are handled at video_assembler time, not inside Manim.
 
 
 SCENES = {

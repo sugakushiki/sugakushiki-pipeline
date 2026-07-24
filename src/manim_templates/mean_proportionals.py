@@ -30,8 +30,6 @@ Y range: -2.0 to +3.0. No trailing FadeOut. Duration-aware.
 Used by: Episode 027 (Eratosthenes), pillar B — Delian problem reduction.
 """
 
-import math
-
 from manim import (
     Arrow,
     Create,
@@ -39,7 +37,6 @@ from manim import (
     Line,
     MathTex,
     Polygon,
-    Rectangle,
     Scene,
     Text,
     VGroup,
@@ -52,7 +49,6 @@ from style import (
     BG_COLOR,
     FONT,
     TEXT_DIM,
-    TEXT_WHITE,
     load_params,
 )
 
@@ -92,7 +88,6 @@ class MeanProportionals(Scene):
         ftl = [cx - s / 2, cy + s / 2, 0]
         # Back face corners (shifted by (d*0.7, d*0.5))
         dx, dy = d * 0.75, d * 0.55
-        bbl = [fbl[0] + dx, fbl[1] + dy, 0]
         bbr = [fbr[0] + dx, fbr[1] + dy, 0]
         btr = [ftr[0] + dx, ftr[1] + dy, 0]
         btl = [ftl[0] + dx, ftl[1] + dy, 0]
@@ -129,8 +124,11 @@ class MeanProportionals(Scene):
 
         # Arrow
         arrow = Arrow(
-            [-0.85, 0.4, 0], [0.45, 0.4, 0],
-            color=ACCENT_GOLD, stroke_width=4, buff=0.0,
+            [-0.85, 0.4, 0],
+            [0.45, 0.4, 0],
+            color=ACCENT_GOLD,
+            stroke_width=4,
+            buff=0.0,
             max_tip_length_to_length_ratio=0.20,
         )
         arrow_lbl = Text("二倍にせよ", font=FONT, font_size=18, color=ACCENT_GOLD)
@@ -151,7 +149,8 @@ class MeanProportionals(Scene):
         # Question: x = ?
         question = MathTex(
             r"x \;=\; a \cdot \sqrt[3]{2}",
-            font_size=36, color=ACCENT_GOLD,
+            font_size=36,
+            color=ACCENT_GOLD,
         )
         question.move_to([0, -1.55, 0])
         self.play(FadeIn(question), run_time=0.7)
@@ -159,7 +158,9 @@ class MeanProportionals(Scene):
         # Footer note
         footer = Text(
             "定規とコンパスでは作図できない（後にヴァンツェル 1837 年証明）",
-            font=FONT, font_size=14, color=TEXT_DIM,
+            font=FONT,
+            font_size=14,
+            color=TEXT_DIM,
         )
         footer.move_to([0, -1.95, 0])
         self.play(FadeIn(footer), run_time=0.5)
@@ -188,9 +189,10 @@ class MeanProportionals(Scene):
         seg_left_x = -3.0
         ys = [1.55, 0.85, 0.15, -0.55]
         seg_group = VGroup()
-        for L, lbl_txt, c, yy in zip(lengths, labels, colors, ys):
-            seg = Line([seg_left_x, yy, 0], [seg_left_x + L * scale, yy, 0],
-                       color=c, stroke_width=5)
+        for L, lbl_txt, c, yy in zip(lengths, labels, colors, ys, strict=False):
+            seg = Line(
+                [seg_left_x, yy, 0], [seg_left_x + L * scale, yy, 0], color=c, stroke_width=5
+            )
             lbl = MathTex(lbl_txt, font_size=30, color=c)
             lbl.move_to([seg_left_x - 0.45, yy, 0])
             len_lbl = MathTex(rf"{lbl_txt}", font_size=22, color=c)
@@ -201,7 +203,8 @@ class MeanProportionals(Scene):
         # Proportional chain (header)
         chain_header = MathTex(
             r"a : x \;=\; x : y \;=\; y : 2a",
-            font_size=34, color=ACCENT_GOLD,
+            font_size=34,
+            color=ACCENT_GOLD,
         )
         chain_header.move_to([0, 2.4, 0])
         self.play(FadeIn(chain_header), run_time=0.6)
@@ -221,7 +224,8 @@ class MeanProportionals(Scene):
         # Conclusion at bottom
         concl = MathTex(
             r"\therefore \; x \;=\; a \cdot \sqrt[3]{2}",
-            font_size=34, color=ACCENT_GOLD,
+            font_size=34,
+            color=ACCENT_GOLD,
         )
         concl.move_to([0, -1.55, 0])
         self.play(FadeIn(concl), run_time=0.7)
@@ -229,7 +233,9 @@ class MeanProportionals(Scene):
         # Footer attribution
         footer = Text(
             "比例中項二つへの帰着 ── 前五世紀キオス島の数学者ヒッポクラテスの発見",
-            font=FONT, font_size=14, color=TEXT_DIM,
+            font=FONT,
+            font_size=14,
+            color=TEXT_DIM,
         )
         footer.move_to([0, -1.95, 0])
         self.play(FadeIn(footer), run_time=0.5)

@@ -32,7 +32,7 @@ import sys
 # Variables: single letter (not preceded by backslash = LaTeX command) +
 # optional subscript like _1, _{12}, _{ij}.
 _VAR_PATTERN = re.compile(
-    r"(?<!\\)([a-zA-Z])"           # leading letter not part of a LaTeX command
+    r"(?<!\\)([a-zA-Z])"  # leading letter not part of a LaTeX command
     r"(?:_\{?([0-9a-zA-Z]+)\}?)?"  # optional subscript
 )
 
@@ -97,9 +97,7 @@ def _mathtex_literals_in_template(template_path: str) -> list[str]:
     ]
 
 
-def collect_scene_variables(
-    scene_def: dict, manim_dir: str
-) -> list[dict]:
+def collect_scene_variables(scene_def: dict, manim_dir: str) -> list[dict]:
     """Walk every (section, scene) and return a list of dicts:
 
         {
@@ -255,9 +253,7 @@ def collide_warnings(scenes: list[dict]) -> list[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Lint: cross-scene formula variable consistency."
-    )
+    parser = argparse.ArgumentParser(description="Lint: cross-scene formula variable consistency.")
     parser.add_argument("scene_json", help="Path to scene_definition.json")
     parser.add_argument(
         "--manim-dir",

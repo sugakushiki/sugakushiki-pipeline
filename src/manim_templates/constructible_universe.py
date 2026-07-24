@@ -176,8 +176,7 @@ class ConstructibleUniverse(Scene):
 
         # Build V cone (left) and L cone (right)
         v_strips = []
-        v_labels_only_top = None
-        for i, (w, y, lab) in enumerate(zip(V_WIDTHS, SIDE_LEVEL_YS, V_LABELS, strict=False)):
+        for _i, (w, y, _lab) in enumerate(zip(V_WIDTHS, SIDE_LEVEL_YS, V_LABELS, strict=False)):
             strip = Rectangle(
                 width=w,
                 height=LEVEL_HEIGHT * 0.85,
@@ -190,7 +189,7 @@ class ConstructibleUniverse(Scene):
             v_strips.append(strip)
 
         l_strips = []
-        for i, (w, y, lab) in enumerate(zip(L_WIDTHS, SIDE_LEVEL_YS, L_LABELS, strict=False)):
+        for _i, (w, y, _lab) in enumerate(zip(L_WIDTHS, SIDE_LEVEL_YS, L_LABELS, strict=False)):
             strip = Rectangle(
                 width=w,
                 height=LEVEL_HEIGHT * 0.85,

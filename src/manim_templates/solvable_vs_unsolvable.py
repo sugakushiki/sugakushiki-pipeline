@@ -303,6 +303,8 @@ class SolvableVsUnsolvableComparison(Scene):
         remaining = max(0, duration - elapsed - 1.0)
         if remaining > 0:
             self.wait(remaining)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -312,9 +314,9 @@ LINT_FACTUAL_CLAIMS = {
     "comparison": {"people": [], "years": []},
 }
 
-        # End FadeOut removed: leaves the last frame visible for FFmpeg
-        # to pad when audio exceeds animation length. Scene transitions
-        # are handled at video_assembler time, not inside Manim.
+# End FadeOut removed: leaves the last frame visible for FFmpeg
+# to pad when audio exceeds animation length. Scene transitions
+# are handled at video_assembler time, not inside Manim.
 
 
 SCENES = {

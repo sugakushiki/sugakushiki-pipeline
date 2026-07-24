@@ -72,15 +72,21 @@ from style import (
     BG_COLOR,
     FONT,
     TEXT_DIM,
-    TEXT_WHITE,
     load_params,
 )
 
 config.background_color = BG_COLOR
 
 
-def _build_barometer(center_x, mm_height, ref_mm=760, scale=1.6 / 760.0,
-                     label_mm=None, glass_color=TEXT_DIM, mercury_color=ACCENT_CYAN):
+def _build_barometer(
+    center_x,
+    mm_height,
+    ref_mm=760,
+    scale=1.6 / 760.0,
+    label_mm=None,
+    glass_color=TEXT_DIM,
+    mercury_color=ACCENT_CYAN,
+):
     """Construct a Torricelli barometer at center_x, mercury column ≈ mm_height.
 
     Returns a VGroup containing: reservoir rectangle, glass tube outline,
@@ -94,22 +100,30 @@ def _build_barometer(center_x, mm_height, ref_mm=760, scale=1.6 / 760.0,
     reservoir_h = 0.45
     base_y = -1.20  # top of reservoir base
     reservoir = Rectangle(
-        width=reservoir_w, height=reservoir_h,
-        color=glass_color, stroke_width=2.0,
-        fill_color=mercury_color, fill_opacity=0.5,
+        width=reservoir_w,
+        height=reservoir_h,
+        color=glass_color,
+        stroke_width=2.0,
+        fill_color=mercury_color,
+        fill_opacity=0.5,
     )
     reservoir.move_to([center_x, base_y - reservoir_h / 2.0, 0])
 
     tube = Rectangle(
-        width=tube_w, height=tube_h,
-        color=glass_color, stroke_width=2.0,
+        width=tube_w,
+        height=tube_h,
+        color=glass_color,
+        stroke_width=2.0,
     )
     tube.move_to([center_x, base_y + tube_h / 2.0, 0])
 
     # Mercury fills tube from base_y up to base_y + col_height
     mercury = Rectangle(
-        width=tube_w * 0.94, height=col_height,
-        color=mercury_color, fill_color=mercury_color, fill_opacity=0.8,
+        width=tube_w * 0.94,
+        height=col_height,
+        color=mercury_color,
+        fill_color=mercury_color,
+        fill_opacity=0.8,
         stroke_width=0,
     )
     mercury.move_to([center_x, base_y + col_height / 2.0, 0])
@@ -172,7 +186,9 @@ class HydrostaticsPuyDeDome(Scene):
 
         msg = Text(
             "── 大気は本当に重さを持つのか？",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.92, 0])
         self.play(FadeIn(msg), run_time=0.5)
@@ -199,30 +215,42 @@ class HydrostaticsPuyDeDome(Scene):
 
         # Summit: a triangular mountain shape under barometer
         mountain = Polygon(
-            [1.5, -1.65, 0], [4.5, -1.65, 0], [3.0, -0.3, 0],
-            color=TEXT_DIM, fill_color=TEXT_DIM, fill_opacity=0.3, stroke_width=2.0,
+            [1.5, -1.65, 0],
+            [4.5, -1.65, 0],
+            [3.0, -0.3, 0],
+            color=TEXT_DIM,
+            fill_color=TEXT_DIM,
+            fill_opacity=0.3,
+            stroke_width=2.0,
         )
         summit_lbl = Text("山頂 (標高 1465 m)", font=FONT, font_size=18, color=TEXT_DIM)
         summit_lbl.move_to([3.0, -1.92, 0])
 
         self.play(
-            FadeIn(plain_ground), FadeIn(plain_lbl), Create(plain_baro),
+            FadeIn(plain_ground),
+            FadeIn(plain_lbl),
+            Create(plain_baro),
             run_time=1.2,
         )
         self.play(
-            Create(mountain), FadeIn(summit_lbl), Create(summit_baro),
+            Create(mountain),
+            FadeIn(summit_lbl),
+            Create(summit_baro),
             run_time=1.2,
         )
 
         # Difference label between them
         diff_lbl = MathTex(
             r"\Delta = 711 - 627 = 84\,\text{mm}",
-            font_size=26, color=ACCENT_PINK,
+            font_size=26,
+            color=ACCENT_PINK,
         )
         diff_lbl.move_to([0, 1.20, 0])
         conclusion = Text(
             "── 大気には、重さがある",
-            font=FONT, font_size=22, color=ACCENT_GOLD,
+            font=FONT,
+            font_size=22,
+            color=ACCENT_GOLD,
         )
         conclusion.move_to([0, 0.55, 0])
         self.play(FadeIn(diff_lbl), run_time=0.7)
@@ -241,9 +269,12 @@ class HydrostaticsPuyDeDome(Scene):
         cont_w = 4.0
         cont_h = 2.4
         container = Rectangle(
-            width=cont_w, height=cont_h,
-            color=TEXT_DIM, stroke_width=2.5,
-            fill_color=ACCENT_CYAN, fill_opacity=0.25,
+            width=cont_w,
+            height=cont_h,
+            color=TEXT_DIM,
+            stroke_width=2.5,
+            fill_color=ACCENT_CYAN,
+            fill_opacity=0.25,
         )
         container.move_to([-1.5, 0.0, 0])
         self.play(Create(container), run_time=0.9)
@@ -253,24 +284,45 @@ class HydrostaticsPuyDeDome(Scene):
         sample_y = 1.2 - 1.5
         sample_pt = [-1.5, sample_y, 0]
         from manim import Dot
+
         dot = Dot(sample_pt, color=ACCENT_PINK, radius=0.10)
         self.play(FadeIn(dot), run_time=0.4)
 
         # Four arrows emanating in 4 directions (up, down, left, right)
         arr_len = 0.6
         arrs = VGroup(
-            Arrow(sample_pt, [sample_pt[0], sample_pt[1] + arr_len, 0],
-                  color=ACCENT_GOLD, buff=0.10, stroke_width=2.4,
-                  max_tip_length_to_length_ratio=0.30),
-            Arrow(sample_pt, [sample_pt[0], sample_pt[1] - arr_len, 0],
-                  color=ACCENT_GOLD, buff=0.10, stroke_width=2.4,
-                  max_tip_length_to_length_ratio=0.30),
-            Arrow(sample_pt, [sample_pt[0] + arr_len, sample_pt[1], 0],
-                  color=ACCENT_GOLD, buff=0.10, stroke_width=2.4,
-                  max_tip_length_to_length_ratio=0.30),
-            Arrow(sample_pt, [sample_pt[0] - arr_len, sample_pt[1], 0],
-                  color=ACCENT_GOLD, buff=0.10, stroke_width=2.4,
-                  max_tip_length_to_length_ratio=0.30),
+            Arrow(
+                sample_pt,
+                [sample_pt[0], sample_pt[1] + arr_len, 0],
+                color=ACCENT_GOLD,
+                buff=0.10,
+                stroke_width=2.4,
+                max_tip_length_to_length_ratio=0.30,
+            ),
+            Arrow(
+                sample_pt,
+                [sample_pt[0], sample_pt[1] - arr_len, 0],
+                color=ACCENT_GOLD,
+                buff=0.10,
+                stroke_width=2.4,
+                max_tip_length_to_length_ratio=0.30,
+            ),
+            Arrow(
+                sample_pt,
+                [sample_pt[0] + arr_len, sample_pt[1], 0],
+                color=ACCENT_GOLD,
+                buff=0.10,
+                stroke_width=2.4,
+                max_tip_length_to_length_ratio=0.30,
+            ),
+            Arrow(
+                sample_pt,
+                [sample_pt[0] - arr_len, sample_pt[1], 0],
+                color=ACCENT_GOLD,
+                buff=0.10,
+                stroke_width=2.4,
+                max_tip_length_to_length_ratio=0.30,
+            ),
         )
         self.play(*[Create(a) for a in arrs], run_time=0.9)
 
@@ -281,14 +333,17 @@ class HydrostaticsPuyDeDome(Scene):
         formula.move_to([2.6, 1.0, 0])
         si_unit = MathTex(
             r"1\,\text{Pa} = 1\,\text{N/m}^2\;(1971\;\text{CGPM})",
-            font_size=20, color=ACCENT_PINK,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         si_unit.move_to([2.6, 0.0, 0])
         self.play(FadeIn(depth_lbl), FadeIn(formula), FadeIn(si_unit), run_time=0.9)
 
         msg = Text(
             "深さに比例して圧力が増し、四方八方に等しく伝わる",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.92, 0])
         self.play(FadeIn(msg), run_time=0.6)

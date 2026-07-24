@@ -2,7 +2,7 @@
 check_font_coverage.py - scene_definition.json内の文字がフォントで表示可能か検証する
 
 Usage:
-    python check_font_coverage.py episodes/003_galois/scene_definition.json
+    python check_font_coverage.py examples/moriarty/scene_definition.json
 
 フォントファイルのパスはスクリプト内のFONT_PATHを環境に合わせて変更すること。
 fonttools が必要: pip install fonttools

@@ -2,8 +2,8 @@
 visual_generator.py - Generate visual MP4 segments for each scene
 
 Usage:
-    python visual_generator.py scene_definition.json timing.json --output-dir episodes/001_erdos
-    python visual_generator.py scene_definition.json timing.json --output-dir episodes/001_erdos --skip-manim
+    python visual_generator.py scene_definition.json timing.json --output-dir examples/moriarty
+    python visual_generator.py scene_definition.json timing.json --output-dir examples/moriarty --skip-manim
 
 Input:  scene_definition.json + timing.json
 Output: {output_dir}/visuals/{scene_id}.mp4 for each scene
@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 # ---------------------------------------------------------------------------
@@ -67,6 +68,116 @@ def find_font():
         if os.path.exists(path):
             return path
     return None
+
+
+# ===========================================================================
+# FFmpeg subprocess timeouts
+# ===========================================================================
+#
+# ken_burns / stub encodes stream raw 1080p frames into ffmpeg over a stdin
+# pipe. If ffmpeg stops draining that pipe, the pipe
+# buffer fills and proc.stdin.write() blocks forever; there is no return code to
+# check because the process never exits. Manim render already had a 240s bound
+# (_MANIM_TIMEOUT_S); ffmpeg had none. These guards bound every ffmpeg/ffprobe
+# call so a stuck encode fails fast (explicit error -> recorded fallback marker
+# -> placeholder) instead of hanging the whole build.
+#
+# Timeouts are tiered by workload and overridable via env vars. Defaults are
+# generous: per-scene ffmpeg ops act on one <=30s clip, so 300s never
+# false-positives on real work while still catching a true hang.
+#
+# Windows note: ffmpeg/ffprobe reading a pipe/file are leaf processes (no child
+# processes), so proc.kill() / run()'s TerminateProcess reaps them without a
+# process-tree walk. (Manim, which shells out to its own ffmpeg child, is the
+# one place a tree-kill would matter -- left as-is, out of this change's scope.)
+
+
+def _ffmpeg_timeout_s(env_var: str, default: int) -> int:
+    """Read a positive-int timeout override from the environment, else default."""
+    raw = os.environ.get(env_var)
+    if raw:
+        try:
+            val = int(raw.strip())
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return default
+
+
+_FFPROBE_TIMEOUT_S = _ffmpeg_timeout_s("SUGAKUSHIKI_FFPROBE_TIMEOUT_S", 60)
+_FFMPEG_TIMEOUT_S = _ffmpeg_timeout_s("SUGAKUSHIKI_FFMPEG_TIMEOUT_S", 300)
+
+
+class _FFmpegError(RuntimeError):
+    """An ffmpeg/ffprobe subprocess failed (non-zero exit)."""
+
+
+class _FFmpegTimeout(_FFmpegError):
+    """An ffmpeg/ffprobe subprocess exceeded its timeout and was killed."""
+
+
+def _run_ffmpeg_bounded(cmd, timeout=None, label="ffmpeg", **kwargs):
+    """subprocess.run(cmd) with a wall-clock timeout, raising _FFmpegTimeout.
+
+    For non-streaming ffmpeg/ffprobe calls (no stdin pipe). The process is a
+    leaf, so run()'s kill-on-timeout reaps it cleanly on Windows.
+    """
+    if timeout is None:
+        timeout = _FFMPEG_TIMEOUT_S
+    kwargs.setdefault("capture_output", True)
+    try:
+        return subprocess.run(cmd, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        raise _FFmpegTimeout(f"{label}: ffmpeg timed out after {timeout}s") from exc
+
+
+def _pipe_frames_to_ffmpeg(cmd, frames, timeout_s, label):
+    """Stream raw RGB frames to an ffmpeg Popen via stdin under a watchdog timeout.
+
+    Raw 1080p frames are ~6 MB each, so they must be streamed rather than
+    buffered -- which rules out subprocess.run(timeout=). A Timer kills ffmpeg
+    if it overruns; the kill breaks the pipe and unblocks any write() stuck on a
+    full buffer. On a clean exit (rc 0) we return; otherwise we
+    distinguish a timeout (_FFmpegTimeout) from a genuine ffmpeg error
+    (_FFmpegError) -- the latter was previously swallowed because proc.wait()'s
+    return code was ignored.
+    """
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    state = {"timed_out": False}
+
+    def _watchdog():
+        state["timed_out"] = True
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    timer = threading.Timer(timeout_s, _watchdog)
+    timer.daemon = True
+    timer.start()
+    try:
+        for frame in frames:
+            proc.stdin.write(frame)
+    except (BrokenPipeError, OSError):
+        # ffmpeg exited early (its own error, or killed by the watchdog) and the
+        # pipe broke mid-write. Classified via returncode / timed_out below.
+        pass
+    finally:
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        proc.wait()
+        timer.cancel()
+
+    # rc == 0 only if ffmpeg exited on its own (a watchdog kill yields non-zero),
+    # so a late-firing timer after success can never be misread as a timeout.
+    if proc.returncode == 0:
+        return
+    if state["timed_out"]:
+        raise _FFmpegTimeout(f"{label}: ffmpeg killed after {timeout_s}s timeout")
+    raise _FFmpegError(f"{label}: ffmpeg exited with code {proc.returncode}")
 
 
 # ===========================================================================
@@ -132,46 +243,49 @@ def generate_ken_burns(
         output_path,
     ]
 
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    def _frames():
+        for frame_idx in range(total_frames):
+            t = frame_idx / max(total_frames - 1, 1)  # 0.0 → 1.0
 
-    for frame_idx in range(total_frames):
-        t = frame_idx / max(total_frames - 1, 1)  # 0.0 → 1.0
+            # Calculate zoom level based on effect
+            if effect == "zoom_in":
+                zoom = 1.0 + zoom_range * t
+            elif effect == "zoom_out":
+                zoom = max_zoom - zoom_range * t
+            elif effect == "pan_left":
+                zoom = 1.0 + zoom_range * 0.5  # slight zoom, pan left
+            elif effect == "pan_right":
+                zoom = 1.0 + zoom_range * 0.5  # slight zoom, pan right
+            else:
+                zoom = 1.0 + zoom_range * t  # default: zoom_in
 
-        # Calculate zoom level based on effect
-        if effect == "zoom_in":
-            zoom = 1.0 + zoom_range * t
-        elif effect == "zoom_out":
-            zoom = max_zoom - zoom_range * t
-        elif effect == "pan_left":
-            zoom = 1.0 + zoom_range * 0.5  # slight zoom, pan left
-        elif effect == "pan_right":
-            zoom = 1.0 + zoom_range * 0.5  # slight zoom, pan right
-        else:
-            zoom = 1.0 + zoom_range * t  # default: zoom_in
+            # Use float coordinates for sub-pixel precision (eliminates jitter)
+            crop_w = width * max_zoom / zoom
+            crop_h = height * max_zoom / zoom
 
-        # Use float coordinates for sub-pixel precision (eliminates jitter)
-        crop_w = width * max_zoom / zoom
-        crop_h = height * max_zoom / zoom
+            # Center crop with optional pan (float precision)
+            if effect == "pan_left":
+                cx = (new_w - crop_w) * (1.0 - t * 0.5)
+            elif effect == "pan_right":
+                cx = (new_w - crop_w) * (0.5 + t * 0.5)
+            else:
+                cx = (new_w - crop_w) / 2.0
+            cy = (new_h - crop_h) / 2.0
 
-        # Center crop with optional pan (float precision)
-        if effect == "pan_left":
-            cx = (new_w - crop_w) * (1.0 - t * 0.5)
-        elif effect == "pan_right":
-            cx = (new_w - crop_w) * (0.5 + t * 0.5)
-        else:
-            cx = (new_w - crop_w) / 2.0
-        cy = (new_h - crop_h) / 2.0
+            # Clamp (float)
+            cx = max(0.0, min(cx, new_w - crop_w))
+            cy = max(0.0, min(cy, new_h - crop_h))
 
-        # Clamp (float)
-        cx = max(0.0, min(cx, new_w - crop_w))
-        cy = max(0.0, min(cy, new_h - crop_h))
+            # Use resize with float box for sub-pixel interpolation
+            frame = img.resize(
+                (width, height), Image.LANCZOS, box=(cx, cy, cx + crop_w, cy + crop_h)
+            )
+            yield frame.tobytes()
 
-        # Use resize with float box for sub-pixel interpolation
-        frame = img.resize((width, height), Image.LANCZOS, box=(cx, cy, cx + crop_w, cy + crop_h))
-        proc.stdin.write(frame.tobytes())
-
-    proc.stdin.close()
-    proc.wait()
+    # Bounded by a watchdog: a stuck ffmpeg pipe fails fast instead of hanging.
+    _pipe_frames_to_ffmpeg(
+        cmd, _frames(), _FFMPEG_TIMEOUT_S, f"ken_burns[{os.path.basename(output_path)}]"
+    )
 
 
 # ===========================================================================
@@ -224,6 +338,40 @@ def _rgb_to_hex(rgb_tuple) -> str:
     return "#{:02x}{:02x}{:02x}".format(*rgb_tuple)
 
 
+# 禁則処理 (kinsoku): 行頭・行末で使ってはいけない約物。
+_KINSOKU_HEAD = "、。，．・：；？！）］｝」』】〕〉》”’"  # これで行を始めない
+_KINSOKU_TAIL = "（［｛「『【〔〈《“‘"  # これで行を終えない
+
+
+def _apply_kinsoku(lines: list[str]) -> list[str]:
+    """禁則処理: 折り返し後、行が、。」』 等で始まらない・「『（ 等で終わらないよう整える。
+    ある回: quote overlay が『…寿命を』/『、いわば二倍にした』と折り返し、読点が行頭に
+    孤立して不自然だった (行頭禁則違反)。行頭約物は直前行末尾へ追い込み、行末の開き括弧は
+    次行先頭へ追い出す。lines を破壊的に整えて返す。"""
+    # 行頭禁則: 行頭の約物を直前行の末尾へ追い込む (追い込み)。
+    i = 1
+    while i < len(lines):
+        while lines[i] and lines[i][0] in _KINSOKU_HEAD:
+            lines[i - 1] += lines[i][0]
+            lines[i] = lines[i][1:]
+        if not lines[i]:
+            del lines[i]
+            continue
+        i += 1
+    # 行末禁則: 行末の開き括弧を次行の先頭へ追い出す (追い出し)。
+    i = 0
+    while i < len(lines) - 1:
+        while lines[i] and lines[i][-1] in _KINSOKU_TAIL:
+            lines[i + 1] = lines[i][-1] + lines[i + 1]
+            lines[i] = lines[i][:-1]
+        if not lines[i]:
+            del lines[i]
+            i = max(0, i - 1)
+            continue
+        i += 1
+    return lines
+
+
 def generate_text_overlay(
     visual: dict,
     output_path: str,
@@ -253,6 +401,7 @@ def generate_text_overlay(
     from math_render import render_mathtext_png, uses_tex
 
     content = visual.get("content", {})
+    _scene_id = os.path.splitext(os.path.basename(output_path))[0]
     main_text = content.get("main", "")
     sub_text = content.get("sub", "")
     style = visual.get("style", "fact")
@@ -298,7 +447,8 @@ def generate_text_overlay(
     max_text_width = int(img_w * 0.70)
 
     def wrap_text(text, font, max_width):
-        """Wrap text to fit within max_width."""
+        """Wrap text to fit within max_width, then apply 禁則処理 (_apply_kinsoku) so a
+        line never starts with、。」』 nor ends with an opening bracket 「『（."""
         if not text:
             return []
         lines = []
@@ -314,7 +464,7 @@ def generate_text_overlay(
                     current_line = test
             if current_line:
                 lines.append(current_line)
-        return lines
+        return _apply_kinsoku(lines)
 
     def text_block_height(lines, line_h):
         return len(lines) * line_h if lines else 0
@@ -329,6 +479,16 @@ def generate_text_overlay(
             im = render_mathtext_png(text, fontsize=font_size, color_hex=_rgb_to_hex(color_rgb))
             return {"is_tex": True, "image": im, "height": im.height, "widths": [im.width]}
         lines = wrap_text(text, font, wrap_width)
+        # misreading: orphan-line guard. A block wrapping to a final line of ONE character
+        # (intro_04 "…まとめ上げた" -> "…まとめ上げ" + lone "た") reads as a jarring stray
+        # line. Deterministic warn at render (exact font metrics); fix by adding a manual
+        # \n at a natural break or shortening. Not auto-fixed (rebalance would fight 禁則).
+        if len(lines) > 1 and len(lines[-1].strip()) == 1:
+            print(
+                f"[OVERLAY-ORPHAN] {_scene_id}: 折り返し最終行が1文字 "
+                f"'{lines[-1].strip()}' ({text[:24]!r})。手動 \\n で均等分割 or 短縮を推奨",
+                file=sys.stderr,
+            )
         line_h = int(font_size * 1.5)
         widths = [font.getbbox(ln)[2] - font.getbbox(ln)[0] for ln in lines]
         return {
@@ -398,7 +558,6 @@ def generate_text_overlay(
 
         # Main text (white, slightly indented)
         text_left = (img_w - int(max_text_width * 0.85)) // 2
-        y_main_start = y
         y = render_block(main_block, main_font, TEXT_WHITE, lambda _w: text_left, y)
 
         # Closing quotation mark: horizontally just after the last
@@ -561,7 +720,7 @@ def _record_manim_fallback(output_path: str, scene_id: str, reason: str) -> None
     placeholder mp4 で silent fail する問題への layered detect。pipeline
     verify_outputs が本 sidecar を読んで WARN 出力。
 
-    Day 20 ある回 で pascals_triangle.binomial_highlight + probability_link
+    ある回 で pascals_triangle.binomial_highlight + probability_link
     が 240s timeout → fallback placeholder「Math 11 [pascals_triangle]」で
     silent fail、user 動画視聴で初発覚した failure mode の構造防御。
     """
@@ -632,6 +791,15 @@ def _manim_to_text_overlay_fallback(visual: dict, scene_id: str) -> dict:
             "sub": sub_text,
         },
     }
+
+
+# 強化 (b): Manim render timeout を定数化し near-timeout を予兆警告。
+# 過去 math_07 gimbal_lock が 240s timeout -> text_overlay placeholder で
+# silent ship した near-miss。timeout 失敗自体は pipeline の placeholder
+# バナーで事後検出済だが、閾値超 (既定 70%) の「危険水域」レンダリングは成功
+# しても警告し、僅かな負荷増で placeholder 化する前に template 簡素化を促す。
+_MANIM_TIMEOUT_S = 240
+_MANIM_NEAR_TIMEOUT_FRAC = 0.7
 
 
 def generate_manim(
@@ -726,12 +894,13 @@ def generate_manim(
         class_name,
     ]
 
+    _render_t0 = time.time()
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=240,
+            timeout=_MANIM_TIMEOUT_S,
             cwd=abs_templates_dir,  # so `from style import ...` works
             encoding="utf-8",
             errors="replace",
@@ -760,9 +929,23 @@ def generate_manim(
         # Adjust duration: pad or trim to match timing.json
         _adjust_duration(manim_output, output_path, duration, width, height, fps)
 
+        # 強化 (b): 成功したが timeout 近傍 (>=70%) なら予兆警告。
+        # この scene は次回 (FPS/解像度/尺の僅かな変動や環境負荷) で timeout
+        # -> placeholder 化しうる。template 簡素化 (重い 3D primitive の削減等)
+        # の余地を placeholder 化する前に可視化する。
+        _render_elapsed = time.time() - _render_t0
+        if _render_elapsed >= _MANIM_NEAR_TIMEOUT_FRAC * _MANIM_TIMEOUT_S:
+            _pct = _render_elapsed / _MANIM_TIMEOUT_S * 100
+            print(
+                f"\n    [WARN] {scene_id}: Manim render {_render_elapsed:.0f}s "
+                f"(timeout {_MANIM_TIMEOUT_S}s の {_pct:.0f}%) -> timeout 近傍。"
+                f"僅かな負荷増で placeholder 化リスク。template 簡素化 "
+                f"(重い 3D primitive / 長時間 Rotate の削減等) を推奨"
+            )
+
     except subprocess.TimeoutExpired:
-        print("\n    [WARN] Manim render timed out (240s)")
-        _record_manim_fallback(output_path, scene_id, "timeout_240s")
+        print(f"\n    [WARN] Manim render timed out ({_MANIM_TIMEOUT_S}s)")
+        _record_manim_fallback(output_path, scene_id, f"timeout_{_MANIM_TIMEOUT_S}s")
         fallback_visual = _manim_to_text_overlay_fallback(visual, scene_id)
         generate_text_overlay(fallback_visual, output_path, duration)
     finally:
@@ -773,22 +956,52 @@ def generate_manim(
 
 def _find_manim_output(media_dir: str, class_name: str) -> str:
     """Find Manim's output MP4 file in the media directory tree."""
-    for root, dirs, files in os.walk(media_dir):
+    for root, _dirs, files in os.walk(media_dir):
         for f in files:
             if f.endswith(".mp4") and class_name in f:
                 return os.path.join(root, f)
     # Fallback: any MP4
-    for root, dirs, files in os.walk(media_dir):
+    for root, _dirs, files in os.walk(media_dir):
         for f in files:
             if f.endswith(".mp4"):
                 return os.path.join(root, f)
     return None
 
 
+# [DEAD-AIR guard] When a rendered visual is shorter than its audio slot, _adjust_duration
+# freeze-pads the last frame. A small pad (coda slack) is normal; a large one means the
+# template could not fill the narration (e.g. reveal scale cap hit) -> excessive static tail.
+# Advisory WARN only when the freeze-pad is BOTH long AND a big fraction of the scene, so it
+# does NOT fire on ある回 (~12s/23%) / math_06 (~10s/19%) that shipped as accepted
+# "held complete diagram during narration"; it fires only on worse under-fill.
+_DEADAIR_PAD_MIN_S = 8.0
+_DEADAIR_PAD_MIN_FRAC = 0.33
+# Scenes that tripped the DEAD-AIR guard this run (for the ③ advisory roll-up).
+_DEADAIR_HITS: list[str] = []
+
+
 def _adjust_duration(
     input_path: str, output_path: str, target_duration: float, width: int, height: int, fps: int
 ):
-    """Adjust video duration to match target: trim if longer, pad with freeze-frame if shorter."""
+    """Adjust video duration to match target: trim if longer, pad with freeze-frame if shorter.
+
+    Wraps _adjust_duration_impl so an ffmpeg timeout during these (post-render,
+    short-clip) fixups degrades to copying the un-adjusted render rather than
+    hanging -- the render itself is already bounded by _MANIM_TIMEOUT_S.
+    """
+    import shutil
+
+    try:
+        _adjust_duration_impl(input_path, output_path, target_duration, width, height, fps)
+    except _FFmpegTimeout as exc:
+        print(f"    [WARN] {exc} -> keeping un-adjusted render")
+        if os.path.abspath(input_path) != os.path.abspath(output_path):
+            shutil.copy2(input_path, output_path)
+
+
+def _adjust_duration_impl(
+    input_path: str, output_path: str, target_duration: float, width: int, height: int, fps: int
+):
     import shutil
 
     # Get input duration
@@ -801,8 +1014,13 @@ def _adjust_duration(
         "-show_format",
         input_path,
     ]
-    result = subprocess.run(
-        probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    result = _run_ffmpeg_bounded(
+        probe_cmd,
+        timeout=_FFPROBE_TIMEOUT_S,
+        label="adjust_duration probe",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     try:
         probe_data = json.loads(result.stdout)
@@ -834,7 +1052,7 @@ def _adjust_duration(
             "-an",
             output_path,
         ]
-        subprocess.run(cmd, capture_output=True)
+        _run_ffmpeg_bounded(cmd, label="adjust_duration scale")
 
     elif actual_duration > target_duration:
         # Trim
@@ -858,14 +1076,24 @@ def _adjust_duration(
             "-an",
             output_path,
         ]
-        subprocess.run(cmd, capture_output=True)
+        _run_ffmpeg_bounded(cmd, label="adjust_duration trim")
 
     else:
         # Pad: freeze last frame for remaining time
         pad_duration = target_duration - actual_duration
+        _pad_frac = pad_duration / target_duration if target_duration > 0 else 0.0
+        if pad_duration > _DEADAIR_PAD_MIN_S and _pad_frac > _DEADAIR_PAD_MIN_FRAC:
+            _scene = os.path.splitext(os.path.basename(output_path))[0]
+            _DEADAIR_HITS.append(_scene)
+            print(
+                f"  [WARN][DEAD-AIR] {_scene}: freeze-pad {pad_duration:.1f}s "
+                f"({_pad_frac * 100:.0f}% of {target_duration:.1f}s) -- rendered visual is "
+                f"shorter than its audio; likely excessive static tail. Narration may exceed "
+                f"the template fill capacity (reveal scale cap) -- tighten narration or template."
+            )
         # Extract last frame
         last_frame = input_path + "_lastframe.png"
-        subprocess.run(
+        _run_ffmpeg_bounded(
             [
                 "ffmpeg",
                 "-y",
@@ -877,13 +1105,13 @@ def _adjust_duration(
                 "1",
                 last_frame,
             ],
-            capture_output=True,
+            label="adjust_duration pad-extract",
         )
 
         if os.path.exists(last_frame):
             # Create freeze segment
             freeze_path = input_path + "_freeze.mp4"
-            subprocess.run(
+            _run_ffmpeg_bounded(
                 [
                     "ffmpeg",
                     "-y",
@@ -907,7 +1135,7 @@ def _adjust_duration(
                     str(fps),
                     freeze_path,
                 ],
-                capture_output=True,
+                label="adjust_duration pad-freeze",
             )
 
             # Concatenate original + freeze
@@ -918,7 +1146,7 @@ def _adjust_duration(
 
             # Scale original first
             scaled = input_path + "_scaled.mp4"
-            subprocess.run(
+            _run_ffmpeg_bounded(
                 [
                     "ffmpeg",
                     "-y",
@@ -937,14 +1165,14 @@ def _adjust_duration(
                     "-an",
                     scaled,
                 ],
-                capture_output=True,
+                label="adjust_duration pad-scale",
             )
 
             with open(concat_list, "w") as f:
                 f.write(f"file '{os.path.abspath(scaled)}'\n")
                 f.write(f"file '{os.path.abspath(freeze_path)}'\n")
 
-            subprocess.run(
+            _run_ffmpeg_bounded(
                 [
                     "ffmpeg",
                     "-y",
@@ -958,7 +1186,7 @@ def _adjust_duration(
                     "copy",
                     output_path,
                 ],
-                capture_output=True,
+                label="adjust_duration pad-concat",
             )
 
             # Cleanup temp files
@@ -1014,8 +1242,6 @@ def _generate_stub_video(
         output_path,
     ]
 
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
     # Create a single frame (static placeholder)
     img = Image.new("RGB", (width, height), bg)
     draw = ImageDraw.Draw(img)
@@ -1051,11 +1277,54 @@ def _generate_stub_video(
 
     frame_bytes = img.tobytes()
 
-    for _ in range(total_frames):
-        proc.stdin.write(frame_bytes)
+    # Bounded by the same watchdog as ken_burns: the stub shares the frame-pipe
+    # deadlock risk and is itself a fallback, so it must not be able to hang.
+    _pipe_frames_to_ffmpeg(
+        cmd,
+        (frame_bytes for _ in range(total_frames)),
+        _FFMPEG_TIMEOUT_S,
+        f"stub[{scene_id}]",
+    )
 
-    proc.stdin.close()
-    proc.wait()
+
+def _generate_black_placeholder(
+    output_path: str,
+    duration: float,
+    width: int = VIDEO_WIDTH,
+    height: int = VIDEO_HEIGHT,
+    fps: int = FPS,
+):
+    """Last-resort placeholder via ffmpeg's lavfi color source.
+
+    Unlike ken_burns/stub this feeds no stdin pipe, so it cannot hit the
+    pipe-drain deadlock; it is the fallback used by process_scene when a
+    frame-pipe encode times out or errors, guaranteeing the scene still has a
+    valid (if blank) segment so assembly does not fail on a missing file.
+    """
+    dur = max(duration, 0.1)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=#1a1a2e:s={width}x{height}:d={dur:.3f}:r={fps}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "28",
+        "-pix_fmt",
+        "yuv420p",
+        output_path,
+    ]
+    try:
+        _run_ffmpeg_bounded(cmd, label=f"black_placeholder[{os.path.basename(output_path)}]")
+    except _FFmpegError as exc:
+        # Even the pipe-free fallback failed -- nothing more to degrade to.
+        # Leave no/partial output; the caller's "output missing" check reports it.
+        print(f"    [ERROR] {exc}")
 
 
 # ===========================================================================
@@ -1167,6 +1436,16 @@ def _load_geojson_polygons(cache_file: str) -> list:
                 for ring in polygon:
                     polygons.append(ring)
     return polygons
+
+
+# E: route_map ラベル見切れ検出の許容 px (fig.dpi 基準の display 座標)。
+# 軸の左右 margin は 1% (~16px @1600px幅) しかなく、推定幅で auto 配置した label の
+# 実レンダが数 px はみ出すことがあるため、既知良好な shipped 28 ep で誤検知ゼロに
+# なる値へ calibrate。実測 (2026-06-27, route_map 保有 28 ep 全走査): 唯一の overflow は
+# 016_cantor の「サンクトペテルブルク」6px (公開済・実害なし最終字の僅少はみ出し)、
+# 他 27 ep は 0px。真の見切れ
+# は 390px と桁違い。8px は known-good 6px のすぐ上・gross 390px の遥か下で安全に分離。
+_CLIP_TOL_PX = 8.0
 
 
 def _check_route_map_collisions(
@@ -1334,6 +1613,49 @@ def _check_route_map_collisions(
                 }
             )
 
+    # E: figure 枠からの見切れ (clipping) 検出。
+    # auto 配置 (placement loop, 本関数外) は frame をはみ出す候補 offset を skip するが、
+    # 手動 city_offsets override と「全候補不可」fallback はその bounds チェックを通らず、
+    # ラベルが PNG 端で切れうる。savefig は bbox_inches='tight' を使わない (line ~2296)
+    # ので figure 領域 = 保存 PNG 範囲。各ラベルの実レンダ pixel bbox が fig.bbox を
+    # はみ出す = 見切れ。推定 bbox でなく get_window_extent の実 extent でピクセル精密。
+    fig_box = fig.bbox  # x0=y0=0, x1=幅px, y1=高px
+
+    def _clip_overflow(bbox, tol):
+        """Return max px by which bbox exceeds the figure on any side, else None."""
+        if bbox is None:
+            return None
+        worst = max(
+            fig_box.x0 - bbox.x0,  # 左切れ
+            bbox.x1 - fig_box.x1,  # 右切れ
+            fig_box.y0 - bbox.y0,  # 下切れ
+            bbox.y1 - fig_box.y1,  # 上切れ
+        )
+        return worst if worst > tol else None
+
+    # tol は side ごとに分ける: 上下は subtitle-safe 等の余白があり真の見切れのみ、左右は
+    # 軸 margin 1% (~16px) しかないので実害が出る幅で。既知良好な shipped 28 ep で
+    # 誤検知ゼロになるよう calibrate 済 (_CLIP_TOL_PX)。
+    _clip_targets = [("city_label", a, b) for a, b in city_bboxes]
+    _clip_targets += [("route_label", a, b) for a, b in route_bboxes]
+    if title_artist is not None:
+        _clip_targets.append(("title", title_artist, title_bbox))
+    for _kind, _artist, _cbbox in _clip_targets:
+        amt = _clip_overflow(_cbbox, _CLIP_TOL_PX)
+        if amt is None:
+            continue
+        _text = _artist.get_text() if _artist is not None else "?"
+        reports.append(
+            {
+                "type": f"{_kind}_clipped",
+                "summary": f"{_kind} '{_text}' clipped at figure edge ({int(amt)}px past)",
+                "overlap_px": (int(amt), 0),
+                "suggestion": "Widen bounds.lon/lat to give room, or pull the label "
+                "inward: city via visual.city_offsets {city: [x_off, y_off, ha]}, "
+                "route via that step's label_offset [dlon, dlat].",
+            }
+        )
+
     return reports
 
 
@@ -1486,6 +1808,15 @@ def generate_route_map(
     legend_categories = set()
     route_labels = []
 
+    # Round-trip overlap fix: pre-count each unordered city pair so outbound/
+    # return legs between the SAME two cities (e.g. Paris->Tulle->Paris) fan out
+    # onto opposite sides with a growing bow instead of overlapping into one line.
+    _pair_total = {}
+    for _s in route:
+        _p = frozenset((_s.get("from", ""), _s.get("to", "")))
+        _pair_total[_p] = _pair_total.get(_p, 0) + 1
+    _pair_seen = {}
+
     for i_step, step in enumerate(route):
         from_city = step.get("from", "")
         to_city = step.get("to", "")
@@ -1502,15 +1833,38 @@ def generate_route_map(
         # Bezier curve — alternate direction to spread overlapping routes
         mx, my = (sx + ex) / 2, (sy + ey) / 2
         dist = np.sqrt((ex - sx) ** 2 + (ey - sy) ** 2)
-        curve_height = dist * 0.12
-        direction = 1 if i_step % 2 == 0 else -1
-        cx, cy = mx, my + curve_height * direction
+        _pair = frozenset((from_city, to_city))
+        _k = _pair_seen.get(_pair, 0)
+        _pair_seen[_pair] = _k + 1
+        if _pair_total[_pair] > 1:
+            # round-trip leg: keep direction SAME sign for both legs. The
+            # return leg's route vector is reversed, so its perpendicular flips
+            # automatically -> the two legs bow to OPPOSITE absolute sides
+            # (an alternating sign here would cancel that and overlap them).
+            # The return leg is also dashed (below) so they never read as one.
+            curve_height = dist * (0.32 + 0.24 * _k)
+            direction = 1
+        else:
+            curve_height = dist * 0.12
+            direction = 1 if i_step % 2 == 0 else -1
+        # Offset the control point PERPENDICULAR to the route direction (not just
+        # in +Y). A Y-only offset fails to separate near North-South routes
+        # (e.g. Paris<->Tulle), letting the outbound/return legs overlap.
+        if dist > 1e-9:
+            perp_x, perp_y = -(ey - sy) / dist, (ex - sx) / dist
+        else:
+            perp_x, perp_y = 0.0, 1.0
+        cx = mx + curve_height * direction * perp_x
+        cy = my + curve_height * direction * perp_y
 
         t = np.linspace(0, 1, 50)
         bx = (1 - t) ** 2 * sx + 2 * (1 - t) * t * cx + t**2 * ex
         by = (1 - t) ** 2 * sy + 2 * (1 - t) * t * cy + t**2 * ey
 
-        ax.plot(bx, by, color=color, linewidth=3, alpha=0.8, zorder=3)
+        # Mark the return leg of a round-trip dashed so it never reads as a
+        # single overlapping line with the outbound leg (user request: 点線).
+        _ls = "--" if (_pair_total[_pair] > 1 and _k > 0) else "-"
+        ax.plot(bx, by, color=color, linewidth=3, alpha=0.8, zorder=3, linestyle=_ls)
         ax.annotate(
             "",
             xy=(ex, ey),
@@ -1576,7 +1930,7 @@ def generate_route_map(
     placed_labels = []  # track (x, y) of placed label centers for collision avoidance
     placed_label_bboxes = []  # track (x0, y0, x1, y1) for tighter collision
     city_label_artists = []  # E: track city-label artists for collision check
-    # Per-city label position override (Day 21 ある回 で追加 — auto-placement だと
+    # Per-city label position override (ある回 で追加 — auto-placement だと
     # 日本語長名 (ゲッティンゲン等) が canvas 端で clipping。scene_def の
     # visual.city_offsets = {city_name: [x_off_pts, y_off_pts, ha]} で固定 placement。
     # ha は "left" | "right" | "center"、省略時 "left"。auto candidates を skip。
@@ -1609,7 +1963,7 @@ def generate_route_map(
         bx0, by0, bx1, by1 = b
         return not (ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0)
 
-    for idx, (city_name, (lon, lat)) in enumerate(city_list):
+    for _idx, (city_name, (lon, lat)) in enumerate(city_list):
         ax.plot(
             lon,
             lat,
@@ -1646,9 +2000,9 @@ def generate_route_map(
         preferred_y = -1 if lat >= map_cy else 1
 
         # Sort candidates by preference
-        def _score_candidate(c):
+        def _score_candidate(c, px=preferred_x, py=preferred_y):
             xo, yo, _ = c
-            return -(xo * preferred_x + yo * preferred_y * 0.5)
+            return -(xo * px + yo * py * 0.5)
 
         candidates.sort(key=_score_candidate)
 
@@ -1660,7 +2014,7 @@ def generate_route_map(
         label_w_deg = _estimate_label_w_deg(city_name, 18, pts_per_lon)
         label_h_deg = 22 / pts_per_lat  # ~22pt vertical extent incl. padding
 
-        # Day 21 ある回: per-city manual override (skip auto-placement)
+        # ある回: per-city manual override (skip auto-placement)
         if city_name in city_offsets_override:
             ov = city_offsets_override[city_name]
             ov_x, ov_y = float(ov[0]), float(ov[1])
@@ -1764,7 +2118,20 @@ def generate_route_map(
         by = (1 - t) ** 2 * sy + 2 * (1 - t) * t * cy + t**2 * ey
         return bx, by
 
-    def _try_candidate(test_x, test_y, rl_w_data, rl_h_data, lat_range, lat_span, _route_label_top_padding, placed_label_bboxes, placed_route_label_bboxes, placed_labels, city_list, placed_route_labels):
+    def _try_candidate(
+        test_x,
+        test_y,
+        rl_w_data,
+        rl_h_data,
+        lat_range,
+        lat_span,
+        _route_label_top_padding,
+        placed_label_bboxes,
+        placed_route_label_bboxes,
+        placed_labels,
+        city_list,
+        placed_route_labels,
+    ):
         """Return (bbox, min_dist) if candidate position is acceptable, else (None, -1)."""
         if (
             test_y < lat_range[0] + lat_span * 0.05
@@ -1821,7 +2188,11 @@ def generate_route_map(
 
         # Manual override: scene_def label_offset (data coords, [x, y]) — skip auto placement
         manual_offset = rl.get("label_offset")
-        if manual_offset is not None and isinstance(manual_offset, (list, tuple)) and len(manual_offset) == 2:
+        if (
+            manual_offset is not None
+            and isinstance(manual_offset, (list, tuple))
+            and len(manual_offset) == 2
+        ):
             best_pos = (anchor_x + manual_offset[0], anchor_y + manual_offset[1])
             best_bbox_route = (
                 best_pos[0] - rl_w_data / 2,
@@ -1847,9 +2218,18 @@ def generate_route_map(
                 test_x = bx_t
                 test_y = by_t + perp_off
                 cand_bbox, min_d = _try_candidate(
-                    test_x, test_y, rl_w_data, rl_h_data, lat_range, lat_span,
-                    _route_label_top_padding, placed_label_bboxes, placed_route_label_bboxes,
-                    placed_labels, city_list, placed_route_labels,
+                    test_x,
+                    test_y,
+                    rl_w_data,
+                    rl_h_data,
+                    lat_range,
+                    lat_span,
+                    _route_label_top_padding,
+                    placed_label_bboxes,
+                    placed_route_label_bboxes,
+                    placed_labels,
+                    city_list,
+                    placed_route_labels,
                 )
                 if cand_bbox is None:
                     continue
@@ -1878,9 +2258,18 @@ def generate_route_map(
                     test_x = anchor_x + dx
                     test_y = anchor_y + dy
                     cand_bbox, min_d = _try_candidate(
-                        test_x, test_y, rl_w_data, rl_h_data, lat_range, lat_span,
-                        _route_label_top_padding, placed_label_bboxes, placed_route_label_bboxes,
-                        placed_labels, city_list, placed_route_labels,
+                        test_x,
+                        test_y,
+                        rl_w_data,
+                        rl_h_data,
+                        lat_range,
+                        lat_span,
+                        _route_label_top_padding,
+                        placed_label_bboxes,
+                        placed_route_label_bboxes,
+                        placed_labels,
+                        city_list,
+                        placed_route_labels,
                     )
                     if cand_bbox is None:
                         continue
@@ -2098,13 +2487,15 @@ def route_map_preflight(scene_def_path: str, allow: bool = False, auto_fix: bool
     calls generate_route_map(..., preflight_only=True) on each, and collects
     collision reports.
 
-    With auto_fix=True, attempts a 3-stage repair sequence per affected scene:
+    With auto_fix=True, attempts a 4-stage repair sequence per affected scene:
       Stage 1: widen route_label top exclusion zone to avoid title band
       Stage 2: expand bounds.lat[1] upward by 10% of span
       Stage 3: reduce title fontsize 28 -> 22
-    Each stage is followed by a re-check; the first stage that resolves all
-    collisions for the scene is accepted, persisted to scene_definition.json,
-    and logged under the top-level `_route_map_auto_fix_log` block.
+      Stage 4: rotate legend_loc through the four corners (up to 4 tries)
+    Stages are cumulative (1 -> 1+2 -> 1+2+3 -> 1+2+3+4). Each is followed by a
+    re-check; the first that resolves all collisions for the scene is accepted,
+    persisted to scene_definition.json, and logged under the top-level
+    `_route_map_auto_fix_log` block.
 
     Args:
         scene_def_path: path to scene_definition.json
@@ -2194,7 +2585,7 @@ def route_map_preflight(scene_def_path: str, allow: bool = False, auto_fix: bool
                 }
             )
         else:
-            print(f"    auto-fix exhausted all 3 stages for {scene_id}")
+            print(f"    auto-fix exhausted all 4 stages for {scene_id}")
             unresolved[scene_id] = reports
 
     # Persist auto-fix changes (if any)
@@ -2322,7 +2713,53 @@ def process_scene(
     skip_manim: bool = False,
     blender_templates_dir: str = None,
 ):
-    """Process a single scene and generate its visual MP4 segment."""
+    """Process a single scene and generate its visual MP4 segment.
+
+    Thin guard around _dispatch_scene_visual: a frame-pipe encode that times out
+    or errors (ken_burns / stub, reached by every visual type that ends in Ken
+    Burns -- text_overlay, route_map, pillow_chart too) is caught here and
+    degraded to a recorded fallback marker + a pipe-free black placeholder,
+    mirroring the Manim/Blender fallback path. The build keeps going, the failure
+    is surfaced (not silent), and a stuck ffmpeg can no longer hang the whole
+    pipeline.
+    """
+    scene_id = scene["scene_id"]
+    visual = scene["visual"]
+    vtype = visual["type"]
+    output_path = os.path.join(visuals_dir, f"{scene_id}.mp4")
+
+    try:
+        _dispatch_scene_visual(
+            scene,
+            scene_duration,
+            visuals_dir,
+            images_dir,
+            manim_templates_dir=manim_templates_dir,
+            skip_manim=skip_manim,
+            blender_templates_dir=blender_templates_dir,
+        )
+    except _FFmpegError as exc:
+        reason = "ffmpeg_timeout" if isinstance(exc, _FFmpegTimeout) else "ffmpeg_error"
+        print(f"\n    [ERROR] {scene_id} ({vtype}): {exc}")
+        print(f"    [ERROR] -> fallback marker + black placeholder ({reason})")
+        _record_manim_fallback(output_path, scene_id, f"{reason}:{vtype}")
+        _generate_black_placeholder(output_path, scene_duration)
+
+
+def _dispatch_scene_visual(
+    scene: dict,
+    scene_duration: float,
+    visuals_dir: str,
+    images_dir: str,
+    manim_templates_dir: str = None,
+    skip_manim: bool = False,
+    blender_templates_dir: str = None,
+):
+    """Dispatch a scene to its per-type visual generator.
+
+    No error handling here: process_scene wraps this and degrades ffmpeg-pipe
+    failures (_FFmpegError / _FFmpegTimeout) to a placeholder.
+    """
     scene_id = scene["scene_id"]
     visual = scene["visual"]
     vtype = visual["type"]
@@ -2347,7 +2784,6 @@ def process_scene(
                 print(f"    [ALIAS] Using fallback image: {scene_id}.png")
 
         if img_path is None:
-            prompt = visual.get("source_prompt", "no prompt")
             print("    [WARN] No source image found, stub created.")
             _generate_stub_video(scene_id, "needs_image_gen", scene_duration, output_path)
             return
@@ -2439,16 +2875,20 @@ def main():
             ["ffmpeg", "-version"],
             capture_output=True,
             check=True,
+            timeout=30,
             encoding="utf-8",
             errors="replace",
         )
     except FileNotFoundError:
         print("ERROR: FFmpeg not found in PATH")
         sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print("ERROR: FFmpeg did not respond to -version within 30s")
+        sys.exit(1)
 
     # Check Pillow
     try:
-        from PIL import Image
+        from PIL import Image  # noqa: F401  (import presence-check only)
     except ImportError:
         print("ERROR: Pillow not installed. Run: pip install Pillow")
         sys.exit(1)
@@ -2648,3 +3088,12 @@ def rebuild_single_scene_visual(
 
 if __name__ == "__main__":
     main()
+    # ③ advisory roll-up: surface DEAD-AIR guard hits to the pipeline summary via
+    # the X3 stderr channel (no-op unless run under the pipeline with hits).
+    if _DEADAIR_HITS:
+        try:
+            import pipeline_log
+
+            pipeline_log.emit_stderr_warn_summary("dead-air", len(_DEADAIR_HITS))
+        except Exception:
+            pass

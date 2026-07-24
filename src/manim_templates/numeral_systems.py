@@ -329,6 +329,8 @@ class NumeralSystems(Scene):
         zero_note.move_to(DOWN * 1.8)
         self.play(FadeIn(zero_note), run_time=0.6)
         self.wait(max(duration - 6.0, 1.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -337,7 +339,6 @@ LINT_FACTUAL_CLAIMS = {
     "place_value": {"people": [], "years": []},
     "zero_power": {"people": [], "years": []},
 }
-
 
 
 # ---------------------------------------------------------------------------

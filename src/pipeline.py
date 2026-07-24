@@ -2,13 +2,13 @@
 pipeline.py - Run the full video generation pipeline with a single command
 
 Usage:
-    python pipeline.py episodes/001_erdos/episode_config.json
-    python pipeline.py episodes/001_erdos/episode_config.json --skip-script
-    python pipeline.py episodes/001_erdos/episode_config.json --skip-manim --skip-images
-    python pipeline.py episodes/001_erdos/episode_config.json --steps audio,subtitles,visuals,assemble
+    python pipeline.py examples/moriarty/episode_config.json
+    python pipeline.py examples/moriarty/episode_config.json --skip-script
+    python pipeline.py examples/moriarty/episode_config.json --skip-manim --skip-images
+    python pipeline.py examples/moriarty/episode_config.json --steps audio,subtitles,visuals,assemble
 
 Partial rebuild (single scene):
-    python pipeline.py episodes/006_shannon/episode_config.json --rebuild-scene math_02
+    python pipeline.py examples/moriarty/episode_config.json --rebuild-scene math_02
 
 Pipeline steps:
     1. script    - Generate scene_definition.json from episode_config (Gemini API)
@@ -25,6 +25,7 @@ Output: {episode_dir}/output.mp4 (without BGM), output_final.mp4 (with BGM)
 """
 
 import argparse
+import atexit
 import json
 import os
 import subprocess
@@ -34,9 +35,33 @@ import time
 from pathlib import Path
 
 import pipeline_log
+import pipeline_progress
 
 # Ensure subprocesses use UTF-8 output (avoid cp932 crashes on Windows)
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+
+def _set_keep_awake(on: bool) -> None:
+    """Prevent (on) / allow (off) system sleep for the lifetime of a build.
+
+    Windows-only (SetThreadExecutionState). a multi-hour build run
+    overnight was silently killed when the machine slept: progress
+    was left status='running' with a now-dead pid, and the operator only found
+    out by inspecting processes. Holding ES_SYSTEM_REQUIRED for the run
+    prevents that. No-op on other platforms / if the call is unavailable.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        flags = (ES_CONTINUOUS | ES_SYSTEM_REQUIRED) if on else ES_CONTINUOUS
+        ctypes.windll.kernel32.SetThreadExecutionState(flags)
+    except Exception:
+        pass  # best-effort: never let power management break a build
+
 
 ALL_STEPS = [
     "script",
@@ -67,6 +92,180 @@ _DESCRIPTION_REQUIRED_SECTIONS = [
     "【画像クレジット】",
     "【主要参考文献】",
 ]
+
+
+def _probe_mp4_duration(path: str) -> float | None:
+    """ffprobe で mp4 の duration を取得。読めない (moov atom 欠落等) なら None。
+
+    output_final.mp4 の破損 (部分書き込み / moov 欠落) を verify 段で検出。
+    bgm_mixer 側の atomic write が主防御だが、partial rebuild / 外部中断に備え
+    pipeline 側でも独立に健全性を確認する layered defense。
+    """
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", path],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return float(json.loads(result.stdout)["format"]["duration"])
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return None
+
+
+def _visual_staleness_preflight(episode_dir: str, timing_json: str) -> list:
+    """assemble 直前に visual mp4 の尺を timing.json の scene 尺と照合し、
+    timing 刷新後に再 render されなかった stale visual を検出する。
+
+    真因: 読み上げ速度変更で timing.json が刷新されたのに visuals の
+    部分 render が一部 scene を旧尺のまま残し、assemble が新音声と旧尺 visual を
+    黙って合成 -> 音声/字幕/映像が desync。視覚 (映像) と timing は別 artifact なので
+    片方だけ更新されると静かにズレる。visual_generator は scene の narration 尺
+    (timing scene['duration']) に合わせて render するので、両者が許容を超えてズレて
+    いれば「その visual は別の timing で焼かれた = stale」と判定できる (fail fast)。
+
+    Returns: [{scene_id, visual_dur, expected, drift, reason}] (空なら健全)。
+    許容は max(1.0s, 3%) -- render 丸めは <0.5s、速度変更は ~10% ズレるので確実に弁別。
+    """
+    stale = []
+    try:
+        with open(timing_json, encoding="utf-8") as f:
+            timing = json.load(f)
+    except Exception as e:
+        print
+        return stale
+    visuals_dir = os.path.join(episode_dir, "visuals")
+    for scene_id, sc in timing.get("scenes", {}).items():
+        expected = sc.get("duration")
+        if not isinstance(expected, (int, float)) or expected <= 0:
+            continue
+        vpath = os.path.join(visuals_dir, f"{scene_id}.mp4")
+        if not os.path.exists(vpath):
+            stale.append(
+                {
+                    "scene_id": scene_id,
+                    "visual_dur": None,
+                    "expected": expected,
+                    "drift": None,
+                    "reason": "visual mp4 が無い (未 render)",
+                }
+            )
+            continue
+        vdur = _probe_mp4_duration(vpath)
+        if vdur is None:
+            stale.append(
+                {
+                    "scene_id": scene_id,
+                    "visual_dur": None,
+                    "expected": expected,
+                    "drift": None,
+                    "reason": "visual mp4 を probe 不能 (破損?)",
+                }
+            )
+            continue
+        drift = abs(vdur - expected)
+        tol = max(1.0, expected * 0.03)
+        if drift > tol:
+            stale.append(
+                {
+                    "scene_id": scene_id,
+                    "visual_dur": round(vdur, 2),
+                    "expected": round(expected, 2),
+                    "drift": round(drift, 2),
+                    "reason": f"尺ズレ {drift:.2f}s > 許容 {tol:.2f}s (旧 timing で render?)",
+                }
+            )
+    return stale
+
+
+def _timing_signature(timing_data: dict) -> str:
+    """Deterministic digest of per-scene durations.
+
+    MUST stay identical to subtitle_generator.timing_signature -- both sides
+    hash the same per-scene durations so the assemble preflight can compare the
+    timing the subtitles were baked from vs the current timing.json.
+    """
+    import hashlib
+
+    scenes = timing_data.get("scenes", {}) if isinstance(timing_data, dict) else {}
+    parts = [f"{sid}:{round(sc.get('duration', 0) or 0, 3)}" for sid, sc in sorted(scenes.items())]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def _subtitle_staleness_check(episode_dir: str, scene_json: str) -> str | None:
+    """Guard-B/B2: subtitles.srt が現在の narration **または timing** より古ければ
+    mismatch 文字列を返す (健全 or 判定不能なら None)。post-build の G2 hash 検査を
+    assemble 直前へ前倒しして fail-fast 化する。
+
+    2 層で staleness を検出する:
+      Guard-B: narration TEXT を編集したのに subtitles 未再生成 →
+        narration_hash mismatch。
+      Guard-B2: narration TEXT は不変だが読み (narration_speech_cloud) 修正 /
+        速度正規化 (cloud_speed_qa --apply) で音声尺 = timing.json が刷新され、
+        subtitles.srt の timestamp だけ旧尺のまま残る → timing_hash mismatch。
+        text hash は一致するので Guard-B では捕まらなかった desync クラス。
+    ハッシュ計算は subtitle_generator / G2 検査と同一。"""
+    import hashlib
+
+    meta_path = os.path.join(episode_dir, "_subtitles_meta.json")
+    srt_path = os.path.join(episode_dir, "subtitles.srt")
+    if not (os.path.exists(meta_path) and os.path.exists(srt_path) and os.path.exists(scene_json)):
+        return None
+    try:
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        embedded = meta.get("narration_hash")
+        if not embedded:
+            return None
+        with open(scene_json, encoding="utf-8") as f:
+            sd = json.load(f)
+        blob = "\n".join(
+            n
+            for sec in sd.get("sections", [])
+            for sc in sec.get("scenes", [])
+            for n in sc.get("narration", [])
+        )
+        current = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+        if current != embedded:
+            return f"narration text edited: embedded={embedded} vs current scene_def={current}"
+        # Guard-B2: narration unchanged -> also verify the timing the subtitles
+        # were baked from still matches the current timing.json (reading /
+        # speed-norm changes durations while leaving narration text identical).
+        embedded_timing = meta.get("timing_hash")
+        timing_path = os.path.join(episode_dir, "timing.json")
+        if embedded_timing and os.path.exists(timing_path):
+            with open(timing_path, encoding="utf-8") as f:
+                current_timing = _timing_signature(json.load(f))
+            if current_timing != embedded_timing:
+                return (
+                    f"timing refreshed (durations changed, narration text unchanged): "
+                    f"subtitles baked from timing={embedded_timing} vs current={current_timing}"
+                )
+    except Exception:
+        return None
+    return None
+
+
+def _output_final_summary(episode_dir: str) -> dict:
+    """output_final.mp4 summary for the progress snapshot (path/size/valid)."""
+    path = os.path.join(episode_dir, OUTPUT_FINAL)
+    if not os.path.exists(path):
+        return {"path": path, "exists": False}
+    dur = _probe_mp4_duration(path)
+    return {
+        "path": path,
+        "exists": True,
+        "size_mb": round(os.path.getsize(path) / (1024 * 1024), 1),
+        "duration_sec": round(dur, 1) if dur is not None else None,
+        "valid": dur is not None and dur > 0,
+    }
 
 
 def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> list[str]:
@@ -104,26 +303,91 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
             if not os.path.exists(path):
                 warnings.append(f"  [{step}] missing: {fname}")
 
+    # output_final.mp4 の moov/duration 健全性検証。存在チェックだけでは
+    # 部分書き込み (moov atom 欠落) の壊れた mp4 を「完成」と見逃す。
+    if "bgm" in steps_run:
+        final_path = os.path.join(episode_dir, OUTPUT_FINAL)
+        if os.path.exists(final_path):
+            dur = _probe_mp4_duration(final_path)
+            if dur is None or dur <= 0:
+                warnings.append(
+                    f"  [bgm] {OUTPUT_FINAL} CORRUPT: moov atom 欠落 / duration 取得不可。"
+                    "再生不可ファイルです。bgm step を再実行してください。"
+                )
+
+    # cloud 回が速度正規化されずに最終出力された場合の advisory。Chirp3-HD は
+    # 文単位の実発話速度を揺らすため、直近の cloud 回 (045/046/047) は全て
+    # cloud_speed_qa --apply で正規化してから出荷している。engine=cloud の最終ビルド
+    # (bgm 完了 = output_final 生成) で _prenorm_backup/ が無ければ「未正規化のまま
+    # 出荷しようとしている」として WARN。正規化は原本を _prenorm_backup/ に退避するので、
+    # その有無が「掛けたか」の決定的シグナルになる。
+    if "bgm" in steps_run:
+        engine = "voicevox"
+        cfg_path_tts = os.path.join(episode_dir, "episode_config.json")
+        if os.path.exists(cfg_path_tts):
+            try:
+                with open(cfg_path_tts, encoding="utf-8") as f:
+                    _cfg_tts = json.load(f)
+                engine = _cfg_tts.get("tts", {}).get("engine", "voicevox")
+            except Exception:
+                pass
+        if engine == "cloud" and not os.path.isdir(
+            os.path.join(episode_dir, "audio", "_prenorm_backup")
+        ):
+            warnings.append(
+                "  [speed] cloud 回が未正規化のまま最終出力 (_prenorm_backup/ なし)。"
+                "Chirp3-HD の文単位速度揺れは cloud_speed_qa --apply で均す "
+                "(045/046/047 は適用済)。`python scripts/cloud_speed_qa.py <scene_def>` で"
+                "隣接段差を確認し --apply を検討"
+            )
+
     if "credits" in steps_run:
         # 【画像クレジット】is only expected when Wikimedia reference photos are
         # used. For use_reference=false episodes (Gemini-only images, credited
         # under 【映像素材】) the section is legitimately absent — don't WARN
         #.
-        use_reference = True
+        engine = "voicevox"
         cfg_path = os.path.join(episode_dir, "episode_config.json")
         if os.path.exists(cfg_path):
             try:
                 with open(cfg_path, encoding="utf-8") as f:
                     _cfg = json.load(f)
-                use_reference = bool(
-                    _cfg.get("image_style", {}).get("use_reference", True)
+                engine = _cfg.get("tts", {}).get("engine", "voicevox")
+            except Exception:
+                pass
+        # 【画像クレジット】is expected only when a fetched photo was ACTUALLY
+        # credited (usage=="reference" or scene-assigned) -- mirror credits_
+        # generator's emission, reading wikimedia_credits.json (the source of
+        # truth) instead of guessing from config. Fixes two false-positives:
+        #   (a) config key mismatch: the old check read image_style.use_reference
+        #       but configs use image_strategy (no top-level bool) -> defaulted
+        #       True -> section wrongly expected.
+        #   (b) ある回 Euclid: ancient figure with no birth_year. image_generator
+        #       gates reference use on birth_year (use_reference = ref_photos AND
+        #       birth_year AND flash), so photos are fetched + labelled but NEVER
+        #       passed to Gemini -> all usage="unused" -> section legitimately
+        #       absent (images credited under 【映像素材】). Don't WARN.
+        expect_image_credit = False
+        wiki_path = os.path.join(episode_dir, "wikimedia_credits.json")
+        if os.path.exists(wiki_path):
+            try:
+                with open(wiki_path, encoding="utf-8") as f:
+                    _wc = json.load(f)
+                expect_image_credit = any(
+                    ph.get("usage") == "reference" or ph.get("scene_id")
+                    for ph in _wc.get("photos", [])
                 )
             except Exception:
                 pass
+        # 【音声合成】is only expected for VOICEVOX (attribution required). Cloud TTS
+        # (Google Cloud Chirp3-HD) needs no attribution, so credits_generator omits
+        # the section for engine=cloud (engine-aware, credits_generator.py) -- don't
+        # WARN, else a false-positive fires on every cloud episode. See feedback_cloud_tts_no_attribution.
         required_sections = [
             s
             for s in _DESCRIPTION_REQUIRED_SECTIONS
-            if not (s == "【画像クレジット】" and not use_reference)
+            if not (s == "【画像クレジット】" and not expect_image_credit)
+            and not (s == "【音声合成】" and engine == "cloud")
         ]
         desc_path = os.path.join(episode_dir, "description.txt")
         if os.path.exists(desc_path):
@@ -144,9 +408,14 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
     # scene_def, causing 字幕 (old) / 音声 (new) 齟齬 in output_final.mp4.
     subtitles_path = os.path.join(episode_dir, "subtitles.srt")
     subtitles_meta_path = os.path.join(episode_dir, "_subtitles_meta.json")
-    if os.path.exists(subtitles_path) and os.path.exists(subtitles_meta_path) and os.path.exists(scene_json):
+    if (
+        os.path.exists(subtitles_path)
+        and os.path.exists(subtitles_meta_path)
+        and os.path.exists(scene_json)
+    ):
         try:
             import hashlib as _hashlib
+
             with open(subtitles_meta_path, encoding="utf-8") as _f:
                 _meta = json.load(_f)
             embedded_hash = _meta.get("narration_hash")
@@ -169,6 +438,25 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
                         "narration was edited after last subtitles build → 字幕/音声 齟齬リスク。"
                         "Re-run with `--steps subtitles,assemble,bgm` to sync."
                     )
+                else:
+                    # Guard-B2: narration text matches, but did the timing
+                    # the subtitles were baked from drift? Reading / speed-norm
+                    # changes durations while leaving narration text identical,
+                    # so the text hash passes yet subtitles.srt timestamps go
+                    # stale (字幕/音声 desync the text-hash check cannot see).
+                    _embedded_timing = _meta.get("timing_hash")
+                    _timing_path_g2 = os.path.join(episode_dir, "timing.json")
+                    if _embedded_timing and os.path.exists(_timing_path_g2):
+                        with open(_timing_path_g2, encoding="utf-8") as _f3:
+                            _cur_timing = _timing_signature(json.load(_f3))
+                        if _cur_timing != _embedded_timing:
+                            warnings.append(
+                                f"  [subtitles] subtitles.srt timing stale: "
+                                f"baked from timing={_embedded_timing} vs current="
+                                f"{_cur_timing} (narration text unchanged). 読み/速度正規化で"
+                                "音声尺が刷新され字幕タイムスタンプが旧尺のまま → 字幕/音声 desync。"
+                                "Re-run with `--steps subtitles,assemble,bgm` to sync."
+                            )
         except Exception:
             pass
 
@@ -184,8 +472,7 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
                 fallbacks = json.load(f)
             if isinstance(fallbacks, list) and fallbacks:
                 scene_reasons = ", ".join(
-                    f"{fb.get('scene_id', '?')}({fb.get('reason', '?')})"
-                    for fb in fallbacks
+                    f"{fb.get('scene_id', '?')}({fb.get('reason', '?')})" for fb in fallbacks
                 )
                 warnings.append(
                     f"  [visuals] {len(fallbacks)} Manim scene(s) fell back to "
@@ -196,34 +483,69 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
         except Exception:
             pass
 
-    # G6: description.txt staleness check.
-    # If credits step was skipped but scene_def/config has been edited since,
-    # description.txt may contain stale chapter / BGM / references. Day 20
-    # で `--steps audio,visuals,assemble,bgm` で credits skip した結果、
-    # description.txt の chapter「骨」 (narrative では「業績」修正済) が古いまま
-    # 残り user 指摘で発覚した failure mode の検出。
+    # G6 + content drift: description.txt vs source.
+    # PRIMARY = content drift: regenerate the description from source and compare,
+    # catching stale title / chapter / timestamps / credits that mtime alone
+    # misses. FALLBACK = mtime staleness
+    # when the content check cannot run (missing timing/config, or generate error).
     desc_path = os.path.join(episode_dir, "description.txt")
+    episode_config_path = os.path.join(episode_dir, "episode_config.json")
     if os.path.exists(desc_path) and os.path.exists(scene_json):
+        drift = None
         try:
-            desc_mtime = os.path.getmtime(desc_path)
-            scene_mtime = os.path.getmtime(scene_json)
-            episode_config_path = os.path.join(episode_dir, "episode_config.json")
-            config_mtime = (
-                os.path.getmtime(episode_config_path)
-                if os.path.exists(episode_config_path)
-                else 0
+            from credits_generator import description_drift
+
+            with open(episode_config_path, encoding="utf-8") as f:
+                _cfg = json.load(f)
+            with open(scene_json, encoding="utf-8") as f:
+                _sd = json.load(f)
+            _timing = {}
+            _timing_path = os.path.join(episode_dir, "timing.json")
+            if os.path.exists(_timing_path):
+                with open(_timing_path, encoding="utf-8") as f:
+                    _timing = json.load(f)
+            _wiki = {}
+            _wiki_path = os.path.join(episode_dir, "wikimedia_credits.json")
+            if os.path.exists(_wiki_path):
+                with open(_wiki_path, encoding="utf-8") as f:
+                    _wiki = json.load(f)
+            drift = description_drift(episode_dir, _cfg, _sd, _wiki, _timing)
+        except Exception as e:  # noqa: BLE001 - verification helper, never fatal
+            print(f"  [credits] drift check unavailable, using mtime: {e!r}")
+            drift = None
+
+        if drift:
+            warnings.append(
+                f"  [credits] description.txt DIVERGES from source ({drift}). "
+                "Re-run with `--steps credits` to regenerate title / chapter / "
+                "timestamps / credits from source."
             )
-            newer_source_mtime = max(scene_mtime, config_mtime)
-            if desc_mtime < newer_source_mtime:
-                import datetime
-                desc_dt = datetime.datetime.fromtimestamp(desc_mtime).isoformat(timespec="seconds")
-                src_dt = datetime.datetime.fromtimestamp(newer_source_mtime).isoformat(timespec="seconds")
-                warnings.append(
-                    f"  [credits] description.txt is STALE (desc {desc_dt} < source {src_dt}). "
-                    "Re-run with `--steps credits` to refresh chapter / BGM / references."
+        elif drift is None:
+            # content check unavailable -> fall back to mtime staleness
+            try:
+                desc_mtime = os.path.getmtime(desc_path)
+                scene_mtime = os.path.getmtime(scene_json)
+                config_mtime = (
+                    os.path.getmtime(episode_config_path)
+                    if os.path.exists(episode_config_path)
+                    else 0
                 )
-        except OSError:
-            pass
+                newer_source_mtime = max(scene_mtime, config_mtime)
+                if desc_mtime < newer_source_mtime:
+                    import datetime
+
+                    desc_dt = datetime.datetime.fromtimestamp(desc_mtime).isoformat(
+                        timespec="seconds"
+                    )
+                    src_dt = datetime.datetime.fromtimestamp(newer_source_mtime).isoformat(
+                        timespec="seconds"
+                    )
+                    warnings.append(
+                        f"  [credits] description.txt is STALE (desc {desc_dt} < source {src_dt}). "
+                        "Re-run with `--steps credits` to refresh chapter / BGM / references."
+                    )
+            except OSError:
+                pass
 
     scene_def = None
     if os.path.exists(scene_json):
@@ -366,8 +688,32 @@ def _preflight_voicevox(
         )
 
 
-def run_preflight_checks(steps: list[str]) -> None:
-    """Run fail-fast environment checks; sys.exit(1) with clear guidance on failure."""
+def _env_or_dotenv(key: str) -> str | None:
+    """Return `key` from process env, else from a top-level .env file (no deps).
+
+    Used by the cloud-key preflight; a lone `KEY=value` line is enough.
+    """
+    v = os.environ.get(key)
+    if v:
+        return v.strip()
+    env_path = os.path.join(os.getcwd(), ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith(key + "="):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            pass
+    return None
+
+
+def run_preflight_checks(steps: list[str], engine: str = "voicevox") -> None:
+    """Run fail-fast environment checks; sys.exit(1) with clear guidance on failure.
+
+    `engine` gates the VOICEVOX server check: engine="cloud" needs no local
+    VOICEVOX (Cloud TTS is a remote REST API), so that check is skipped.
+    """
     print("=" * 60)
     print("  Preflight Checks")
     print("=" * 60)
@@ -429,8 +775,9 @@ def run_preflight_checks(steps: list[str]) -> None:
     else:
         print("  [2/3] Claude CLI auth... skipped (steps don't require it)")
 
-    # (3) VOICEVOX — only if audio step will run
-    if "audio" in steps:
+    # (3) VOICEVOX — only if audio step will run AND engine is voicevox.
+    # Cloud TTS is a remote REST API (no local server) -> skip the check.
+    if "audio" in steps and engine == "voicevox":
         print("  [3/3] VOICEVOX server... ", end="", flush=True)
         ok, msg = _preflight_voicevox()
         if not ok:
@@ -446,8 +793,31 @@ def run_preflight_checks(steps: list[str]) -> None:
             pipeline_log.close()
             sys.exit(1)
         print(msg)
+    elif "audio" in steps and engine == "cloud":
+        print("  [3/3] VOICEVOX server... skipped (engine=cloud, no local server)")
     else:
         print("  [3/3] VOICEVOX server... skipped (audio step not selected)")
+
+    # (4) Cloud TTS/STT keys — only if the audio step runs with engine=cloud.
+    # GOOGLE_TTS_API_KEY (synthesis) is REQUIRED; GOOGLE_API_KEY (Gemini STT read-QA)
+    # is advisory (stt_qa degrades gracefully). ある回 で両キーを取り違え、存在しない
+    # 「API block」を追った反省 — 別物であることを preflight で明示する。
+    if "audio" in steps and engine == "cloud":
+        print("  [cloud] Cloud TTS/STT keys... ", end="", flush=True)
+        tts_key = _env_or_dotenv("GOOGLE_TTS_API_KEY")
+        stt_key = _env_or_dotenv("GOOGLE_API_KEY")
+        if not tts_key:
+            print("FAIL")
+            print("    GOOGLE_TTS_API_KEY not found (env / .env). Cloud 音声合成に必須。")
+            print("    Fix: .env に GOOGLE_TTS_API_KEY=... を設定")
+            print("    (注意: Gemini/STT の GOOGLE_API_KEY とは別キー。取り違え注意)")
+            pipeline_log.emit(pipeline_log.LEVEL_CRITICAL, "preflight", "cloud tts key missing")
+            pipeline_log.close()
+            sys.exit(1)
+        if not stt_key:
+            print("OK — GOOGLE_TTS_API_KEY あり (但し GOOGLE_API_KEY 無し=STT 読みQAはスキップ)")
+        else:
+            print("OK (GOOGLE_TTS_API_KEY 合成 + GOOGLE_API_KEY STT)")
 
     pipeline_log.step_end(
         "preflight",
@@ -470,6 +840,10 @@ def _run_partial_rebuild(
     src_dir: str,
     bgm_file: str,
     bgm_config: dict,
+    tts_engine: str = "voicevox",
+    tts_voice: str | None = None,
+    tts_rate: float | None = None,
+    force_regen: bool = False,
 ) -> None:
     """Rebuild a single scene and re-run assembly + credits + bgm.
 
@@ -526,11 +900,26 @@ def _run_partial_rebuild(
     # --- Step 1: Audio regeneration for the target scene ---
     print("\n[PARTIAL REBUILD] Step 1/6: Audio regeneration")
     sys.path.insert(0, src_dir)
+    import audio_generator
     from audio_generator import rebuild_single_scene_audio
+
+    # per-ep speed override on the in-process synth path (this path imports
+    # the function directly instead of running audio_generator.py as a subprocess,
+    # so the --speed-scale CLI does not apply; set the module global instead).
+    # (VOICEVOX-only tuning; inert for engine=cloud.)
+    audio_generator.SPEED_SCALE = config.get("speed_scale", 0.87)
 
     pipeline_log.step_start("audio (partial rebuild)", scene_id=scene_id)
     _audio_start = time.time()
-    audio_ok = rebuild_single_scene_audio(scene_json, scene_id, episode_dir)
+    audio_ok = rebuild_single_scene_audio(
+        scene_json,
+        scene_id,
+        episode_dir,
+        engine=tts_engine,
+        tts_voice=tts_voice,
+        tts_rate=tts_rate,
+        force_regen=force_regen,
+    )
     pipeline_log.step_end(
         "audio (partial rebuild)",
         exit_code=0 if audio_ok else 1,
@@ -553,6 +942,11 @@ def _run_partial_rebuild(
         "--scene-json",
         scene_json,
     ]
+    # Engine-aware: Cloud episodes must not use VOICEVOX segment timing (it
+    # measures the display text, not the Cloud-spoken text_clean). See the main
+    # subtitles step for the full rationale.
+    if tts_engine == "cloud":
+        cmd.append("--no-voicevox-timing")
     run_step("subtitles (partial rebuild)", cmd)
 
     # --- Step 3: Image regeneration (only for ken_burns scenes) ---
@@ -706,6 +1100,25 @@ def _drain_stderr(stream, on_marker, on_raw) -> None:
         return
 
 
+# Advisory-warning roll-up (③): child checks emit a per-step warning count via the
+# X3 stderr channel (pipeline_log.emit_stderr_warn_summary); the parent tallies them
+# here and surfaces the roll-up in the final summary so a mid-log advisory block
+# (cloud_reading_lint / speed_qa / manim_vision_qa / dead-air) cannot be missed by a
+# reader who scans only the 'Pipeline Complete' tail.
+_advisory_warn_counts: dict[str, int] = {}
+
+
+def _tally_advisory_warning(event: dict) -> None:
+    """Record a child advisory warning count from an X3 stderr marker event."""
+    try:
+        if event.get("level") == pipeline_log.LEVEL_WARNING:
+            wc = (event.get("metadata") or {}).get("warn_count")
+            if isinstance(wc, int) and wc > 0:
+                _advisory_warn_counts[event.get("step", "?")] = wc
+    except Exception:
+        pass
+
+
 def _run_subprocess_with_stderr_capture(cmd: list[str]) -> int:
     """Run cmd with stdout pass-through and structured-stderr demux (X3).
 
@@ -736,13 +1149,18 @@ def _run_subprocess_with_stderr_capture(cmd: list[str]) -> int:
 
     drainer: threading.Thread | None = None
     if proc.stderr is not None:
+
         def _on_raw(line: str) -> None:
             sys.stderr.write(line)
             sys.stderr.flush()
 
+        def _on_marker(event: dict) -> None:
+            _tally_advisory_warning(event)
+            pipeline_log.merge_child_event(event)
+
         drainer = threading.Thread(
             target=_drain_stderr,
-            args=(proc.stderr, pipeline_log.merge_child_event, _on_raw),
+            args=(proc.stderr, _on_marker, _on_raw),
             daemon=True,
         )
         drainer.start()
@@ -763,6 +1181,26 @@ def _run_subprocess_with_stderr_capture(cmd: list[str]) -> int:
     return proc.returncode
 
 
+def _confirm_continue(noninteractive_hint: str) -> bool:
+    """Ask whether to continue past a QA gate that flagged issues.
+
+    In a non-interactive run (background task, CI, ``> log 2>&1`` with no TTY)
+    ``input()`` gets EOF immediately, which previously looked like an opaque
+    silent abort. When stdin is not a TTY we therefore DO NOT prompt: we
+    print an actionable hint and abort deterministically (never auto-proceed
+    past flagged issues without an explicit flag). Returns True to continue.
+    """
+    if not sys.stdin.isatty():
+        print("   [non-interactive] stdin is not a TTY -- cannot prompt for confirmation.")
+        print(f"   {noninteractive_hint}")
+        return False
+    try:
+        return input("   Continue anyway? (y/N): ").strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        print("\n   Aborted.")
+        return False
+
+
 def run_step(step_name: str, cmd: list[str], required: bool = True) -> bool:
     """Run a pipeline step as subprocess. Returns True on success."""
     print(f"\n{'=' * 60}")
@@ -771,17 +1209,18 @@ def run_step(step_name: str, cmd: list[str], required: bool = True) -> bool:
     print(f"{'=' * 60}\n")
 
     pipeline_log.step_start(step_name, command=" ".join(cmd))
+    pipeline_progress.start_step(step_name)
     start = time.time()
     exit_code = _run_subprocess_with_stderr_capture(cmd)
     elapsed = time.time() - start
-    pipeline_log.step_end(
-        step_name, exit_code=exit_code, duration_ms=int(elapsed * 1000)
-    )
+    pipeline_log.step_end(step_name, exit_code=exit_code, duration_ms=int(elapsed * 1000))
+    pipeline_progress.end_step(step_name, exit_code, elapsed)
 
     if exit_code != 0:
         print(f"\n[FAIL] Step '{step_name}' failed (exit code {exit_code}, {elapsed:.1f}s)")
         if required:
             print("Pipeline aborted.")
+            pipeline_progress.finish("failed")
             sys.exit(1)
         return False
 
@@ -790,6 +1229,15 @@ def run_step(step_name: str, cmd: list[str], required: bool = True) -> bool:
 
 
 def main():
+    # Line-buffer stdout/stderr so a long run's log is monitorable in real time
+    # even when redirected to a file. Without this, block-buffering makes the log
+    # look frozen for minutes (observed when tailing pipeline_log during a build).
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(
         description="Run the full sugakushiki video generation pipeline",
     )
@@ -806,6 +1254,11 @@ def main():
         help="Skip script generation (use existing scene_definition.json)",
     )
     parser.add_argument("--skip-images", action="store_true", help="Skip image generation")
+    parser.add_argument(
+        "--allow-video-borders",
+        action="store_true",
+        help="レンダ動画の白帯>=8%%でも中断しない (既定は確認/中断)",
+    )
     parser.add_argument(
         "--skip-manim", action="store_true", help="Use stubs instead of Manim rendering"
     )
@@ -873,6 +1326,29 @@ def main():
         action="store_true",
         help="Skip pronunciation check even when --qa is active",
     )
+    parser.add_argument(
+        "--skip-reading-guard",
+        action="store_true",
+        help="skip VOICEVOX 誤読 pre-build guard (reading_guard.py). "
+        "Default: enabled before audio step (advisory WARN, never blocks).",
+    )
+    parser.add_argument(
+        "--force-regen-audio",
+        action="store_true",
+        help="re-synthesize every sentence, ignoring the per-sentence "
+        "audio cache. Default: cache reuses unchanged wavs (NS-only edits "
+        "re-synthesize just the changed sentences).",
+    )
+    parser.add_argument(
+        "--normalize-cloud-speed",
+        action="store_true",
+        help="after Cloud TTS synthesis, atempo-normalize per-sentence "
+        "articulation toward the episode median (Chirp3-HD varies speech rate "
+        "24-31%% between adjacent sentences even in one session; per-sentence "
+        "re-synth cannot converge). Off by default -- detection is always-on "
+        "(advisory speed_qa_report.txt); this opt-in applies the fix. "
+        "Cloud-only; inert for voicevox. Undo with cloud_speed_qa.py --restore.",
+    )
     parser.add_argument
     parser.add_argument(
         "--fact-check-allow-warn",
@@ -887,7 +1363,7 @@ def main():
     parser.add_argument(
         "--skip-portrait-lint",
         action="store_true",
-        help="Day 21 強化 H2: skip portrait_prompt_lint。default: enabled when use_reference scenes + wiki_*.jpg refs exist。WARN only、build halt しない。",
+        help="強化 H2: skip portrait_prompt_lint。default: enabled when use_reference scenes + wiki_*.jpg refs exist。WARN only、build halt しない。",
     )
     parser.add_argument(
         "--skip-qa-script-only",
@@ -911,11 +1387,34 @@ def main():
     parser.add_argument(
         "--auto-fix-route-collisions",
         action="store_true",
-        help="opt-in 3-stage auto-fix of route_map collisions "
-        "(label avoidance -> bounds expansion -> title fontsize). "
+        help="opt-in 4-stage auto-fix of route_map collisions "
+        "(label avoidance -> bounds expansion -> title fontsize -> legend relocation). "
+        "Stages are cumulative and stop at the first one that resolves the collision. "
         "Mutates scene_definition.json with _route_map_auto_fix_log block.",
     )
+    parser.add_argument(
+        "--allow-empty-template-params",
+        action="store_true",
+        help="continue even if a data-driven reused template "
+        "(e.g. timeline_recap) has empty params. WARNING: empty params make the "
+        "template render its self-test default (another episode's data, e.g. "
+        "Laplace's life events). Only use for an intentional self-test render.",
+    )
     parser.add_argument("--skip-thumbnail", action="store_true", help="Skip thumbnail generation")
+    parser.add_argument(
+        "--allow-stale-visuals",
+        action="store_true",
+        help="skip the assemble stale-visual preflight (visual mp4 尺 vs "
+        "timing.json). Use only when intentionally assembling with visuals that "
+        "predate the current timing.",
+    )
+    parser.add_argument(
+        "--allow-stale-subtitles",
+        action="store_true",
+        help="Guard-B: skip the assemble stale-subtitle preflight (narration hash vs "
+        "subtitles.srt embedded hash). Use only when intentionally assembling with "
+        "subtitles that predate the current narration.",
+    )
     parser.add_argument
     parser.add_argument(
         "--log-file",
@@ -926,7 +1425,42 @@ def main():
         "ts/step/level/episode_id/scene_id/msg/metadata. Severity levels: "
         "critical/warning/info. Default: disabled (no JSONL output, baseline parity).",
     )
+    parser.add_argument(
+        "--no-keep-awake",
+        action="store_true",
+        help="Do not keep the machine awake during the build (Windows). By "
+        "default the pipeline prevents system sleep so a long/overnight build "
+        "is not killed mid-run; this opts out.",
+    )
+    parser.add_argument(
+        "--tts-engine",
+        choices=["voicevox", "cloud"],
+        default=None,
+        help="TTS backend override. Default: episode_config.json 'tts.engine', "
+        "else 'voicevox'. 'cloud' = Google Cloud TTS Chirp3-HD (needs "
+        "GOOGLE_TTS_API_KEY; VOICEVOX GUI not required).",
+    )
+    parser.add_argument(
+        "--tts-voice",
+        default=None,
+        help="Cloud TTS voice override (default: episode_config.json 'tts.voice', "
+        "else ja-JP-Chirp3-HD-Enceladus). Ignored for voicevox.",
+    )
+    parser.add_argument(
+        "--tts-rate",
+        type=float,
+        default=None,
+        help="Cloud TTS speakingRate override (default: episode_config.json "
+        "'tts.rate', else 0.90). Ignored for voicevox.",
+    )
     args = parser.parse_args()
+
+    # Keep the system awake for the (possibly multi-hour) build so it is not
+    # killed by sleep mid-run; released automatically on exit. Override with
+    # --no-keep-awake.
+    if not args.no_keep_awake:
+        _set_keep_awake(True)
+        atexit.register(_set_keep_awake, False)
 
     # --rebuild-scene is exclusive with step-control flags
     if args.rebuild_scene:
@@ -992,17 +1526,38 @@ def main():
     episode_id = os.path.basename(episode_dir.rstrip(os.sep)) or "unknown"
     log_file_path = Path(args.log_file) if args.log_file else None
     pipeline_log.init_logger(log_file_path, episode_id)
+    # Signal to subprocess children (advisory checks) that they run under the
+    # pipeline, so their emit_stderr_warn_summary() fires for the final-summary
+    # roll-up even when structured logging (--log-file) is disabled (the default).
+    # Children inherit env; the parent's stderr demux + tally run regardless of
+    # whether a JSONL logger was initialized.
+    os.environ["PIPELINE_RUN"] = "1"
+
+    # ─── machine-readable progress snapshot (always on) ────────────
+    # Writes _pipeline_progress.json (overwritten each step boundary) so a
+    # watcher can poll status/current_step/completion instead of guessing from
+    # buffered stdout or wav/mp4 mtimes.
+    pipeline_progress.init(episode_dir, episode_id, steps)
+
+    # Load config early: the TTS engine affects preflight (Cloud needs no local
+    # VOICEVOX server) and is threaded into the audio step + partial rebuild.
+    with open(config_path, encoding="utf-8") as f:
+        config = json.load(f)
+
+    # Resolve TTS engine/voice/rate: CLI override > config 'tts' > defaults.
+    # voice/rate stay None here when unset -> audio_generator fills Cloud defaults.
+    tts_cfg = config.get("tts", {}) or {}
+    tts_engine = args.tts_engine or tts_cfg.get("engine", "voicevox")
+    tts_voice = args.tts_voice or tts_cfg.get("voice")
+    tts_rate = args.tts_rate if args.tts_rate is not None else tts_cfg.get("rate")
 
     # ─── Preflight: fail fast on venv / Claude auth / VOICEVOX issues ───
     # a past run lost 57min on expired Claude token + 30min on system-Python run.
     # Cheap upfront checks avoid these dead-ends.
     # --rebuild-scene only touches visuals/assemble/bgm → smaller check set.
+    # Cloud engine skips the VOICEVOX server check (no local server needed).
     preflight_steps = ["assemble", "bgm"] if args.rebuild_scene else steps
-    run_preflight_checks(preflight_steps)
-
-    # Load config for BGM settings
-    with open(config_path, encoding="utf-8") as f:
-        config = json.load(f)
+    run_preflight_checks(preflight_steps, engine=tts_engine)
 
     # ─── Validate config ─────────────────────────────────────────────────
     from config_validator import print_validation_result, validate_config
@@ -1016,6 +1571,11 @@ def main():
 
     bgm_config = config.get("bgm", {})
     bgm_file = args.bgm_file or bgm_config.get("file", "")
+
+    # per-episode 読み上げ速度。既定 0.87。global 定数を直接編集せず
+    # episode_config.json の "speed_scale" で上書きし、audio step / partial
+    # rebuild の両 audio 経路へ渡す (global 直編集の revert 忘れ hazard を排除)。
+    speed_scale = config.get("speed_scale", 0.87)
 
     # BGM file path resolution: search multiple locations
     # Handles cases where config says "angels_dream.mp3" instead of "bgm/angels_dream.mp3"
@@ -1041,7 +1601,12 @@ def main():
             src_dir=src_dir,
             bgm_file=bgm_file,
             bgm_config=bgm_config,
+            tts_engine=tts_engine,
+            tts_voice=tts_voice,
+            tts_rate=tts_rate,
+            force_regen=args.force_regen_audio,
         )
+        pipeline_progress.finish("complete", _output_final_summary(episode_dir))
         return  # Exit without entering the full-build path
 
     # Print plan
@@ -1148,7 +1713,7 @@ def main():
                     critical=_crit,
                     warning=_warn,
                 )
-            print("[] OK (no blocking issues)")
+            print("OK (no blocking issues)")
         except SystemExit:
             raise
         except Exception as _e:
@@ -1182,11 +1747,7 @@ def main():
         print(f"\n[SKIP] Skipping script generation (using existing {scene_json})")
 
     # ─── QA Gate 1: Script QA (optional) ─────────────────────────────────
-    qa_requested = (
-        (args.qa or args.qa_quick)
-        and not args.skip_qa
-        and not args.skip_qa_script_only
-    )
+    qa_requested = (args.qa or args.qa_quick) and not args.skip_qa and not args.skip_qa_script_only
     if qa_requested and os.path.exists(scene_json):
         print(f"\n{'=' * 60}")
         print("  QA Gate 1: Script Quality Check")
@@ -1218,21 +1779,16 @@ def main():
         qa_start = time.time()
         qa_exit = _run_subprocess_with_stderr_capture(qa_cmd)
         qa_elapsed = time.time() - qa_start
-        pipeline_log.step_end(
-            "qa_script", exit_code=qa_exit, duration_ms=int(qa_elapsed * 1000)
-        )
+        pipeline_log.step_end("qa_script", exit_code=qa_exit, duration_ms=int(qa_elapsed * 1000))
 
         if qa_exit == 1:
             print(f"\n[FAIL] QA FAILED ({qa_elapsed:.0f}s). Critical issues found.")
             print(f"   Report: {qa_report_path}")
-            # Ask user whether to continue
-            try:
-                response = input("   Continue anyway? (y/N): ").strip().lower()
-                if response != "y":
-                    print("Pipeline aborted by user.")
-                    sys.exit(1)
-            except (EOFError, KeyboardInterrupt):
-                print("\nPipeline aborted.")
+            # Ask user whether to continue (non-interactive runs abort cleanly)
+            if not _confirm_continue(
+                "Fix scene_definition.json then re-run, or re-run with --skip-qa to bypass."
+            ):
+                print("Pipeline aborted (QA critical).")
                 sys.exit(1)
         elif qa_exit == 2:  # ERROR
             print(f"\n[ERROR] QA ERROR ({qa_elapsed:.0f}s). Some agents failed.")
@@ -1241,6 +1797,7 @@ def main():
         else:
             # Check report for warnings (WARN status returns exit code 0)
             qa_has_warnings = False
+            qa_fact_layer_present = True  # default True → old reports don't false-warn
             if os.path.exists(qa_report_path):
                 try:
                     with open(qa_report_path, encoding="utf-8") as f:
@@ -1248,8 +1805,23 @@ def main():
                     warn_count = qa_data_check.get("summary", {}).get("warning", 0)
                     if warn_count > 0:
                         qa_has_warnings = True
+                    # did the factual-verification layer actually run?
+                    qa_fact_layer_present = qa_data_check.get("fact_layer_present", True)
                 except (json.JSONDecodeError, FileNotFoundError):
                     pass
+
+            # surface a fact-layer gap even on PASS. ある回 ran only
+            # content/consistency (fact absent) and factual errors slipped through
+            # silently. This makes the absence loud in the pipeline output.
+            if not qa_fact_layer_present:
+                print(f"\n{'!' * 60}")
+                print("  [WARN] QA: 事実検証層 (FactChecker) が未実行です")
+                print(f"{'!' * 60}")
+                print("   この QA run は fact/fact_grounding を含みません。外部事実の正誤・")
+                print("   cross-episode 矛盾は未検証です。--qa-agents に fact を含めて再実行する")
+                print("   か、verified_facts / key_episodes を独立 verify してください。")
+                print(f"   Report: {qa_report_path}")
+                print(f"{'!' * 60}")
 
             if qa_has_warnings:
                 print(f"\n[WARN] QA WARN ({qa_elapsed:.0f}s) -- {warn_count} warning(s) found.")
@@ -1308,21 +1880,122 @@ def main():
 
     # ─── Step 2: Audio generation ────────────────────────────────────────
     if "audio" in steps:
+        # VOICEVOX 誤読 pre-build guard (advisory WARN, never blocks).
+        # 実際に合成されるテキストを kana 実測し、既知の誤読リスク語が読み固定
+        # されていない行を WARN する。VOICEVOX 不通や dry-run audio では自動 skip。
+        # VOICEVOX-only (audio_query kana 実測): Cloud は STT QA (audio 後) で代替。
+        if tts_engine == "voicevox" and not args.skip_reading_guard and not args.dry_run_audio:
+            guard_script = os.path.join(os.path.dirname(src_dir), "scripts", "reading_guard.py")
+            if os.path.exists(guard_script):
+                run_step(
+                    "reading_guard",
+                    [sys.executable, guard_script, scene_json],
+                    required=False,
+                )
+
+        # Cloud pre-step: ensure narration_speech_cloud exists BEFORE synthesis.
+        # script_generator does not emit it, so without this the audio step falls
+        # back to narration_speech (VOICEVOX kana) -- flat readings AND a silent
+        # source of STALE audio (fallback wavs persist across text edits). Fill-if-
+        # absent only: hand-tuned narration_speech_cloud is preserved. Advisory:
+        # on failure the audio step still runs (with the old fallback).
+        if tts_engine == "cloud" and not args.dry_run_audio:
+            gen_script = os.path.join(os.path.dirname(src_dir), "scripts", "gen_cloud_readings.py")
+            if os.path.exists(gen_script):
+                run_step(
+                    "gen_cloud_readings (narration_speech_cloud)",
+                    [sys.executable, gen_script, scene_json],
+                    required=False,
+                )
+
+            # Cloud reading lint (P2/P3): 多読み漢字/同音誤解語/難語/不自然な間 を
+            # narration + narration_speech_cloud で合成前に静的走査 (reading_guard の
+            # Cloud 版)。ある回 で user が1つずつ指摘した読み温床を出荷前に洗う。advisory。
+            reading_lint = os.path.join(
+                os.path.dirname(src_dir), "scripts", "cloud_reading_lint.py"
+            )
+            if os.path.exists(reading_lint):
+                run_step(
+                    "cloud_reading_lint (Chirp3-HD 読み誤り温床)",
+                    [sys.executable, reading_lint, scene_json],
+                    required=False,
+                )
+
         cmd = [
             sys.executable,
             os.path.join(src_dir, "audio_generator.py"),
             scene_json,
             "--output-dir",
             episode_dir,
+            "--speed-scale",
+            str(speed_scale),  # per-ep speedScale (config "speed_scale", default 0.87)
+            "--tts-engine",
+            tts_engine,
         ]
+        if tts_engine == "cloud":
+            if tts_voice:
+                cmd += ["--tts-voice", tts_voice]
+            if tts_rate is not None:
+                cmd += ["--tts-rate", str(tts_rate)]
         if args.dry_run_audio:
             cmd.append("--dry-run")
+        if args.force_regen_audio:
+            cmd.append("--force-regen-audio")
+        # pronunciation_check is VOICEVOX-only (uses audio_query + rewrites
+        # narration_speech). Never pass it on the Cloud path.
         run_pronunciation = (
-            args.qa or args.qa_quick or args.check_pronunciation
-        ) and not args.skip_pronunciation_check
+            tts_engine == "voicevox"
+            and (args.qa or args.qa_quick or args.check_pronunciation)
+            and not args.skip_pronunciation_check
+        )
         if run_pronunciation:
             cmd.append("--check-pronunciation")
         run_step("audio", cmd)
+
+        # Cloud TTS post-processing (engine=cloud only; skipped in dry-run).
+        if tts_engine == "cloud" and not args.dry_run_audio:
+            speed_script = os.path.join(os.path.dirname(src_dir), "scripts", "cloud_speed_qa.py")
+            audio_subdir = os.path.join(episode_dir, "audio")
+
+            # fix (opt-in): atempo-normalize per-sentence articulation toward
+            # the episode median (Chirp3-HD varies speech rate 24-31% between
+            # adjacent sentences even in one session; per-sentence re-synth cannot
+            # converge). Runs BEFORE stt_qa/detection so they verify the normalized
+            # audio, and before subtitles/visuals so timing.json is final.
+            if args.normalize_cloud_speed and os.path.exists(speed_script):
+                run_step(
+                    "cloud_speed_normalize",
+                    [
+                        sys.executable,
+                        speed_script,
+                        scene_json,
+                        "--audio-dir",
+                        audio_subdir,
+                        "--timing",
+                        timing_json,
+                        "--apply",
+                    ],
+                )
+
+            # Cloud read verification via Gemini STT (advisory; VOICEVOX uses the
+            # pre-build reading_guard instead).
+            stt_script = os.path.join(os.path.dirname(src_dir), "scripts", "stt_qa.py")
+            if os.path.exists(stt_script):
+                run_step(
+                    "stt_qa (Cloud read check)",
+                    [sys.executable, stt_script, scene_json, "--audio-dir", audio_subdir],
+                    required=False,
+                )
+
+            # detection (always-on advisory): surface abrupt articulation
+            # jumps pre-publish (writes speed_qa_report.txt). Detection is free
+            # regardless of the opt-in fix, so the problem is never invisible.
+            if os.path.exists(speed_script):
+                run_step(
+                    "speed_qa",
+                    [sys.executable, speed_script, scene_json, "--audio-dir", audio_subdir],
+                    required=False,
+                )
 
     # ─── Font coverage check (before subtitles) ─────────────────────────
     if "subtitles" in steps:
@@ -1345,6 +2018,15 @@ def main():
                 "--scene-json",
                 scene_json,
             ]
+            # Engine-aware subtitle timing: VOICEVOX-measured per-segment
+            # durations are only valid when VOICEVOX is the speaking engine. For
+            # Cloud episodes the audio is Google Cloud TTS reading text_clean
+            # (narration_speech_cloud), so querying VOICEVOX for the *display*
+            # text drifts the split (and re-appears only when the local VOICEVOX
+            # server happens to be up -> non-reproducible). Force the calibrated
+            # local mora estimate instead.
+            if tts_engine == "cloud":
+                cmd.append("--no-voicevox-timing")
             run_step("subtitles", cmd)
 
     # ─── Step 3.5: Wikimedia photo fetch ─────────────────────────────────
@@ -1362,6 +2044,30 @@ def main():
 
     # ─── Step 4: Image generation ────────────────────────────────────────
     if "images" in steps:
+        # misreading: subject-portrait use_reference gap check (before the paid Gemini run).
+        # If a real reference photo exists (config.wikimedia_photo_urls) but a subject
+        # portrait ken_burns scene has use_reference unset, it is generated text-only,
+        # which idealizes distinctive features. advisory.
+        try:
+            _scripts_dir = os.path.join(src_dir, "..", "scripts")
+            if _scripts_dir not in sys.path:
+                sys.path.insert(0, _scripts_dir)
+            from lint_portrait_reference import run_lint as _portrait_ref_run
+
+            _pr = _portrait_ref_run(scene_json, config_path)
+            if _pr:
+                print(
+                    f"\n  [WARN] 主題肖像が text-only 生成の恐れ {len(_pr)} 件 "
+                    "(参照 gate OFF = config に birth_year が無い可能性):"
+                )
+                for _w in _pr:
+                    print(f"    {_w['scene_id']}: config に birth_year を明記して gate を ON に")
+                print(f"    詳細: python scripts/lint_portrait_reference.py {episode_dir}")
+            else:
+                print("  [OK] 主題肖像は参照写真を適切に条件付け (or 実写参照なし)")
+        except Exception as _e:
+            print(f"  [WARN] portrait-reference チェック skipped: {_e}")
+
         cmd = [
             sys.executable,
             os.path.join(src_dir, "image_generator.py"),
@@ -1419,8 +2125,33 @@ def main():
         except Exception as _e:
             print(f"\n[WARN] Image count verification skipped: {_e}")
 
-        # ─── Day 21 強化 H2: portrait_prompt_lint pipeline 統合 ───────
-        # Day 19 強化 C standalone (scripts/portrait_prompt_lint.py) を
+        # ─── ある回: 白縁検出 (安価な静的チェック、Vision QA とは別) ──────
+        # Gemini が油絵に焼き込む白いキャンバス/額縁の縁は ken_burns の 15% ズーム
+        # では消えきらず、最終動画で白帯になる。images
+        # 直後に四辺の near-white strip を実測し、再描画/トリミングを促す (WARN-only)。
+        try:
+            _scripts_dir = os.path.join(src_dir, "..", "scripts")
+            if _scripts_dir not in sys.path:
+                sys.path.insert(0, _scripts_dir)
+            from lint_image_borders import run as _border_run
+
+            _bw = _border_run(os.path.join(episode_dir, "images"))
+            if _bw:
+                print(f"\n  [WARN] 白縁検出 {len(_bw)} 枚 (動画で白帯になりうる):")
+                for _b in _bw:
+                    _bd = ", ".join(f"{k}={v}px" for k, v in _b["borders"].items())
+                    print(f"    - {_b['image']}: {_bd}")
+                print(
+                    "    対処: python scripts/lint_image_borders.py "
+                    f"{os.path.join(episode_dir, 'images')} --trim (+ visuals 再生成)"
+                )
+            else:
+                print("  [OK] 白縁チェック: 検出なし")
+        except Exception as _e:
+            print(f"  [WARN] 白縁チェック skipped: {_e}")
+
+        # ─── 強化 H2: portrait_prompt_lint pipeline 統合 ───────
+        # 強化 C standalone (scripts/portrait_prompt_lint.py) を
         # images step 末尾で auto-gate。use_reference: true scene の
         # source_prompt と reference 写真 (wiki_*.jpg) の特徴矛盾を Gemini
         # Vision で catch。ある回「kimono」prompt vs 全 wiki refs
@@ -1438,9 +2169,7 @@ def main():
                 for _sec in _scene_def.get("sections", []):
                     for _sc in _sec.get("scenes", []):
                         _v = _sc.get("visual", {})
-                        if _v.get("type") == "ken_burns" and _v.get(
-                            "use_reference", True
-                        ):
+                        if _v.get("type") == "ken_burns" and _v.get("use_reference", True):
                             _has_ref_scene = True
                             break
                     if _has_ref_scene:
@@ -1474,12 +2203,30 @@ def main():
                         print(_lint_result.stdout)
                     if _lint_result.stderr:
                         print(f"[portrait_lint stderr] {_lint_result.stderr[:500]}")
-                    # non-zero exit = MISMATCH detected (WARN-only, don't halt)
-                    if _lint_result.returncode != 0:
+                    # exit 2 = IDENTITY mismatch (顔の毛/頭髪/骨格 -- reference と矛盾、
+                    # 本人の風貌が誤って伝わる shipped-defect risk); 1 = AGE-only
+                    # (若年/晩年版、通常は意図的)。identity は最終 advisory roll-up に
+                    # 上げて見落とし防止。WARN-only、build halt しない。
+                    if _lint_result.returncode == 2:
+                        import re as _re
+
+                        _m = _re.search(r"IDENTITY_MISMATCHES:\s*(\d+)", _lint_result.stdout or "")
+                        _n_id = int(_m.group(1)) if _m else 1
                         print(
-                            "  [WARN] portrait_prompt_lint detected MISMATCH(es). "
-                            "Review above; reference photo features vs source_prompt may "
-                            "diverge."
+                            f"  [!] portrait_prompt_lint: IDENTITY mismatch x{_n_id} "
+                            "(顔の毛/頭髪/骨格が reference と矛盾) -- 本人の風貌が誤って"
+                            "伝わる。出荷前に必ず確認。"
+                        )
+                        try:
+                            pipeline_log.emit_stderr_warn_summary(
+                                "portrait_identity_mismatch", _n_id
+                            )
+                        except Exception:
+                            pass
+                    elif _lint_result.returncode == 1:
+                        print(
+                            "  [WARN] portrait_prompt_lint: 年齢帯のみの mismatch "
+                            "(若年/晩年版、通常は意図的)。identity 矛盾なし。"
                         )
                 else:
                     if not _wiki_exists:
@@ -1489,8 +2236,7 @@ def main():
                         )
                     else:
                         print(
-                            "  [SKIP] portrait_prompt_lint: no use_reference=true "
-                            "ken_burns scenes"
+                            "  [SKIP] portrait_prompt_lint: no use_reference=true ken_burns scenes"
                         )
             except Exception as _e:
                 print(f"  [WARN] portrait_prompt_lint skipped (env/api issue): {_e}")
@@ -1528,12 +2274,10 @@ def main():
         )
         if qa_image_exit == 1:
             print(f"\n[WARN] Image QA found critical issues. Check: {qa_img_report}")
-            try:
-                response = input("   Continue anyway? (y/N): ").strip().lower()
-                if response != "y":
-                    print("Pipeline aborted by user.")
-                    sys.exit(1)
-            except (EOFError, KeyboardInterrupt):
+            if not _confirm_continue(
+                "Re-run with --skip-qa-image-narration to skip Gate 2, or --skip-qa to skip all QA."
+            ):
+                print("Pipeline aborted (image QA critical).")
                 sys.exit(1)
 
     # ─── Step 4.5: Thumbnail generation ──────────────────────────────────
@@ -1589,9 +2333,9 @@ def main():
                 with open(scene_json, encoding="utf-8") as _f:
                     _scene_def_for_lint = json.load(_f)
                 _manim_dir = os.path.join(src_dir, "manim_templates")
-                print("\n[] Manim factual-claim lint (episode scope):")
+                print("\nManim factual-claim lint (episode scope):")
                 _warns = lint_manim_factual_claims(_scene_def_for_lint, _manim_dir)
-                print(f"[] {_warns} warning(s)")
+                print(f"{_warns} warning(s)")
                 pipeline_log.emit(
                     pipeline_log.LEVEL_WARNING if _warns else pipeline_log.LEVEL_INFO,
                     "lint_b10",
@@ -1607,9 +2351,47 @@ def main():
                 )
                 print
 
+            # backstop: a data-driven reused template with EMPTY params
+            # silently renders its self-test default -- another episode's data
+            #. The template's own guard only catches PARTIAL
+            # params. Assert the data param here, before the expensive visuals
+            # render, and fail fast unless explicitly allowed.
+            if not args.allow_empty_template_params:
+                try:
+                    from qa_manim_consistency import check_reused_template_params
+
+                    with open(scene_json, encoding="utf-8") as _f:
+                        _sd_b60 = json.load(_f)
+                    _tmpl_viol = check_reused_template_params(_sd_b60)
+                except Exception as _e:
+                    _tmpl_viol = []
+                    print
+                if _tmpl_viol:
+                    for _v in _tmpl_viol:
+                        print(
+                            f"  {_v['scene_id']} ({_v['template']}): required "
+                            f"param '{_v['param']}' is missing/empty -> would render "
+                            f"the template's self-test default (another episode's "
+                            f"data). Populate visual.params.{_v['param']}."
+                        )
+                    pipeline_log.emit(
+                        pipeline_log.LEVEL_CRITICAL,
+                        "lint_b60_template_params",
+                        "reused-template param preflight aborted pipeline",
+                        violation_count=len(_tmpl_viol),
+                    )
+                    pipeline_log.close()
+                    print(
+                        "\nempty data-driven template params detected. "
+                        "Populate the data param (e.g. timeline_recap.milestones), "
+                        "or use --allow-empty-template-params for an intentional "
+                        "self-test render."
+                    )
+                    sys.exit(1)
+
             # Layer 2: route_map collision preflight.
             # Detects title/route_label/legend bbox overlaps before any expensive
-            # rendering, with optional 3-stage auto-fix.
+            # rendering, with optional 4-stage auto-fix.
             if not args.skip_route_preflight:
                 try:
                     from visual_generator import route_map_preflight
@@ -1635,9 +2417,7 @@ def main():
                         pipeline_log.LEVEL_WARNING if _unresolved else pipeline_log.LEVEL_INFO,
                         "lint_b11",
                         "route_map preflight complete",
-                        unresolved_count=len(_unresolved)
-                        if hasattr(_unresolved, "__len__")
-                        else 0,
+                        unresolved_count=len(_unresolved) if hasattr(_unresolved, "__len__") else 0,
                         allow=bool(args.allow_route_collision),
                         auto_fix=bool(args.auto_fix_route_collisions),
                     )
@@ -1668,11 +2448,121 @@ def main():
                 cmd.append("--skip-manim")
             run_step("visuals", cmd)
 
+            # ─── レンダ後の白帯チェック (納品物検査) ───
+            # source 画像の白縁は ken_burns COVER 拡大でむしろ広がる。images step の白縁 lint は source のみ検査する
+            # ため、レンダ動画フレームを直接測って assemble 前に捕捉する。
+            try:
+                # scripts/ を sys.path に通してから import する。source 白縁チェック
+                # (images step) と対称。これが無いと、images step を経由しない部分
+                # リビルド (--steps visuals 等) で scripts/ が path に無く、
+                # `No module named 'lint_image_borders'` で silent skip していた
+                # (images step が先に走る full run では相乗りで動いていた)。
+                _scripts_dir = os.path.join(src_dir, "..", "scripts")
+                if _scripts_dir not in sys.path:
+                    sys.path.insert(0, _scripts_dir)
+                from lint_image_borders import run_video as _vborder
+
+                _vw = _vborder(os.path.join(episode_dir, "visuals"))
+            except Exception as _e:
+                _vw = []
+                print
+            if _vw:
+                severe = [v for v in _vw if v["max_pct"] >= 0.08]
+                print(f"\n{'!' * 60}")
+                print(f"  レンダ動画 {len(_vw)} 本に白帯 (ken_burns で消えない):")
+                for v in _vw:
+                    bd = ", ".join(f"{k}={p * 100:.0f}%" for k, p in v["bands_pct"].items())
+                    print(f"    - {v['video']}: {bd}")
+                print(
+                    "  対処: python scripts/lint_image_borders.py "
+                    f"{os.path.join(episode_dir, 'images')} --trim でクロップ -> visuals 再描画"
+                )
+                print(f"{'!' * 60}")
+                if severe and not args.allow_video_borders:
+                    if not _confirm_continue(
+                        "白帯>=8% は ken_burns で消えません。source を --trim し visuals 再描画を推奨。"
+                    ):
+                        print("Pipeline aborted.")
+                        sys.exit(1)
+
+            # Manim Vision QA (P5): 各 Manim/route_map/timeline フレームを Claude
+            # Sonnet vision で「概念が伝わるか/無意味な動き/判別不能な形/ラベル衝突」
+            # 判定。決定論 lint (Y座標/MathTex/末尾静止) が捕まえない意味・美観の欠陥
+            # を出荷前に検出。
+            # advisory (Anthropic Max 内コスト0)。
+            vqa_script = os.path.join(os.path.dirname(src_dir), "scripts", "manim_vision_qa.py")
+            if os.path.exists(vqa_script):
+                run_step(
+                    "manim_vision_qa (Vision: 意味/動き/衝突)",
+                    [sys.executable, vqa_script, scene_json],
+                    required=False,
+                )
+
+            # misreading: deterministic text-collision preflight. manim_vision_qa (Sonnet
+            # vision) MISSED the gp_ap/curve label proximity -- the user found those by
+            # eye. This complements it: it re-runs each Manim mode's construct() with a
+            # no-render mock, captures Text/MathTex bounding boxes, and flags stacks that
+            # overlap a column and near-touch/overlap vertically. Deterministic; the
+            # LaTeX cache-hits the just-rendered visuals so it is fast. advisory.
+            collide_script = os.path.join(
+                os.path.dirname(src_dir), "scripts", "manim_text_collision_qa.py"
+            )
+            if os.path.exists(collide_script):
+                run_step(
+                    "manim_text_collision_qa (決定論 bbox 衝突)",
+                    [sys.executable, collide_script, scene_json],
+                    required=False,
+                )
+
     # ─── Step 6: Video assembly ──────────────────────────────────────────
     if "assemble" in steps:
         if not os.path.exists(timing_json):
             print("\n[WARN] timing.json not found. Skipping assembly.")
         else:
+            # stale-visual preflight。timing 刷新後に再 render されなかった
+            # visual を尺照合で検出し、新音声 + 旧尺 visual の silent desync を fail
+            # fast で止める。
+            if not args.allow_stale_visuals:
+                stale = _visual_staleness_preflight(episode_dir, timing_json)
+                if stale:
+                    print
+                    for s in stale:
+                        vd = s["visual_dur"]
+                        vd_s = f"{vd}s" if vd is not None else "N/A"
+                        print(
+                            f"  - {s['scene_id']}: visual={vd_s} / timing={s['expected']}s"
+                            f" -- {s['reason']}"
+                        )
+                    print(
+                        "\n  timing 刷新後に visuals の再 render 漏れの可能性があります "
+                        "(音声/字幕と desync する納品事故)。\n"
+                        "  対処: `--steps visuals,assemble,...` で visuals を再 render して"
+                        "から assemble してください。\n"
+                        "  意図的に旧 visual で進める場合のみ `--allow-stale-visuals` を付与。"
+                    )
+                    sys.exit(1)
+
+            # Guard-B: subtitle-stale preflight。narration 編集後に
+            # subtitles を再生成せず assemble すると字幕(旧)/音声(新)が desync する
+            #。この run で subtitles を再生成する (steps に
+            # 含む) なら stale ではないので skip。
+            if "subtitles" not in steps and not args.allow_stale_subtitles:
+                sub_mismatch = _subtitle_staleness_check(episode_dir, scene_json)
+                if sub_mismatch:
+                    print(
+                        "\n[Guard-B] assemble preflight: subtitles.srt が現在の "
+                        "narration/timing より古い"
+                    )
+                    print(f"  subtitles staleness: {sub_mismatch}")
+                    print(
+                        "  narration 編集 または 読み/速度正規化による音声尺の刷新後に "
+                        "subtitles を再生成していません (字幕/音声 desync で納品する事故)。\n"
+                        "  対処: `--steps subtitles,visuals,assemble,bgm` のように subtitles を"
+                        "含めて再実行。\n"
+                        "  意図的に旧字幕で進める場合のみ `--allow-stale-subtitles` を付与。"
+                    )
+                    sys.exit(1)
+
             cmd = [
                 sys.executable,
                 os.path.join(src_dir, "video_assembler.py"),
@@ -1745,6 +2635,22 @@ def main():
                     ]
                 )
 
+                # Optional landscape endcard (replaces the last-frame freeze)
+                endcard_image = bgm_config.get("endcard_image")
+                if endcard_image:
+                    endcard_path = (
+                        endcard_image
+                        if os.path.isabs(endcard_image)
+                        else os.path.join(episode_dir, endcard_image)
+                    )
+                    if os.path.exists(endcard_path):
+                        cmd.extend(["--endcard-image", endcard_path])
+                    else:
+                        print(
+                            f"[WARN] endcard_image not found: {endcard_path}"
+                            " — falling back to last-frame hold"
+                        )
+
                 run_step("bgm", cmd)
 
     # ─── Output verification ────────────────────────────────
@@ -1780,12 +2686,44 @@ def main():
     else:
         print("  Output:     not created (check step errors)")
 
+    # Surface unresolved verify_outputs warnings inside the summary box so a reader
+    # who scans only the tail cannot miss them (a description.txt stale-timestamp
+    # WARN once fired in 'Output Verification' but was overlooked by reading only
+    # 'Pipeline Complete'). The placeholder banner below still handles the CRITICAL
+    # case; this line covers every verification warning (incl. description drift).
+    if verify_warnings:
+        print(
+            f"  [!] {len(verify_warnings)} verification warning(s) above "
+            "-- review 'Output Verification' before publishing."
+        )
+
+    if _advisory_warn_counts:
+        _roll = "  ".join(f"{k}={v}" for k, v in _advisory_warn_counts.items())
+        print(f"  [!] advisory warnings -- {_roll} (review each step's output above)")
+
     print(f"{'=' * 60}")
 
-    # ─── pipeline_end event + logger close ─────────────
-    _pipeline_end_level = (
-        pipeline_log.LEVEL_WARNING if verify_warnings else pipeline_log.LEVEL_INFO
+    # Prominent placeholder/missing-animation banner so a Manim render
+    # timeout/failure can NEVER silently ship in the final video (a past
+    # near-miss: math_07 gimbal_lock shipped as a title-card placeholder and was
+    # only caught by manual frame inspection). Reuses the gated G1 detection in
+    # verify_outputs (only fires when the visuals step ran this invocation).
+    placeholder_warn = next(
+        (w for w in verify_warnings if "fell back to" in w and "placeholder" in w),
+        None,
     )
+    if placeholder_warn:
+        print(f"\n{'!' * 60}")
+        print("  [CRITICAL] PLACEHOLDER SCENE(S) IN THE FINAL VIDEO")
+        print(f"{'!' * 60}")
+        print(placeholder_warn.strip())
+        print("  *** The video shows a plain title-card instead of the animation")
+        print("  *** for the scene(s) above. Fix the Manim template (timeout/error),")
+        print("  *** then re-run --steps visuals,assemble,bgm before publishing.")
+        print(f"{'!' * 60}")
+
+    # ─── pipeline_end event + logger close ─────────────
+    _pipeline_end_level = pipeline_log.LEVEL_WARNING if verify_warnings else pipeline_log.LEVEL_INFO
     pipeline_log.emit(
         _pipeline_end_level,
         "pipeline",
@@ -1794,6 +2732,10 @@ def main():
         verify_warning_count=len(verify_warnings),
     )
     pipeline_log.close()
+
+    # terminal progress snapshot so a watcher knows the build finished
+    # (and whether output_final.mp4 is a valid, playable file).
+    pipeline_progress.finish("complete", _output_final_summary(episode_dir))
 
 
 if __name__ == "__main__":

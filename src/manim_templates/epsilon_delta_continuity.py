@@ -48,14 +48,10 @@ Duration-aware: reads target duration from _manim_params.json.
 Used by: Episode 028 (Weierstrass), pillar A - epsilon-delta rigorization.
 """
 
-import math
-
 from manim import (
     Arrow,
     Axes,
-    Brace,
     Create,
-    DashedLine,
     Dot,
     FadeIn,
     Line,
@@ -137,7 +133,8 @@ class EpsilonDeltaContinuity(Scene):
         alpha_bracket = Line(
             [alpha_left[0], alpha_left[1] - 0.10, 0],
             [alpha_right[0], alpha_right[1] - 0.10, 0],
-            color=ACCENT_PINK, stroke_width=3.5,
+            color=ACCENT_PINK,
+            stroke_width=3.5,
         )
         alpha_label = MathTex(r"\alpha", font_size=26, color=ACCENT_PINK)
         alpha_label.move_to([(alpha_left[0] + alpha_right[0]) / 2, alpha_left[1] - 0.50, 0])
@@ -148,7 +145,8 @@ class EpsilonDeltaContinuity(Scene):
         note1.move_to([2.3, 1.4, 0])
         formal = MathTex(
             r"\alpha \to 0 \;\Rightarrow\; f(a+\alpha) - f(a) \to 0",
-            font_size=26, color=TEXT_WHITE,
+            font_size=26,
+            color=TEXT_WHITE,
         )
         formal.move_to([2.3, 0.6, 0])
         question = Text("（『無限小』とは何か？）", font=FONT, font_size=20, color=ACCENT_GOLD)
@@ -160,7 +158,9 @@ class EpsilonDeltaContinuity(Scene):
         # Footer
         footer = Text(
             "コーシー『解析教程』1821年 ── 量化子はまだ無い",
-            font=FONT, font_size=20, color=ACCENT_GOLD,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_GOLD,
         )
         footer.move_to([0, -1.85, 0])
         self.play(FadeIn(footer), run_time=0.5)
@@ -204,12 +204,18 @@ class EpsilonDeltaContinuity(Scene):
         eps_band = Rectangle(
             width=axes.c2p(2.2, 0)[0] - axes.c2p(-0.2, 0)[0],
             height=axes.c2p(0, 2 * eps1)[1] - axes.c2p(0, 0)[1],
-            color=ACCENT_PINK, stroke_width=2.0, fill_opacity=0.18, fill_color=ACCENT_PINK,
+            color=ACCENT_PINK,
+            stroke_width=2.0,
+            fill_opacity=0.18,
+            fill_color=ACCENT_PINK,
         )
-        eps_band.move_to([
-            (axes.c2p(-0.2, 0)[0] + axes.c2p(2.2, 0)[0]) / 2,
-            a_pt[1], 0,
-        ])
+        eps_band.move_to(
+            [
+                (axes.c2p(-0.2, 0)[0] + axes.c2p(2.2, 0)[0]) / 2,
+                a_pt[1],
+                0,
+            ]
+        )
         eps_label = MathTex(r"2\varepsilon", font_size=22, color=ACCENT_PINK)
         eps_label.move_to([axes.c2p(2.2, 0)[0] + 0.35, a_pt[1], 0])
         self.play(FadeIn(eps_band), FadeIn(eps_label), run_time=0.6)
@@ -217,12 +223,18 @@ class EpsilonDeltaContinuity(Scene):
         del_band = Rectangle(
             width=axes.c2p(2 * del1, 0)[0] - axes.c2p(0, 0)[0],
             height=axes.c2p(0, 2.2)[1] - axes.c2p(0, -0.2)[1],
-            color=ACCENT_GOLD, stroke_width=2.0, fill_opacity=0.18, fill_color=ACCENT_GOLD,
+            color=ACCENT_GOLD,
+            stroke_width=2.0,
+            fill_opacity=0.18,
+            fill_color=ACCENT_GOLD,
         )
-        del_band.move_to([
-            a_pt[0],
-            (axes.c2p(0, -0.2)[1] + axes.c2p(0, 2.2)[1]) / 2, 0,
-        ])
+        del_band.move_to(
+            [
+                a_pt[0],
+                (axes.c2p(0, -0.2)[1] + axes.c2p(0, 2.2)[1]) / 2,
+                0,
+            ]
+        )
         del_label = MathTex(r"2\delta", font_size=22, color=ACCENT_GOLD)
         del_label.move_to([a_pt[0], axes.c2p(0, 2.2)[1] + 0.20, 0])
         self.play(FadeIn(del_band), FadeIn(del_label), run_time=0.6)
@@ -233,32 +245,46 @@ class EpsilonDeltaContinuity(Scene):
         eps_band2 = Rectangle(
             width=axes.c2p(2.2, 0)[0] - axes.c2p(-0.2, 0)[0],
             height=axes.c2p(0, 2 * eps2)[1] - axes.c2p(0, 0)[1],
-            color=ACCENT_PINK, stroke_width=2.6, fill_opacity=0.35, fill_color=ACCENT_PINK,
+            color=ACCENT_PINK,
+            stroke_width=2.6,
+            fill_opacity=0.35,
+            fill_color=ACCENT_PINK,
         )
-        eps_band2.move_to([
-            (axes.c2p(-0.2, 0)[0] + axes.c2p(2.2, 0)[0]) / 2,
-            a_pt[1], 0,
-        ])
+        eps_band2.move_to(
+            [
+                (axes.c2p(-0.2, 0)[0] + axes.c2p(2.2, 0)[0]) / 2,
+                a_pt[1],
+                0,
+            ]
+        )
         del_band2 = Rectangle(
             width=axes.c2p(2 * del2, 0)[0] - axes.c2p(0, 0)[0],
             height=axes.c2p(0, 2.2)[1] - axes.c2p(0, -0.2)[1],
-            color=ACCENT_GOLD, stroke_width=2.6, fill_opacity=0.35, fill_color=ACCENT_GOLD,
+            color=ACCENT_GOLD,
+            stroke_width=2.6,
+            fill_opacity=0.35,
+            fill_color=ACCENT_GOLD,
         )
-        del_band2.move_to([
-            a_pt[0],
-            (axes.c2p(0, -0.2)[1] + axes.c2p(0, 2.2)[1]) / 2, 0,
-        ])
+        del_band2.move_to(
+            [
+                a_pt[0],
+                (axes.c2p(0, -0.2)[1] + axes.c2p(0, 2.2)[1]) / 2,
+                0,
+            ]
+        )
         self.play(FadeIn(eps_band2), FadeIn(del_band2), run_time=0.6)
 
         # Right-side definition
         defn = MathTex(
             r"\forall\, \varepsilon > 0,\; \exists\, \delta > 0",
-            font_size=26, color=TEXT_WHITE,
+            font_size=26,
+            color=TEXT_WHITE,
         )
         defn.move_to([3.3, 1.6, 0])
         impl = MathTex(
             r"|x - a| < \delta \;\Rightarrow\; |f(x) - f(a)| < \varepsilon",
-            font_size=22, color=ACCENT_GOLD,
+            font_size=22,
+            color=ACCENT_GOLD,
         )
         impl.move_to([3.3, 0.9, 0])
         note = Text("ε を小さくすれば δ も取り直す", font=FONT, font_size=18, color=ACCENT_PINK)
@@ -269,7 +295,9 @@ class EpsilonDeltaContinuity(Scene):
 
         footer = Text(
             "ヴァイエルシュトラス・1860年代ベルリン大学講義",
-            font=FONT, font_size=20, color=ACCENT_GOLD,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_GOLD,
         )
         footer.move_to([0, -1.85, 0])
         self.play(FadeIn(footer), run_time=0.5)
@@ -286,7 +314,9 @@ class EpsilonDeltaContinuity(Scene):
         # Statement just below the title, font reduced to avoid wide overlap.
         statement = Text(
             "有界な無限数列は、収束する部分列を必ず持つ",
-            font=FONT, font_size=20, color=ACCENT_GOLD,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_GOLD,
         )
         statement.move_to([0, 2.30, 0])
         self.play(FadeIn(statement), run_time=0.5)
@@ -295,14 +325,14 @@ class EpsilonDeltaContinuity(Scene):
         line_y = -0.40
         x_left = -4.5
         x_right = 4.5
-        nl = Line([x_left, line_y, 0], [x_right, line_y, 0],
-                  color=TEXT_DIM, stroke_width=2.0)
+        nl = Line([x_left, line_y, 0], [x_right, line_y, 0], color=TEXT_DIM, stroke_width=2.0)
         self.play(Create(nl), run_time=0.4)
 
         # Tick marks at -3, 0, 3
         for x in (-3.0, 0.0, 3.0):
-            tick = Line([x, line_y - 0.10, 0], [x, line_y + 0.10, 0],
-                        color=TEXT_DIM, stroke_width=2.0)
+            tick = Line(
+                [x, line_y - 0.10, 0], [x, line_y + 0.10, 0], color=TEXT_DIM, stroke_width=2.0
+            )
             lbl = MathTex(f"{int(x)}", font_size=18, color=TEXT_DIM)
             lbl.move_to([x, line_y - 0.30, 0])
             self.add(tick, lbl)
@@ -310,14 +340,23 @@ class EpsilonDeltaContinuity(Scene):
         # Bounded interval bracket [-3, 3] — placed close to the number line
         # so the "有界な区間" label has room above the footer.
         bracket_y = line_y - 0.75
-        bracket_l = Line([-3, bracket_y + 0.05, 0], [-3, bracket_y - 0.10, 0],
-                         color=ACCENT_PINK, stroke_width=3.0)
-        bracket_r = Line([3, bracket_y + 0.05, 0], [3, bracket_y - 0.10, 0],
-                         color=ACCENT_PINK, stroke_width=3.0)
-        bracket_line = Line([-3, bracket_y, 0], [3, bracket_y, 0],
-                            color=ACCENT_PINK, stroke_width=2.6)
+        bracket_l = Line(
+            [-3, bracket_y + 0.05, 0],
+            [-3, bracket_y - 0.10, 0],
+            color=ACCENT_PINK,
+            stroke_width=3.0,
+        )
+        bracket_r = Line(
+            [3, bracket_y + 0.05, 0], [3, bracket_y - 0.10, 0], color=ACCENT_PINK, stroke_width=3.0
+        )
+        bracket_line = Line(
+            [-3, bracket_y, 0], [3, bracket_y, 0], color=ACCENT_PINK, stroke_width=2.6
+        )
         bracket_label = Text(
-            "有界な区間", font=FONT, font_size=18, color=ACCENT_PINK,
+            "有界な区間",
+            font=FONT,
+            font_size=18,
+            color=ACCENT_PINK,
         )
         bracket_label.move_to([0, bracket_y - 0.40, 0])
         self.play(Create(bracket_l), Create(bracket_r), Create(bracket_line), run_time=0.5)
@@ -328,7 +367,7 @@ class EpsilonDeltaContinuity(Scene):
         subseq = []
         for k in range(7):
             sign = (-1) ** k
-            radius = 1.4 * (0.55 ** k)
+            radius = 1.4 * (0.55**k)
             x_pos = a_star + sign * radius
             subseq.append(x_pos)
         noise = [-2.8, -2.2, -1.5, -0.6, 0.3, -0.0, 2.6]
@@ -348,16 +387,24 @@ class EpsilonDeltaContinuity(Scene):
         # Accumulation arrow pointing down to a_star on the number line.
         arrow_start = [a_star, line_y + 0.80, 0]
         arrow_end = [a_star, line_y + 0.18, 0]
-        arrow = Arrow(arrow_start, arrow_end, color=ACCENT_PINK,
-                      stroke_width=4.0, max_tip_length_to_length_ratio=0.18,
-                      buff=0.0)
+        arrow = Arrow(
+            arrow_start,
+            arrow_end,
+            color=ACCENT_PINK,
+            stroke_width=4.0,
+            max_tip_length_to_length_ratio=0.18,
+            buff=0.0,
+        )
         a_star_label = MathTex(r"a^{*}", font_size=22, color=ACCENT_PINK)
         a_star_label.move_to([a_star + 0.35, line_y + 0.95, 0])
 
         # cluster_label moved to the LEFT side so it never overlaps the arrow
         # or the a_star label area. Placed above noise dots in the left band.
         cluster_label = Text(
-            "収束する部分列", font=FONT, font_size=20, color=ACCENT_GOLD,
+            "収束する部分列",
+            font=FONT,
+            font_size=20,
+            color=ACCENT_GOLD,
         )
         cluster_label.move_to([-2.6, line_y + 0.95, 0])
         self.play(Create(arrow), FadeIn(a_star_label), FadeIn(cluster_label), run_time=0.7)
@@ -365,7 +412,9 @@ class EpsilonDeltaContinuity(Scene):
         # Footer attribution at the very bottom.
         footer = Text(
             "ボルツァーノ1817 補題 → ヴァイエルシュトラス1860年代 主要定理",
-            font=FONT, font_size=16, color=TEXT_DIM,
+            font=FONT,
+            font_size=16,
+            color=TEXT_DIM,
         )
         footer.move_to([0, -1.95, 0])
         self.play(FadeIn(footer), run_time=0.5)

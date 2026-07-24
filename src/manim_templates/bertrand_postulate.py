@@ -61,12 +61,12 @@ def is_prime(n: int) -> bool:
             return False
         i += 6
     return True
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template with no on-screen person/year claims — declared empty under the
 # lint's "default" fallback key (checked, not silently skipped).
 LINT_FACTUAL_CLAIMS = {"default": {"people": [], "years": []}}
-
-
 
 
 class BertrandPostulate(Scene):

@@ -61,7 +61,6 @@ from style import (
     BG_COLOR,
     FONT,
     TEXT_DIM,
-    TEXT_WHITE,
     load_params,
 )
 
@@ -144,19 +143,23 @@ class PascalineMechanism(Scene):
         self.play(*[Create(g) for g in gears], run_time=1.4)
 
         labels = self._place_labels()
-        self.play(*[FadeIn(l) for l in labels], run_time=0.6)
+        self.play(*[FadeIn(lab) for lab in labels], run_time=0.6)
 
         # Explanation message lower
         msg1 = Text(
             "各桁は 0 から 9 を表す歯車",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg1.move_to([0, -1.55, 0])
         self.play(FadeIn(msg1), run_time=0.5)
 
         msg2 = Text(
             "9 から 10 に進むと、次の桁が一つ進む",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg2.move_to([0, -1.92, 0])
         self.play(FadeIn(msg2), run_time=0.5)
@@ -178,7 +181,7 @@ class PascalineMechanism(Scene):
         self.play(*[Create(g) for g in gears], run_time=1.0)
 
         labels = self._place_labels()
-        self.play(*[FadeIn(l) for l in labels], run_time=0.5)
+        self.play(*[FadeIn(lab) for lab in labels], run_time=0.5)
 
         # Value display below labels
         value_lbl = MathTex(f"= {current_value}", font_size=26, color=ACCENT_GOLD)
@@ -223,7 +226,9 @@ class PascalineMechanism(Scene):
 
         msg = Text(
             "桁上がりが歯車の連動で自動に伝わる ── これがパスカリーヌの仕組み",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.92, 0])
         self.play(FadeIn(msg), run_time=0.6)

@@ -321,13 +321,12 @@ class PrimeDistribution(Scene):
 
         # Grid of numbers 2..100 (10 columns x 10 rows)
         n_max = 100
-        cols, rows = 10, 10
+        cols = 10
         cell_w, cell_h = 0.75, 0.45
         grid_x0 = -(cols * cell_w) / 2 + cell_w / 2
         grid_y0 = 2.5
 
         primes = _sieve_primes(n_max)
-        primes_set = set(primes)
 
         # Create all number texts
         num_texts = {}
@@ -393,6 +392,8 @@ class PrimeDistribution(Scene):
         count_text.move_to([0, -1.7, 0])
         self.play(FadeIn(count_text), run_time=0.6)
         self.wait(max(duration - anim_time - 1.0, 1.0))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -401,7 +402,6 @@ LINT_FACTUAL_CLAIMS = {
     "comparison": {"people": [], "years": []},
     "sieve": {"people": [], "years": []},
 }
-
 
 
 # ---------------------------------------------------------------------------

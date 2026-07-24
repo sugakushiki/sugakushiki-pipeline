@@ -62,7 +62,7 @@ class EulerAngles(ThreeDScene):
         self.camera.background_color = BG_COLOR
         params = load_params()
         duration = params.get("duration", 25)
-        highlight = params.get("highlight_color", ACCENT_GOLD)
+        params.get("highlight_color", ACCENT_GOLD)
         mode = params.get("mode", "rotate_z")
 
         # --- Camera setup: 3/4 overhead view ---

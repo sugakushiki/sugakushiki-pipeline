@@ -140,7 +140,7 @@ class IncompletenessConsequence(Scene):
         # Each pillar rotates around its base and falls
         # We rotate -PI/2 (90 degrees clockwise for left, CCW for right)
         # so they all fall outward. Use base of pillar as pivot.
-        for i, (group, x, color) in enumerate(pillar_groups):
+        for i, (group, x, _color) in enumerate(pillar_groups):
             base_point = np.array([x, pillar_bottom_y, 0])
             # Falling direction: pillar 0 falls left (-PI/2),
             # pillar 1 falls left (-PI/2), pillar 2 falls right (+PI/2).
@@ -297,6 +297,8 @@ class IncompletenessConsequence(Scene):
 
         anim_overhead = 0.5 + 0.7 + 0.7 + 0.7 + 0.5 + 0.7 + 0.6
         self.wait(max(1.0, duration - anim_overhead))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -304,7 +306,6 @@ LINT_FACTUAL_CLAIMS = {
     "hilbert_program_collapse": {"people": [], "years": []},
     "second_undecidable": {"people": [], "years": []},
 }
-
 
 
 # -----------------------------------------------------------------------

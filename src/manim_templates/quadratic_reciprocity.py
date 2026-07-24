@@ -27,7 +27,6 @@ Used by: Episode 030 (Takagi), reciprocity series introduction.
 import numpy as np
 from manim import (
     FadeIn,
-    Line,
     MathTex,
     Rectangle,
     Scene,
@@ -229,9 +228,7 @@ class QuadraticReciprocity(Scene):
         )
         line1.move_to(np.array([0, 0.9, 0]))
 
-        line2 = Text(
-            "規範剰余の", font=FONT, font_size=26, color=TEXT_WHITE
-        )
+        line2 = Text("規範剰余の", font=FONT, font_size=26, color=TEXT_WHITE)
         line2_emph = Text(
             "最も一般的な相互法則",
             font=FONT,

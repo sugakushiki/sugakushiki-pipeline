@@ -34,17 +34,13 @@ Y range: -2.0 to +3.0. No trailing FadeOut. Duration-aware.
 Used by: Episode 027 (Eratosthenes), pillar B — mesolabion device.
 """
 
-import math
-
 from manim import (
-    Arrow,
     Create,
     DashedLine,
     Dot,
     FadeIn,
     Line,
     MathTex,
-    Polygon,
     Rectangle,
     Scene,
     Text,
@@ -140,20 +136,20 @@ class Mesolabion(Scene):
         c2_x_initial = c0_x + 2 * L / 3.0  # = +1.0
 
         base_y = -1.25
-        col_colors = [ACCENT_CYAN, ACCENT_PINK, ACCENT_PINK, ACCENT_CYAN]
 
         # Frame
         frame = Rectangle(
-            width=L + 1.2, height=two_a + 0.5,
-            color=TEXT_DIM, stroke_width=2.0,
+            width=L + 1.2,
+            height=two_a + 0.5,
+            color=TEXT_DIM,
+            stroke_width=2.0,
         )
-        frame.move_to([(c0_x + c3_x) / 2,
-                        base_y + (two_a + 0.5) / 2 - 0.20, 0])
+        frame.move_to([(c0_x + c3_x) / 2, base_y + (two_a + 0.5) / 2 - 0.20, 0])
 
         # Baseline
-        baseline = Line([c0_x - 0.5, base_y, 0],
-                        [c3_x + 0.5, base_y, 0],
-                        color=TEXT_DIM, stroke_width=2.0)
+        baseline = Line(
+            [c0_x - 0.5, base_y, 0], [c3_x + 0.5, base_y, 0], color=TEXT_DIM, stroke_width=2.0
+        )
         self.play(Create(frame), Create(baseline), run_time=0.7)
 
         # ValueTracker for plate-position interpolation
@@ -167,17 +163,21 @@ class Mesolabion(Scene):
         ref_line = DashedLine(
             [c0_x, base_y + two_a, 0],
             [c3_x, base_y + a_disp, 0],
-            color=ACCENT_GOLD, stroke_width=2.4,
-            dash_length=0.16, stroke_opacity=0.55,
+            color=ACCENT_GOLD,
+            stroke_width=2.4,
+            dash_length=0.16,
+            stroke_opacity=0.55,
         )
         ref_lbl = Text("参照線", font=FONT, font_size=14, color=ACCENT_GOLD)
         ref_lbl.move_to([c0_x - 0.55, base_y + two_a, 0])
 
         # End columns (fixed)
-        col0_line = Line([c0_x, base_y, 0], [c0_x, base_y + two_a, 0],
-                          color=ACCENT_CYAN, stroke_width=4)
-        col3_line = Line([c3_x, base_y, 0], [c3_x, base_y + a_disp, 0],
-                          color=ACCENT_CYAN, stroke_width=4)
+        col0_line = Line(
+            [c0_x, base_y, 0], [c0_x, base_y + two_a, 0], color=ACCENT_CYAN, stroke_width=4
+        )
+        col3_line = Line(
+            [c3_x, base_y, 0], [c3_x, base_y + a_disp, 0], color=ACCENT_CYAN, stroke_width=4
+        )
         col0_lbl = MathTex(r"2a", font_size=28, color=ACCENT_CYAN)
         col0_lbl.move_to([c0_x, base_y + two_a + 0.30, 0])
         col3_lbl = MathTex(r"a", font_size=28, color=ACCENT_CYAN)
@@ -197,12 +197,12 @@ class Mesolabion(Scene):
         # Plate 1 endpoints: both slide; initial left ≠ p0_right (discontinuity)
         p1_left_initial = [c1_x_initial, base_y + 1.20, 0]
         p1_right_initial = [c2_x_initial, base_y + 0.30, 0]
-        p1_left_final = [c1_x_final, base_y + y_len, 0]   # matches p0_right_final
+        p1_left_final = [c1_x_final, base_y + y_len, 0]  # matches p0_right_final
         p1_right_final = [c2_x_final, base_y + x_len, 0]
 
         # Plate 2 endpoints: left slides; right at (c3, a) fixed
         p2_left_initial = [c2_x_initial, base_y + 0.90, 0]
-        p2_left_final = [c2_x_final, base_y + x_len, 0]   # matches p1_right_final
+        p2_left_final = [c2_x_final, base_y + x_len, 0]  # matches p1_right_final
         p2_right = [c3_x, base_y + a_disp, 0]
 
         def lerp(a_pt, b_pt, tv):
@@ -227,6 +227,7 @@ class Mesolabion(Scene):
                 Line(p1L, p1R, color=ACCENT_GOLD, stroke_width=3.4),
                 Line(p2L, p2R, color=ACCENT_GOLD, stroke_width=3.4),
             )
+
         diagonals = always_redraw(make_diagonals)
 
         # Intermediate columns slide horizontally; their heights show both
@@ -238,31 +239,43 @@ class Mesolabion(Scene):
             x2 = p1R[0]
             # In initial state, p0R.y and p1L.y differ — show both ticks
             return VGroup(
-                Line([x1, base_y, 0], [x1, base_y + max(p0R[1], p1L[1]) - base_y, 0],
-                     color=ACCENT_PINK, stroke_width=4),
-                Line([x2, base_y, 0], [x2, base_y + max(p1R[1], p2L[1]) - base_y, 0],
-                     color=ACCENT_PINK, stroke_width=4),
+                Line(
+                    [x1, base_y, 0],
+                    [x1, base_y + max(p0R[1], p1L[1]) - base_y, 0],
+                    color=ACCENT_PINK,
+                    stroke_width=4,
+                ),
+                Line(
+                    [x2, base_y, 0],
+                    [x2, base_y + max(p1R[1], p2L[1]) - base_y, 0],
+                    color=ACCENT_PINK,
+                    stroke_width=4,
+                ),
             )
+
         mid_cols = always_redraw(make_mid_cols)
 
         # Plate fills — between consecutive boundaries
         def make_plates():
             p0L, p0R, p1L, p1R, p2L, p2R = cur_endpoints()
             grp = VGroup()
-            for (lx, rx, lh, rh) in [
+            for lx, rx, lh, rh in [
                 (p0L[0], p0R[0], p0L[1] - base_y, p0R[1] - base_y),
                 (p1L[0], p1R[0], p1L[1] - base_y, p1R[1] - base_y),
                 (p2L[0], p2R[0], p2L[1] - base_y, p2R[1] - base_y),
             ]:
                 top = max(lh, rh)
                 plate = Rectangle(
-                    width=rx - lx, height=top,
-                    color=ACCENT_GOLD, stroke_width=0.8,
+                    width=rx - lx,
+                    height=top,
+                    color=ACCENT_GOLD,
+                    stroke_width=0.8,
                 )
                 plate.move_to([(lx + rx) / 2, base_y + top / 2, 0])
                 plate.set_fill(ACCENT_GOLD, opacity=0.05)
                 grp.add(plate)
             return grp
+
         plates = always_redraw(make_plates)
 
         # Endpoint dots — visible where each plate's diagonal terminates
@@ -276,17 +289,18 @@ class Mesolabion(Scene):
                 Dot(p2L, color=ACCENT_GOLD, radius=0.07),
                 Dot(p2R, color=ACCENT_CYAN, radius=0.08),
             )
+
         dots = always_redraw(make_dots)
 
         # Show initial (mis-aligned) state
         self.add(plates, col0_line, col3_line, mid_cols, diagonals, dots)
-        self.play(FadeIn(col0_lbl), FadeIn(col3_lbl),
-                  Create(ref_line), FadeIn(ref_lbl), run_time=0.7)
+        self.play(
+            FadeIn(col0_lbl), FadeIn(col3_lbl), Create(ref_line), FadeIn(ref_lbl), run_time=0.7
+        )
         self.wait(0.3)
 
         # Annotation: slide instruction
-        slide_lbl = Text("板をスライドさせると…", font=FONT, font_size=16,
-                          color=ACCENT_PINK)
+        slide_lbl = Text("板をスライドさせると…", font=FONT, font_size=16, color=ACCENT_PINK)
         slide_lbl.move_to([0, base_y + two_a + 0.55, 0])
         self.play(FadeIn(slide_lbl), run_time=0.4)
 
@@ -303,7 +317,9 @@ class Mesolabion(Scene):
         # Final caption — diagonals are now aligned on the reference line
         align_lbl = Text(
             "対角線がそろう = 比例中項",
-            font=FONT, font_size=15, color=ACCENT_GOLD,
+            font=FONT,
+            font_size=15,
+            color=ACCENT_GOLD,
         )
         align_lbl.move_to([0, base_y + two_a + 0.55, 0])
         self.play(FadeIn(align_lbl), run_time=0.4)
@@ -312,7 +328,8 @@ class Mesolabion(Scene):
         # Chain caption at top
         chain = MathTex(
             r"a : x = x : y = y : 2a",
-            font_size=28, color=ACCENT_GOLD,
+            font_size=28,
+            color=ACCENT_GOLD,
         )
         chain.move_to([0, 2.40, 0])
         self.play(FadeIn(chain), run_time=0.5)
@@ -320,7 +337,8 @@ class Mesolabion(Scene):
         # Result note at bottom
         result = MathTex(
             r"x = a\,\sqrt[3]{2}, \; y = a\,\sqrt[3]{4}",
-            font_size=22, color=ACCENT_PINK,
+            font_size=22,
+            color=ACCENT_PINK,
         )
         result.move_to([0, -1.90, 0])
         self.play(FadeIn(result), run_time=0.5)
@@ -336,15 +354,19 @@ class Mesolabion(Scene):
 
         # Bronze tablet styled frame
         tablet = Rectangle(
-            width=8.6, height=4.0,
-            color=ACCENT_GOLD, stroke_width=3.0,
+            width=8.6,
+            height=4.0,
+            color=ACCENT_GOLD,
+            stroke_width=3.0,
         )
         tablet.set_fill(ACCENT_GOLD, opacity=0.05)
         tablet.move_to([0, 0.20, 0])
         # Inner decorative frame
         inner = Rectangle(
-            width=8.2, height=3.6,
-            color=ACCENT_GOLD, stroke_width=1.2,
+            width=8.2,
+            height=3.6,
+            color=ACCENT_GOLD,
+            stroke_width=1.2,
         )
         inner.move_to([0, 0.20, 0])
         self.play(Create(tablet), Create(inner), run_time=0.8)
@@ -369,7 +391,9 @@ class Mesolabion(Scene):
         # Attribution
         attrib = Text(
             "── エラトステネス（六世紀のエウトキオスが伝える）",
-            font=FONT, font_size=16, color=ACCENT_PINK,
+            font=FONT,
+            font_size=16,
+            color=ACCENT_PINK,
         )
         attrib.move_to([0, -1.45, 0])
         self.play(FadeIn(attrib), run_time=0.6)

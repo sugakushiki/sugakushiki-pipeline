@@ -42,7 +42,6 @@ Used by: Episode 025 (Brahmagupta), math pillar — composition method and
 the line to chakravala.
 """
 
-
 from manim import (
     Arrow,
     FadeIn,

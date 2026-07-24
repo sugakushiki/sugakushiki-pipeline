@@ -41,7 +41,6 @@ from manim import (
     RoundedRectangle,
     Scene,
     Text,
-    VGroup,
     config,
 )
 from style import (
@@ -307,7 +306,8 @@ class ClassFieldTheory(Scene):
         # Original layout: box width 2.0, spacing 2.5, arrow length 0.4.
         # For long person names (e.g. アイゼンシュタイン 8 chars) shrink font
         # only for that text (others stay font_size 18). Box/spacing/arrow
-        # geometry preserved for visual balance. Day 21 ある回 user 確認で確立。
+        # geometry preserved for visual balance -- confirmed against the
+        # rendered frame rather than guessed.
         events = [
             ("-5.0", "1801", "ガウス", "平方剰余", ACCENT_CYAN),
             ("-2.5", "1844", "アイゼンシュタイン", "三次・四次", ACCENT_CYAN),

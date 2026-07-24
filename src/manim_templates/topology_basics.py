@@ -27,7 +27,6 @@ Y range: -2.0 to +3.0, subtitle clearance preserved.
 Used by: Episode 024 (Poincaré), math pillar 2 — topology & conjecture.
 """
 
-
 from manim import (
     DOWN,
     Circle,
@@ -87,10 +86,12 @@ class TopologyBasics(Scene):
 
         # Sphere as a circle with equator highlight
         sphere_center = [-2.0, 0.0, 0]
-        sphere_outline = Circle(radius=1.6, color=ACCENT_CYAN, stroke_width=3).move_to(sphere_center)
-        equator = Ellipse(
-            width=3.2, height=0.6, color=ACCENT_CYAN, stroke_width=1.5
-        ).move_to(sphere_center)
+        sphere_outline = Circle(radius=1.6, color=ACCENT_CYAN, stroke_width=3).move_to(
+            sphere_center
+        )
+        equator = Ellipse(width=3.2, height=0.6, color=ACCENT_CYAN, stroke_width=1.5).move_to(
+            sphere_center
+        )
         self.play(FadeIn(sphere_outline), FadeIn(equator), run_time=0.8)
 
         sphere_label = MathTex("S^2", font_size=32, color=ACCENT_GOLD)
@@ -221,15 +222,21 @@ class TopologyBasics(Scene):
         # Left: M (sphere)
         m_center = [-4.5, 0.2, 0]
         m_outline = Circle(radius=1.1, color=ACCENT_CYAN, stroke_width=3).move_to(m_center)
-        m_equator = Ellipse(width=2.2, height=0.4, color=ACCENT_CYAN, stroke_width=1.2).move_to(m_center)
+        m_equator = Ellipse(width=2.2, height=0.4, color=ACCENT_CYAN, stroke_width=1.2).move_to(
+            m_center
+        )
         self.play(FadeIn(m_outline), FadeIn(m_equator), run_time=0.6)
         m_lbl = MathTex("M", font_size=30, color=TEXT_WHITE).next_to(m_outline, DOWN, buff=0.2)
         self.play(FadeIn(m_lbl), run_time=0.3)
 
         # Right: N (torus)
         n_center = [4.5, 0.2, 0]
-        n_outer = Ellipse(width=2.6, height=1.6, color=ACCENT_PINK, stroke_width=3).move_to(n_center)
-        n_inner = Ellipse(width=1.0, height=0.4, color=ACCENT_PINK, stroke_width=1.5).move_to(n_center)
+        n_outer = Ellipse(width=2.6, height=1.6, color=ACCENT_PINK, stroke_width=3).move_to(
+            n_center
+        )
+        n_inner = Ellipse(width=1.0, height=0.4, color=ACCENT_PINK, stroke_width=1.5).move_to(
+            n_center
+        )
         self.play(FadeIn(n_outer), FadeIn(n_inner), run_time=0.6)
         n_lbl = MathTex("N", font_size=30, color=TEXT_WHITE).next_to(n_outer, DOWN, buff=0.2)
         self.play(FadeIn(n_lbl), run_time=0.3)
@@ -396,7 +403,9 @@ class TopologyBasics(Scene):
         conjecture.move_to([0, -2.0, 0])
         self.play(FadeIn(conjecture), run_time=0.7)
 
-        anim_total = 0.5 + 0.3 + 0.5 + 0.3 + 0.3 + 0.3 + 0.5 + 0.3 + 0.3 + 0.3 + 0.6 + 0.3 + 0.3 + 0.7
+        anim_total = (
+            0.5 + 0.3 + 0.5 + 0.3 + 0.3 + 0.3 + 0.5 + 0.3 + 0.3 + 0.3 + 0.6 + 0.3 + 0.3 + 0.7
+        )
         self.wait(max(1.5, duration - anim_total))
 
 

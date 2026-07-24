@@ -28,10 +28,10 @@ import time
 import urllib.parse
 import urllib.request
 
-# Day 14 fix: Windows console is cp932 by default. When Sonnet's fact-check
+# fix: Windows console is cp932 by default. When Sonnet's fact-check
 # response contains characters outside cp932 (e.g. en-dash U+2013), the
 # subsequent print() raises UnicodeEncodeError, which bubbles up and is
-# caught at a higher layer with a `[] skipped due to error` message —
+# caught at a higher layer with a `skipped due to error` message —
 # the pipeline then bypasses CRITICAL/WARN handling silently. Forcing
 # stdout/stderr to UTF-8 makes the lint output robust on cp932 consoles.
 # (Same pattern as .claude/hooks/qa_report_reminder.py.)
@@ -187,7 +187,7 @@ def parse_fact_check_response(response: str) -> dict:
             "summary": "Empty Claude response",
         }
 
-    # Day 14 robustness: Sonnet often prepends "<file> を読みます。" before
+    # robustness: Sonnet often prepends "<file> を読みます。" before
     # the ```json block, or returns a bare object with stray prose.
     # Try multiple extraction strategies before giving up.
     candidates: list[str] = []
@@ -200,7 +200,7 @@ def parse_fact_check_response(response: str) -> dict:
     # Strategy 2: first ```json fence onward, taking everything until matching close
     fence_start = response.find("```json")
     if fence_start >= 0:
-        after_fence = response[fence_start + len("```json"):].lstrip()
+        after_fence = response[fence_start + len("```json") :].lstrip()
         # Find matching close fence
         fence_end = after_fence.find("```")
         if fence_end > 0:
@@ -211,7 +211,7 @@ def parse_fact_check_response(response: str) -> dict:
     first_brace = response.find("{")
     last_brace = response.rfind("}")
     if first_brace >= 0 and last_brace > first_brace:
-        candidates.append(response[first_brace:last_brace + 1].strip())
+        candidates.append(response[first_brace : last_brace + 1].strip())
 
     # Strategy 4: whole response as last resort
     candidates.append(response.strip())
@@ -280,6 +280,27 @@ def _extract_age(text: str) -> int | None:
     return int(m.group(1) or m.group(2))
 
 
+def _verified_facts_years(vf: dict) -> set[int]:
+    """Every year that appears anywhere in verified_facts text.
+
+    A key_episode year that matches one of these is an INTENTIONAL, vetted
+    historical anchor -- e.g. Hilbert posing his tenth problem in 1900, 19
+    years before Julia Robinson's 1919 birth -- rather than a typo, so Check 3
+    should not flag it as "predates birth". Typo years (e.g. 1019 for 1919)
+    won't appear in the hand-verified verified_facts block, so typo detection
+    is preserved. This resolves the false positive for episodes whose subject
+    works on a problem posed before they were born (Hilbert-problem solvers,
+    Fermat-conjecture provers, etc.)."""
+    years: set[int] = set()
+    if not isinstance(vf, dict):
+        return years
+    for val in vf.values():
+        text = get_verified_fact_text(val)
+        if isinstance(text, str):
+            years.update(int(y) for y in _YEAR_RE.findall(text))
+    return years
+
+
 def arithmetic_sanity_check(episode_config: dict) -> list[dict]:
     """D: deterministic checks that need no external knowledge.
 
@@ -337,13 +358,17 @@ def arithmetic_sanity_check(episode_config: dict) -> list[dict]:
     # alternate calendars or contested birth-year theories).
     # Allow ±5yr slack vs birth_year to tolerate Julian/Gregorian dual
     # dating (e.g. Bernoulli: 1654 J / 1655 G).
+    # Also allow any year that is an INTENTIONAL, vetted anchor in
+    # verified_facts (e.g. Hilbert's 1900 problem, posed before the subject's
+    # birth) -- typo years won't be in verified_facts, so detection is kept.
     if birth_year:
+        anchor_years = _verified_facts_years(vf)
         for i, item in enumerate(episode_config.get("key_episodes", [])):
             if i == 0:
                 continue
             text_clean = _strip_lifespan(item if isinstance(item, str) else "")
             year = _extract_first_year(text_clean)
-            if year and year < birth_year - 5:
+            if year and year < birth_year - 5 and year not in anchor_years:
                 issues.append(
                     {
                         "severity": "critical",
@@ -678,7 +703,7 @@ def run_pre_script_fact_check(
             t0 = time.time()
             response = call_claude(
                 prompt=prompt,
-                model="sonnet",
+                model="opus",
                 debug=debug,
                 prefix="prefact",
                 allowed_tools="Read",
@@ -746,7 +771,7 @@ def print_pre_script_fact_check_report(report: dict) -> None:
     issues = report.get("issues", [])
     if issues:
         print("\n  Issues:")
-        for i, issue in enumerate(issues):
+        for _i, issue in enumerate(issues):
             sev_tag = issue.get("severity", "info").upper()
             field = issue.get("field", "?")
             src = issue.get("source", "?")

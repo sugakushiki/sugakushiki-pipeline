@@ -7,7 +7,7 @@ Validates generated thumbnail PNG files using Claude Sonnet Vision to detect:
 
 ## 背景
 
-Day 20 ある回 で `thumbnail.source_image = person_02.png` (メルセンヌ・サークル
+ある回 で `thumbnail.source_image = person_02.png` (メルセンヌ・サークル
 集会、複数人物 + 楽器類) を選定して完成 → 視聴者識別性 ✗ で user 指摘で発覚。
 修正は `intro_01.png` (パスカル単独 portrait) に変更 + thumbnail rebuild。
 
@@ -20,7 +20,7 @@ Day 20 ある回 で `thumbnail.source_image = person_02.png` (メルセンヌ�
 ## 使い方
 
 ```bash
-python src/qa_thumbnail_vision.py episodes/029_pascal/episode_config.json
+python src/qa_thumbnail_vision.py examples/moriarty/episode_config.json
 ```
 
 WARN exit code 1、PASS exit code 0。pipeline.py thumbnail step 末尾に統合。
@@ -188,17 +188,12 @@ def main():
         print(f"[QA-THUMB] thumbnails directory not found: {thumbnails_dir}")
         return 0
 
-    thumbnail_files = sorted(
-        f for f in os.listdir(thumbnails_dir) if f.endswith(".png")
-    )
+    thumbnail_files = sorted(f for f in os.listdir(thumbnails_dir) if f.endswith(".png"))
     if not thumbnail_files:
         print("[QA-THUMB] no thumbnail PNGs found")
         return 0
 
-    print(
-        f"\n[QA-THUMB] Vision QA on {len(thumbnail_files)} thumbnail(s) "
-        f"for subject: {subject}"
-    )
+    print(f"\n[QA-THUMB] Vision QA on {len(thumbnail_files)} thumbnail(s) for subject: {subject}")
     warnings = 0
     results = []
     for tf in thumbnail_files:
@@ -221,12 +216,9 @@ def main():
             warnings += 1
 
         results.append({"file": tf, "status": status, **result})
-        identifiable_str = (
-            "yes" if identifiable is True else "no" if identifiable is False else "?"
-        )
+        identifiable_str = "yes" if identifiable is True else "no" if identifiable is False else "?"
         print(
-            f"  [{status}] {tf}: type={type_}, identifiable={identifiable_str}, "
-            f"concern={concern}"
+            f"  [{status}] {tf}: type={type_}, identifiable={identifiable_str}, concern={concern}"
         )
 
     if warnings > 0:

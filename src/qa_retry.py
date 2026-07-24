@@ -342,7 +342,7 @@ def run_qa_retry(
         qa_cmd.append("--use-gemini-fact")
 
     qa_start = time.time()
-    qa_result = subprocess.run(qa_cmd)
+    subprocess.run(qa_cmd)
     qa_elapsed = time.time() - qa_start
 
     print(f"  QA v2 complete ({qa_elapsed:.0f}s)")

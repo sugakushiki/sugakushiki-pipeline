@@ -462,7 +462,6 @@ class PolyhedronEuler(Scene):
             cells.add(cv, ce, cf, cvef)
 
         # Fade in per column
-        per_col = VGroup()
         wait_per_col = max(0.3, (duration - 6.0) / 5.0)
         for i in range(5):
             col_cells = VGroup(cells[4 * i], cells[4 * i + 1], cells[4 * i + 2], cells[4 * i + 3])

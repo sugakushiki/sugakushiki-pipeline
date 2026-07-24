@@ -80,7 +80,6 @@ class InfiniteDescent(Scene):
         Step 4: But positive integers can't decrease forever → contradiction!
         """
         duration = self._duration
-        highlight = self._highlight_color
 
         # Title
         title = Text("Proof by Infinite Descent", font=FONT, font_size=26, color=TEXT_DIM)
@@ -184,7 +183,6 @@ class InfiniteDescent(Scene):
         form with a strictly smaller z.
         """
         duration = self._duration
-        highlight = self._highlight_color
 
         # Title
         title = Text("Proof Skeleton", font=FONT, font_size=26, color=TEXT_DIM)
@@ -264,6 +262,8 @@ class InfiniteDescent(Scene):
         self.play(FadeIn(contra), run_time=0.5)
 
         self.wait(max(1, duration * 0.15))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -271,7 +271,6 @@ LINT_FACTUAL_CLAIMS = {
     "staircase": {"people": [], "years": []},
     "pythagorean": {"people": [], "years": []},
 }
-
 
 
 # -----------------------------------------------------------------------

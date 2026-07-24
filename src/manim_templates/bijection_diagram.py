@@ -219,6 +219,8 @@ class BijectionDiagram(Scene):
 
         anim_overhead = 0.5 + 0.04 * 25 + 0.12 * len(path) + 0.08 * (len(path) - 1) + 0.5
         self.wait(max(1.0, duration - anim_overhead))
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -226,7 +228,6 @@ LINT_FACTUAL_CLAIMS = {
     "natural_even": {"people": [], "years": []},
     "rational_zigzag": {"people": [], "years": []},
 }
-
 
 
 # -----------------------------------------------------------------------

@@ -2,8 +2,8 @@
 audio_generator.py - VOICEVOX batch audio generation with timing output
 
 Usage:
-    python audio_generator.py scene_definition.json --output-dir episodes/001_erdos
-    python audio_generator.py scene_definition.json --output-dir episodes/001_erdos --dry-run
+    python audio_generator.py scene_definition.json --output-dir examples/moriarty
+    python audio_generator.py scene_definition.json --output-dir examples/moriarty --dry-run
 
 Input:  scene_definition.json
 Output: {output_dir}/audio/*.wav + {output_dir}/timing.json
@@ -26,10 +26,14 @@ import sys
 import time
 import wave
 
+import cloud_tts  # Cloud TTS backend (engine=cloud); standalone, no back-import
+
 # ---------------------------------------------------------------------------
 # VOICEVOX settings (from STYLE_GUIDE.md)
 # ---------------------------------------------------------------------------
 SPEAKER_ID = 13  # 青山龍星ノーマル
+# 既定の読み上げ速度。per-ep で変えたい場合は episode_config.json の
+# "speed_scale" に書き、pipeline が --speed-scale で渡す。main() が --speed-scale で上書きする。
 SPEED_SCALE = 0.87
 PAUSE_LENGTH_SCALE = 1.3
 PITCH_SCALE = -0.02
@@ -123,11 +127,26 @@ def has_speech_unfriendly_chars(text: str) -> list[str]:
 # Digit → kana mapping for fraction reading (1-20 covers nearly all math fractions in narration)
 # moriarty 例エピソードで顕在化「2分の1 → にふんのいち (時間の分と混同)」を構造的予防
 _DIGIT_KANA: dict[str, str] = {
-    "1": "いち", "2": "に", "3": "さん", "4": "よん", "5": "ご",
-    "6": "ろく", "7": "なな", "8": "はち", "9": "きゅう", "10": "じゅう",
-    "11": "じゅういち", "12": "じゅうに", "13": "じゅうさん", "14": "じゅうよん",
-    "15": "じゅうご", "16": "じゅうろく", "17": "じゅうなな", "18": "じゅうはち",
-    "19": "じゅうきゅう", "20": "にじゅう",
+    "1": "いち",
+    "2": "に",
+    "3": "さん",
+    "4": "よん",
+    "5": "ご",
+    "6": "ろく",
+    "7": "なな",
+    "8": "はち",
+    "9": "きゅう",
+    "10": "じゅう",
+    "11": "じゅういち",
+    "12": "じゅうに",
+    "13": "じゅうさん",
+    "14": "じゅうよん",
+    "15": "じゅうご",
+    "16": "じゅうろく",
+    "17": "じゅうなな",
+    "18": "じゅうはち",
+    "19": "じゅうきゅう",
+    "20": "にじゅう",
 }
 
 # Fraction pattern: N分のM (Japanese fraction notation, denominator-first)
@@ -141,12 +160,14 @@ def _convert_fractions(text: str) -> str:
     e.g., "アルファが2分の1" → "アルファがにぶんのいち"
     Both digits convert via _DIGIT_KANA (limited to 1-20 for safety; falls back to digits + ぶんの).
     """
+
     def repl(match: "re.Match[str]") -> str:
         denom = match.group(1)
         numer = match.group(2)
         denom_kana = _DIGIT_KANA.get(denom, denom)
         numer_kana = _DIGIT_KANA.get(numer, numer)
         return f"{denom_kana}ぶんの{numer_kana}"
+
     return _FRACTION_RE.sub(repl, text)
 
 
@@ -197,8 +218,17 @@ def query_pronunciation(text: str, voicevox_url: str) -> tuple:
     return query, kana
 
 
+# ある回 (ダニエル・ベルヌーイ、user 動画確認): 文脈で読みが分かれ VOICEVOX が訓/音を
+# 取り違えやすい多読み漢字。effective text にこれらが残る行へ [!読み注意] を付け、全 ~76
+# 行の羅列から要レビュー箇所へ視線を誘導する (表=ひょう/家=か 等を kana_preview の全行
+# 羅列で見落とした構造修正)。effective が損傷かなで漢字が消える型 (値打ち→あたい打ち) は
+# reading_guard が surface→expect で受け持つ (役割分担)。
+# 高頻度だが通常は正読の 数(すう)/生/方/間/行/重/後 等は除外。VOICEVOX が文脈で取り違える低頻度・高リスク語に限定し、要レビュー箇所へ絞る。
+_AMBIGUOUS_READING_KANJI = "表値家下物縁鍵節抱角辺"
+
+
 def write_kana_preview(entries: list, output_dir: str) -> str:
-    """Day 16 強化 D: VOICEVOX 予測カナを合成前レビュー用に artifact 化。
+    """強化 D: VOICEVOX 予測カナを合成前レビュー用に artifact 化。
 
     ある回 で VOICEVOX 誤読 9 件が user の最終動画視聴で初発覚し、各ラウンド
     ~50-70 分の再ビルドを要した。pronunciation_check が既に全行のカナを
@@ -214,19 +244,26 @@ def write_kana_preview(entries: list, output_dir: str) -> str:
     path = os.path.join(output_dir, "kana_preview.txt")
     latin = _re.compile(r"[A-Za-z]")
     flagged = 0
+    amb_flagged = 0
     lines = [
         "# kana preview - VOICEVOX 予測カナ",
         "# 各行: [scene_id][i] 読み上げテキスト / → 予測カナ",
         "# [!latin] = 英字含み (NaN→なえぬ 型の高リスク、優先 scan)",
+        "# [!読み注意:X] = 多読み漢字 X を含む",
         "# 誤読を見つけたら global 辞書 (audio_generator._MISREADING_CATEGORIES)"
         " か narration_speech で修正してから本ビルド",
         "",
     ]
     for e in entries:
-        mark = " [!latin]" if latin.search(e.get("text", "")) else ""
+        text = e.get("text", "")
+        mark = " [!latin]" if latin.search(text) else ""
         if mark:
             flagged += 1
-        lines.append(f"[{e['scene_id']}][{e['index']}]{mark} {e['text']}")
+        amb = [k for k in _AMBIGUOUS_READING_KANJI if k in text]
+        if amb:
+            mark += " [!読み注意:" + "".join(amb) + "]"
+            amb_flagged += 1
+        lines.append(f"[{e['scene_id']}][{e['index']}]{mark} {text}")
         lines.append(f"   → {e['kana']}")
         lines.append("")
     try:
@@ -234,7 +271,8 @@ def write_kana_preview(entries: list, output_dir: str) -> str:
             f.write("\n".join(lines))
         print(
             f"  [KANA-PREVIEW] {len(entries)} 行を {path} に出力 "
-            f"(英字含み {flagged} 行 [!latin])。本ビルド前にカナを scan 推奨"
+            f"(英字含み {flagged} 行 [!latin]、多読み漢字 {amb_flagged} 行 [!読み注意])。"
+            "本ビルド前にカナを scan 推奨"
         )
     except OSError as exc:
         print(f"  [WARN] kana_preview.txt 書き込み失敗: {exc}")
@@ -468,7 +506,7 @@ def check_pronunciation_with_claude(entries: list, episode_dir: str) -> list:
         normalized, changed = _normalize_voicevox_kana(corrected)
         if changed:
             print(
-                f"  [ normalize] {c.get('scene_id')}[{c.get('index')}]: "
+                f"  [normalize] {c.get('scene_id')}[{c.get('index')}]: "
                 f"う゛/ゔ → ヴ (VOICEVOX compatibility)"
             )
             c["corrected_speech"] = normalized
@@ -535,7 +573,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         ("呉", "ご"),
         ("蜀", "しょく"),
         # 楊輝 (Yang Hui, 13c Chinese mathematician). VOICEVOX misreads as
-        # ようあきら (given-name reading of 輝). Day 20 ある回 Pascal で
+        # ようあきら (given-name reading of 輝). ある回 Pascal で
         # パスカルの三角形先行例として登場、user 動画確認で顕在化。
         # audio_query empirical verify 済 (2026-05-25).
         ("楊輝", "ようき"),
@@ -545,14 +583,42 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
     # 数値→すうね, 既約分数→すんでやくぶんすう.
     "math_terms": [
         ("空集合", "くうしゅうごう"),  # 過去のケース: そらしゅうごう 誤読
+        # 「割る」(除算の動詞) → わる。VOICEVOX は終止形「割る」を「わりる」と
+        # 誤読する (借りる/足りる 型の一段活用と誤解析)。ある回 ガウス
+        # で既知だったが、per-ep narration_speech 個別修正 + script_generator の
+        # 「数式 A/B を『A割るB』と機械挿入せず BぶんのA で読む」style prompt のみで
+        # 対処され、global 辞書に未登録だったため ある回 (math_04「8割る5」を
+        # didactic に使用) で再発、user 動画確認で顕在化。VOICEVOX 実測 (2026-06-22):
+        # 割る→ワリル ❌ / わる→ワル ✅。「割り算」「割合」「割った」「割れる」は
+        # 部分文字列「割る」を含まないため非該当 (安全)。
+        ("割る", "わる"),
         # Compound 値 → ち rule (集積拡張、moriarty 例エピソードで顕在化)
+        (
+            "価値",
+            "かち",
+        ),  # ある回 ハミルトンで顕在化: 価値→価あたい 誤読の集積化 (単独値→あたいルールの誤発火を先回りで防ぐ)
+        # 値打ち (= ねうち): 単独「値→あたい」ルールが 値打ち→あたい打ち と誤発火する
+        #。
+        # 値打ち は「ね」読みの複合語。VOICEVOX 実測 (2026-06-27): 値打ち→ネウチ ✅ /
+        # あたい打ち→アタイウチ ❌。clean 形「値打ち」と、過去ビルドで narration_speech に
+        # 永続化された損傷形「あたい打ち」の両方を ねうち へ集積 (longest-first で
+        # 単独値→あたい より先取り)。pronunciation_check の誤補正 (値打ち→あたい打ち) の
+        # backstop も兼ねる。
+        ("値打ち", "ねうち"),
+        ("あたい打ち", "ねうち"),
         ("数値解析", "すうちかいせき"),
         ("三角関数値", "さんかくかんすうち"),
         ("近似値", "きんじち"),
         ("極限値", "きょくげんち"),  # 過去のケース: きょくげんあたい 誤読
         ("絶対値", "ぜったいち"),  # moriarty 例エピソードで顕在化
-        ("観測値", "かんそくち"),  # moriarty 例エピソードで顕在化、過去の per-ep narration_speech 個別対応の集積化
-        ("理論値", "りろんち"),  # moriarty 例エピソードで顕在化、過去の per-ep narration_speech 個別対応の集積化
+        (
+            "観測値",
+            "かんそくち",
+        ),  # moriarty 例エピソードで顕在化、過去の per-ep narration_speech 個別対応の集積化
+        (
+            "理論値",
+            "りろんち",
+        ),  # moriarty 例エピソードで顕在化、過去の per-ep narration_speech 個別対応の集積化
         ("実測値", "じっそくち"),
         ("計算値", "けいさんち"),
         ("推定値", "すいていち"),
@@ -794,7 +860,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         # ある回「大学の数学科の教科書を開けば」で顕在化。
         ("教科書を開け", "教科書をひらけ"),
         # 等方的 — VOICEVOX misreads as ひとしかたてき (kun-on mixed reading
-        # of 等方). Day 20 ある回 パスカルの原理「等方的に伝わる」で
+        # of 等方). ある回 パスカルの原理「等方的に伝わる」で
         # user 動画確認で顕在化。audio_query empirical verify 済 (2026-05-25)。
         ("等方的", "とうほうてき"),
         # 類体論 / 類体 (class field theory) — ある回 高木貞治で顕在化。
@@ -812,6 +878,14 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
     ],
     # Compound readings with tricky kun/on boundary (non-math).
     "compounds": [
+        # NOTE: 「通って」は global 規則に**入れてはいけない**。
+        # 通る(とおって=通過) と 通う(かよって=通学/通院) の context-dependent homograph で、
+        # VOICEVOX は「ずつ通って」を文脈に関係なく「カヨッテ」と読む (audio_query 実測)。
+        #   - 通過: とおって が正
+        #   - 通院/通学 (「週に二度ずつ通って治療」): かよって が正 ← global 規則だと壊れる
+        # 安全な global 文字列規則は存在しないため、path 文脈は per-ep narration_speech で
+        # 対応する。「Xを通って」は VOICEVOX が既に
+        # 「トオッテ」と正読するので規則自体も不要。
         ("真か偽か", "しんかぎか"),
         ("南西端", "なんせいたん"),
         ("縁取られた", "ふちどられた"),
@@ -846,13 +920,21 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         ("偽ということ", "ぎということ"),  # 過去の formal-logic シーン: 「は偽ということ」誤読
         # ある回 ブラフマグプタで顕在化
         ("同じ書", "おなじしょ"),  # 過去のケース: どうじしょ 誤読 (書=しょ, 著書の意)
+        # 「はるか後世」(こうせい=後の時代/posterity) を、次行の「はるか後」rule が
+        # 「はるかのち世」へ貪欲マッチし 後世 の複合を壊して のちせい 誤読化していた
+        #。longest-first で「はるか後世」を
+        # 先取りし こうせい を確定。「はるか後」(後年=のち の意) の本来用途は温存。
+        # VOICEVOX 実測 (2026-06-22): はるか後世→ハルカコオセエ ✅ / はるかのち世→
+        # ハルカノチセエ ❌。後世 単独も こうせい (のち世/ごせ 誤読防止、math_07 等)。
+        ("はるか後世", "はるかこうせい"),
+        ("後世", "こうせい"),
         ("はるか後", "はるかのち"),  # 過去のケース: はるかご 誤読 (後=のち, 後年の意)
         # 一枚物 — VOICEVOX misreads as いちまいぶつ (on-on instead of kun-on
-        # for 物=もの). Day 20 ある回「一枚物の小論」で user 動画
+        # for 物=もの). ある回「一枚物の小論」で user 動画
         # 確認で顕在化。audio_query empirical verify 済 (2026-05-25)。
         ("一枚物", "いちまいもの"),
         # 本名 — VOICEVOX misreads as ほんな (kun-kun) instead of ほんみょう
-        # ('real name', 標準読み, 広辞苑筆頭). Day 20 ある回「本名
+        # ('real name', 標準読み, 広辞苑筆頭). ある回「本名
         # アントワーヌ・ゴンボー」で user 動画確認で顕在化。当初「ほんめい」
         # と修正したが user 指摘で「ほんみょう」に再修正 (2026-05-26)。
         ("本名", "ほんみょう"),
@@ -866,6 +948,13 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         # global 化 (bare 貞治 は別人物 王貞治/井上貞治/明智光秀幼名 等で
         # 「さだはる」が正のためカナ化しない)。
         ("高木貞治", "たかぎていじ"),
+        # 居を構える (set up one's residence) — 居=きょ。VOICEVOX は bare
+        # 「居を」を「いを」(居る/居間 の い) と誤読する。ある回 ラプラス
+        # 「アルクイユに居を構えました」で user 動画確認で顕在化。
+        # audio_query 実測 (2026-06-11): 居を構え → イオカマエ ❌ / きょをかまえ ✅。
+        # phrase-level lock のため 居る/居間/芝居 等の everyday 読みは壊さない
+        #。
+        ("居を構え", "きょをかまえ"),
     ],
 }
 
@@ -878,7 +967,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
 _VOICEVOX_KANA_FIXES: list[tuple[str, str]] = [
     ("う゛", "ヴ"),  # う + spacing 濁点
     ("ゔ", "ヴ"),  # う + combining 濁点 (would NFC-compose to ゔ)
-    ("ゔ", "ヴ"),    # standalone ゔ → ヴ (VOICEVOX-safe variant)
+    ("ゔ", "ヴ"),  # standalone ゔ → ヴ (VOICEVOX-safe variant)
 ]
 
 
@@ -1003,10 +1092,7 @@ def _check_narration_speech_drift(narration_clean: str, speech: str) -> list[str
     #     一方 kana 補正のみの synced ケースでは speech が narration より
     #     長くなる傾向 → ratio ≥ 0.95 で suppress。
     extra_in_narration = nar_kanji - speech_kanji
-    if (
-        len(extra_in_narration) >= 3
-        and len(speech) < len(narration_clean) * 0.95
-    ):
+    if len(extra_in_narration) >= 3 and len(speech) < len(narration_clean) * 0.95:
         reasons.append(
             f"speech may be stale (kanji in narration absent from speech: "
             f"{''.join(sorted(extra_in_narration))[:10]}, "
@@ -1190,6 +1276,19 @@ def lint_narration_markers(scene_def: dict) -> int:
                     )
                     warn_count += 1
 
+            # Check: narration_speech_cloud length mismatch (Cloud engine field).
+            # A mismatch here silently disables the hand-tuned Cloud readings
+            # (process_scene ignores the field), so surface it early.
+            narration_speech_cloud = scene.get("narration_speech_cloud")
+            if narration_speech_cloud is not None:
+                if len(narration_speech_cloud) != len(narration):
+                    print(
+                        f"  [LINT] {sid}: narration_speech_cloud length "
+                        f"({len(narration_speech_cloud)}) != narration length "
+                        f"({len(narration)})"
+                    )
+                    warn_count += 1
+
             # Check: long lines without enough | markers
             #        + narration_speech drift
             for i, line in enumerate(narration):
@@ -1252,21 +1351,25 @@ def validate_narration_speech(scene_def: dict) -> None:
     for section in scene_def.get("sections", []):
         for scene in section.get("scenes", []):
             sid = scene.get("scene_id", "")
-            ns = scene.get("narration_speech")
-            if ns is None:
-                continue  # No narration_speech → audio uses narration directly
-            if not isinstance(ns, list):
-                issues.append(f"{sid}: narration_speech is not a list")
-                continue
             n = scene.get("narration", [])
-            for i, s in enumerate(ns):
-                if not s or not s.strip():
-                    fallback = n[i][:60] if i < len(n) else "(no narration)"
-                    issues.append(
-                        f"{sid}[{i}]: narration_speech is empty. "
-                        f"Copy narration[{i}]='{fallback}...' or remove "
-                        f"narration_speech array entirely."
-                    )
+            # Validate both reading fields: an empty entry in EITHER yields a
+            # ~silent wav on its engine (VOICEVOX or Cloud). Cloud added
+            # narration_speech_cloud, so it needs the same empty-entry guard.
+            for field in ("narration_speech", "narration_speech_cloud"):
+                ns = scene.get(field)
+                if ns is None:
+                    continue  # field absent → audio uses fallback text directly
+                if not isinstance(ns, list):
+                    issues.append(f"{sid}: {field} is not a list")
+                    continue
+                for i, s in enumerate(ns):
+                    if not s or not s.strip():
+                        fallback = n[i][:60] if i < len(n) else "(no narration)"
+                        issues.append(
+                            f"{sid}[{i}]: {field} is empty. "
+                            f"Copy narration[{i}]='{fallback}...' or remove "
+                            f"the {field} array entirely."
+                        )
     if issues:
         msg = "narration_speech validation failed:\n" + "\n".join(f"  - {item}" for item in issues)
         raise ValueError(msg)
@@ -1326,7 +1429,7 @@ def pronunciation_check(
     rule_diffs: list = []
 
     # Phase 0: ルールベース事前修正（dry_run の場合のみここで呼ぶ）
-    # Day 15 構造強化: dry_run でない場合は main 関数の Phase 0 で既に適用済 (常時実行)。
+    # 構造強化: dry_run でない場合は main 関数の Phase 0 で既に適用済 (常時実行)。
     # ここでは dry_run の表示用にのみ呼ぶ。non-dry-run で再呼びすると idempotent だがログ重複。
     if dry_run:
         rule_diffs = apply_known_misreading_fixes(scene_def, dry_run=True)
@@ -1368,7 +1471,7 @@ def pronunciation_check(
 
     print(f"  Queried {len(entries)} lines from VOICEVOX")
 
-    # Day 16 強化 D: 予測カナを合成前レビュー用 artifact に出力 (追加コスト0)
+    # 強化 D: 予測カナを合成前レビュー用 artifact に出力 (追加コスト0)
     write_kana_preview(entries, episode_dir)
 
     # 2. Claude Sonnetに一括送信
@@ -1671,28 +1774,193 @@ def concatenate_wavs(wav_files: list, output_path: str):
                 out.writeframes(wf.readframes(wf.getnframes()))
 
 
-def process_scene(scene: dict, audio_dir: str, voicevox_url: str, dry_run: bool) -> dict:
+# ---------------------------------------------------------------------------
+# scene-sentence level audio cache (hash-based skip)
+# ---------------------------------------------------------------------------
+# Each per-sentence wav ({scene_id}_{idx}.wav) is keyed by a CONTENT hash of
+# (exact synthesis text + VOICEVOX params). On re-run, a sentence whose hash
+# matches the cache AND whose wav still exists on disk is reused instead of
+# re-synthesized. This turns an NS-only partial rebuild from "re-synthesize all
+# ~150 sentences" (minutes) into "re-synthesize only the edited sentences"
+# (seconds).
+#
+# Correctness over speed (internal notes):
+# - the key is CONTENT, never mtime. Editing narration_speech changes the hash
+#   -> re-synth. "wav exists" alone is NEVER sufficient.
+# - VOICEVOX params (speaker/speed/pitch/pause) are folded into the hash, so any
+#   tuning change invalidates every entry.
+# - a missing or unreadable wav is treated as a miss -> re-synth.
+# - EVERY writer of a per-sentence wav must keep this cache consistent: main()
+#   (full build) and rebuild_single_scene_audio() update it after synthesis;
+#   dry-run (which overwrites wavs with silence placeholders) DELETES the cache
+#   so a later real run cannot reuse silence as if it were audio.
+AUDIO_CACHE_FILE = "_audio_cache.json"
+
+
+def _voicevox_config_signature() -> str:
+    """Stable string of the VOICEVOX params that affect a per-sentence wav."""
+    return json.dumps(
+        {
+            "speaker": SPEAKER_ID,
+            "speed": SPEED_SCALE,
+            "pause": PAUSE_LENGTH_SCALE,
+            "pitch": PITCH_SCALE,
+        },
+        sort_keys=True,
+    )
+
+
+def _audio_sentence_hash(speech_text: str, config_sig: str) -> str:
+    """Content hash for a per-sentence wav = synthesis text + engine params.
+
+    `config_sig` is the engine-specific parameter signature:
+    _voicevox_config_signature() for VOICEVOX, cloud_tts.config_signature(...)
+    for Cloud. Folding it in means a voicevox<->cloud switch, or a voice/rate/
+    speed change, invalidates every cached entry. For Cloud it ALSO makes the
+    cache pseudo-deterministic: identical text+voice+rate reuses the accepted
+    take instead of re-rolling Cloud's non-deterministic output.
+    """
+    import hashlib
+
+    payload = speech_text + "\x00" + config_sig
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_audio_cache(audio_dir: str) -> dict:
+    """Load the audio reuse cache. Values are {"text": hash16, "wav": fingerprint}
+    for new-format entries, or a bare hash16 string for legacy entries (still
+    honored via the text-hash fallback in _cache_entry_matches). Returns {} on
+    missing/corrupt (cold cache)."""
+    path = os.path.join(audio_dir, AUDIO_CACHE_FILE)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def _save_audio_cache(audio_dir: str, cache: dict) -> None:
+    """Persist the audio cache. Best-effort; a save failure never fails the build."""
+    path = os.path.join(audio_dir, AUDIO_CACHE_FILE)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except OSError as e:
+        print(f"  [WARN] audio cache 保存に失敗 (続行): {e}")
+
+
+def _wav_fingerprint(wav_path: str) -> str | None:
+    """Short content fingerprint (byte length + sha256 prefix) of a wav, or None
+    if unreadable. Stored in the audio cache alongside the synthesis-text hash so
+    the reuse check can detect a wav swapped out-of-band -- its synthesis text
+    unchanged but its bytes replaced. That happens on cloud_speed_qa --restore
+    (reverting to the pre-norm original), a manual file copy, or a corrupt/partial
+    write. Without it the cache (text hash only) would cache-hit and reuse the
+    stale wav."""
+    import hashlib
+
+    try:
+        with open(wav_path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    return f"{len(data)}:{hashlib.sha256(data).hexdigest()[:16]}"
+
+
+def _cache_entry_matches(
+    audio_cache: dict | None, sent_key: str, sent_hash: str, sent_wav: str
+) -> bool:
+    """True when the cache confirms sent_wav is a current, unmodified synthesis of
+    this speech text: the synthesis-text hash matches AND -- for new-format entries
+    ({"text": hash, "wav": fingerprint}) -- the on-disk wav still matches the stored
+    fingerprint. Legacy entries (a bare hash string, no fingerprint) fall back to
+    the text-hash + existence check, so pre-existing caches keep working and gain
+    fingerprint protection the next time the sentence is synthesized."""
+    if audio_cache is None:
+        return False
+    entry = audio_cache.get(sent_key)
+    if entry is None:
+        return False
+    text_hash = entry.get("text") if isinstance(entry, dict) else entry
+    if text_hash != sent_hash or not os.path.exists(sent_wav):
+        return False
+    stored_fp = entry.get("wav") if isinstance(entry, dict) else None
+    if stored_fp is not None and _wav_fingerprint(sent_wav) != stored_fp:
+        return False  # wav replaced out-of-band -> force re-synth (no stale reuse)
+    return True
+
+
+def process_scene(
+    scene: dict,
+    audio_dir: str,
+    voicevox_url: str,
+    dry_run: bool,
+    audio_cache: dict | None = None,
+    force_regen: bool = False,
+    stats: dict | None = None,
+    engine: str = "voicevox",
+    tts_voice: str | None = None,
+    tts_rate: float | None = None,
+    cloud_api_key: str | None = None,
+) -> dict:
     """Process a single scene: generate audio for all narration sentences.
 
-    If scene contains 'narration_speech' (same length as 'narration'),
-    uses it for VOICEVOX synthesis (math-friendly readings like
-    "xの2乗マイナス2イコール0"). The original 'narration' text is
-    preserved in timing.json for subtitle display.
+    Engine-agnostic timing scaffolding (silence gaps, concatenation, timing dict
+    shape) is shared; only the per-sentence speech-text selection + normalization
+    + synthesis differ by `engine`:
+
+    - engine="voicevox" (default): reads 'narration_speech' (VOICEVOX-readable,
+      math-friendly like "xの2乗..."), else 'narration'; normalized by
+      strip_subtitle_markers; synthesized via VOICEVOX. Upstream in main()/rebuild
+      the misreading dictionary has already been baked into narration_speech.
+    - engine="cloud": reads 'narration_speech_cloud' (hand-tuned Cloud readings),
+      else falls back to 'narration_speech' then 'narration' with a "読み未検証"
+      WARN; normalized by cloud_tts.strip_for_cloud (markers + spaces only, NO
+      dictionary); synthesized via Google Cloud TTS. NEVER apply VOICEVOX
+      normalization here (it would corrupt Cloud's BERT-contextual accent).
+
+    The original 'narration' (with | markers) is preserved in timing.json for
+    subtitle display regardless of engine, so downstream steps are engine-blind.
 
     Returns timing info for this scene.
     """
     scene_id = scene["scene_id"]
     narration = scene["narration"]
-    narration_speech = scene.get("narration_speech")  # Optional: VOICEVOX-readable text
+    narration_speech = scene.get("narration_speech")  # VOICEVOX-readable text
+    narration_speech_cloud = scene.get("narration_speech_cloud")  # Cloud-tuned text
     pause_after = scene.get("pause_after", 0.5)
 
-    # Validate narration_speech length if provided
+    # Validate speech-array lengths if provided (mismatch -> ignore that field)
     if narration_speech is not None and len(narration_speech) != len(narration):
         print(
             f"  [WARN] {scene_id}: narration_speech length ({len(narration_speech)}) "
             f"!= narration length ({len(narration)}), ignoring narration_speech"
         )
         narration_speech = None
+    if narration_speech_cloud is not None and len(narration_speech_cloud) != len(narration):
+        print(
+            f"  [WARN] {scene_id}: narration_speech_cloud length "
+            f"({len(narration_speech_cloud)}) != narration length ({len(narration)}), "
+            f"ignoring narration_speech_cloud"
+        )
+        narration_speech_cloud = None
+
+    # Engine-specific per-sentence param signature (folded into the cache key).
+    if engine == "cloud":
+        config_sig = cloud_tts.config_signature(tts_voice, tts_rate)
+        if narration_speech_cloud is None:
+            _fallback = "narration_speech" if narration_speech is not None else "narration"
+            print(
+                f"  [WARN] {scene_id}: narration_speech_cloud 未設定 -> {_fallback} を "
+                f"strip して送信 (Cloud 読み未検証)"
+            )
+    else:
+        config_sig = _voicevox_config_signature()
 
     sentences_timing = []
     segment_files = []  # ordered list of WAV files for concatenation
@@ -1702,13 +1970,20 @@ def process_scene(scene: dict, audio_dir: str, voicevox_url: str, dry_run: bool)
         sent_idx = f"{i + 1:03d}"
         sent_wav = os.path.join(audio_dir, f"{scene_id}_{sent_idx}.wav")
 
-        # Determine speech text for VOICEVOX:
-        # - narration_speech[i] if available (math-friendly reading)
-        # - otherwise strip | markers from narration[i] (default)
-        if narration_speech is not None:
-            speech_text = strip_subtitle_markers(narration_speech[i])
+        # Determine speech text per engine (see docstring).
+        if engine == "cloud":
+            if narration_speech_cloud is not None:
+                source = narration_speech_cloud[i]
+            elif narration_speech is not None:
+                source = narration_speech[i]  # fallback (WARN emitted above)
+            else:
+                source = raw_text
+            speech_text = cloud_tts.strip_for_cloud(source)
         else:
-            speech_text = strip_subtitle_markers(raw_text)
+            if narration_speech is not None:
+                speech_text = strip_subtitle_markers(narration_speech[i])
+            else:
+                speech_text = strip_subtitle_markers(raw_text)
 
         # Generate or estimate audio
         if dry_run:
@@ -1716,7 +1991,49 @@ def process_scene(scene: dict, audio_dir: str, voicevox_url: str, dry_run: bool)
             # Create a placeholder silence file in dry-run too
             generate_silence_wav(sent_wav, duration)
         else:
-            duration = synthesize_voicevox(speech_text, sent_wav, voicevox_url)
+            # reuse the existing wav only when the cache confirms it is
+            # a current, unmodified synthesis of this speech text (matching text
+            # hash AND wav fingerprint) and it is present + readable. Otherwise
+            # synthesize. The fingerprint check catches out-of-band wav swaps
+            # (cloud_speed_qa --restore, a manual copy, a corrupt write) that the
+            # text hash alone cannot see.
+            sent_key = f"{scene_id}_{sent_idx}"
+            # The cache key must reflect the ACTUAL Cloud payload: a cloud sentence
+            # that gains an SSML <phoneme> reading override re-synthesizes, while
+            # every sentence WITHOUT an override keeps its exact previous key
+            # (build_synthesis_input returns byte-identical plain text) and cached
+            # audio -- no re-synthesis, no side effect. VOICEVOX is unaffected.
+            if engine == "cloud":
+                _synth_input = cloud_tts.build_synthesis_input(speech_text)
+                hash_basis = _synth_input.get("ssml") or _synth_input.get("text")
+            else:
+                hash_basis = speech_text
+            sent_hash = _audio_sentence_hash(hash_basis, config_sig)
+            reused = False
+            if not force_regen and _cache_entry_matches(audio_cache, sent_key, sent_hash, sent_wav):
+                try:
+                    duration = get_wav_duration(sent_wav)  # source of truth = the wav
+                    if duration > 0:
+                        reused = True
+                except (wave.Error, OSError, EOFError):
+                    reused = False  # corrupt/empty wav -> fall through to re-synth
+            if not reused:
+                if engine == "cloud":
+                    duration = cloud_tts.synthesize_cloud(
+                        speech_text, sent_wav, tts_voice, tts_rate, cloud_api_key
+                    )
+                else:
+                    duration = synthesize_voicevox(speech_text, sent_wav, voicevox_url)
+                if audio_cache is not None:
+                    # Record BOTH the synthesis-text hash and the wav's own
+                    # fingerprint so a later out-of-band swap of this wav is
+                    # detected on the next build (no stale reuse).
+                    audio_cache[sent_key] = {
+                        "text": sent_hash,
+                        "wav": _wav_fingerprint(sent_wav),
+                    }
+            if stats is not None:
+                stats["hits" if reused else "synth"] += 1
 
         start = current_time
         end = current_time + duration
@@ -1768,6 +2085,10 @@ def process_scene(scene: dict, audio_dir: str, voicevox_url: str, dry_run: bool)
 
 
 def main():
+    # main() may rebind the module global from --speed-scale. The `global`
+    # decl must precede ANY read of SPEED_SCALE in this function (the argparse
+    # help f-string below reads it), so declare it first.
+    global SPEED_SCALE
     parser = argparse.ArgumentParser(
         description="Generate VOICEVOX audio from scene_definition.json"
     )
@@ -1800,7 +2121,61 @@ def main():
         "scene_definition.json. Implies --check-pronunciation; "
         "exits after printing the summary without running synthesis.",
     )
+    parser.add_argument(
+        "--force-regen-audio",
+        action="store_true",
+        help="ignore the per-sentence audio cache and re-synthesize every "
+        "sentence (the cache is still refreshed afterwards).",
+    )
+    parser.add_argument(
+        "--speed-scale",
+        type=float,
+        default=None,
+        help="per-episode VOICEVOX speedScale override (episode_config.json "
+        f"'speed_scale'; pipeline threads it here). Default keeps {SPEED_SCALE}.",
+    )
+    parser.add_argument(
+        "--tts-engine",
+        choices=["voicevox", "cloud"],
+        default="voicevox",
+        help="TTS backend. 'voicevox' (default) or 'cloud' (Google Cloud TTS "
+        "Chirp3-HD). episode_config.json 'tts.engine'; pipeline threads it here.",
+    )
+    parser.add_argument(
+        "--tts-voice",
+        default=None,
+        help=f"Cloud TTS voice name (default: {cloud_tts.DEFAULT_VOICE}). Ignored for voicevox.",
+    )
+    parser.add_argument(
+        "--tts-rate",
+        type=float,
+        default=None,
+        help=f"Cloud TTS speakingRate (default: {cloud_tts.DEFAULT_RATE}). Ignored for voicevox.",
+    )
     args = parser.parse_args()
+
+    # Resolve TTS engine + Cloud params. For cloud, fill voice/rate defaults and
+    # load the API key up front (fail loud before any synthesis).
+
+    # apply per-episode speed override before any synthesis. Setting the
+    # module global makes synthesize_voicevox() AND _voicevox_config_signature()
+    # (the audio cache key) both use it, so a speed change invalidates the cache.
+    if args.speed_scale is not None:
+        SPEED_SCALE = args.speed_scale
+        print
+
+    engine = args.tts_engine
+    tts_voice = args.tts_voice
+    tts_rate = args.tts_rate
+    cloud_api_key = None
+    if engine == "cloud":
+        tts_voice = tts_voice or cloud_tts.DEFAULT_VOICE
+        tts_rate = tts_rate if tts_rate is not None else cloud_tts.DEFAULT_RATE
+        if not args.dry_run:
+            cloud_api_key = cloud_tts.load_tts_api_key()
+        print(f"  [TTS] engine=cloud voice={tts_voice} rate={tts_rate}")
+    else:
+        print(f"  [TTS] engine=voicevox speedScale={SPEED_SCALE}")
 
     # --pronunciation-dry-run implies --check-pronunciation
     if args.pronunciation_dry_run:
@@ -1810,11 +2185,14 @@ def main():
     with open(args.scene_json, encoding="utf-8") as f:
         scene_def = json.load(f)
 
-    # Auto-generate narration_speech for scenes with math symbols
-    n_auto = auto_generate_narration_speech(scene_def)
-    if n_auto > 0:
-        print(f"\n  Auto-generated narration_speech for {n_auto} scene(s)")
-        print("  [WARN] Review the speech text above before publishing")
+    # Auto-generate narration_speech for scenes with math symbols.
+    # VOICEVOX-only: this injects VOICEVOX kana ("xの2乗"...) into
+    # narration_speech, which the Cloud path would otherwise read verbatim.
+    if engine == "voicevox":
+        n_auto = auto_generate_narration_speech(scene_def)
+        if n_auto > 0:
+            print(f"\n  Auto-generated narration_speech for {n_auto} scene(s)")
+            print("  [WARN] Review the speech text above before publishing")
 
     # Validate narration_speech: empty entries cause silent audio (a past silent-failure bug)
     try:
@@ -1835,10 +2213,12 @@ def main():
         print("  [LINT] Subtitle markers OK")
 
     # Phase 0: Rule-based misreading fix (always-on, no API calls)
-    # Day 15 構造強化: --skip-pronunciation-check でも常に走るよう pronunciation_check の外に移動
+    # 構造強化: --skip-pronunciation-check でも常に走るよう pronunciation_check の外に移動
     # 以前は pronunciation_check 内で呼ばれていたため、--skip-pronunciation-check 時に rule fix も
     # 丸ごと skip される設計問題があった
-    if not args.dry_run:
+    # VOICEVOX-only: these mutate narration_speech with VOICEVOX-specific kana.
+    # The Cloud path sends near-verbatim text, so applying them would corrupt it.
+    if not args.dry_run and engine == "voicevox":
         rule_diffs = apply_known_misreading_fixes(scene_def, dry_run=False)
         if rule_diffs:
             print(f"\n[RULE] Applied {len(rule_diffs)} rule-based misreading fix(es)")
@@ -1858,12 +2238,8 @@ def main():
         # WARN-only; user must manually edit NS to include expected new kana.
         stale_ns = detect_stale_ns_from_old_rules(scene_def)
         if stale_ns:
-            print(
-                f"\n[NS-STALE] {len(stale_ns)} possible stale narration_speech entry(ies):"
-            )
-            print(
-                "  NS may contain old kana from previous _MISREADING_CATEGORIES rule versions."
-            )
+            print(f"\n[NS-STALE] {len(stale_ns)} possible stale narration_speech entry(ies):")
+            print("  NS may contain old kana from previous _MISREADING_CATEGORIES rule versions.")
             print(
                 "  If rule was updated (e.g. 本名→ほんめい → 本名→ほんみょう), NS keeps the old kana"
             )
@@ -1883,8 +2259,10 @@ def main():
                 "then re-run audio step."
             )
 
-    # Check VOICEVOX connection (unless dry-run)
-    if not args.dry_run:
+    # Check VOICEVOX connection (unless dry-run). VOICEVOX-only: Cloud needs no
+    # local server, dictionary, or pronunciation_check (its read QA is STT-based,
+    # run by the pipeline after synthesis).
+    if not args.dry_run and engine == "voicevox":
         try:
             import requests
 
@@ -1925,16 +2303,35 @@ def main():
                 sys.exit(0)
 
     # Process all scenes
+    if args.dry_run:
+        generation_mode = "dry-run"
+    elif engine == "cloud":
+        generation_mode = f"cloud-tts-{tts_voice}-rate{tts_rate}"
+    else:
+        generation_mode = "voicevox"
     timing_data = {
         "episode_id": scene_def.get("episode_id", "unknown"),
         "scenes": {},
         "total_duration": 0.0,
-        "generation_mode": "dry-run" if args.dry_run else "voicevox",
+        "generation_mode": generation_mode,
     }
 
     total_sentences = 0
     total_duration = 0.0
     global_offset = 0.0  # cumulative offset for global timestamps
+
+    # per-sentence audio cache (skip unchanged synthesis).
+    if args.dry_run:
+        # Dry-run overwrites per-sentence wavs with silence placeholders, so any
+        # existing content cache no longer matches the wavs on disk. Invalidate
+        # it to prevent a later real run from reusing silence as if it were audio.
+        _cache_path = os.path.join(audio_dir, AUDIO_CACHE_FILE)
+        if os.path.exists(_cache_path):
+            os.remove(_cache_path)
+        audio_cache = None
+    else:
+        audio_cache = _load_audio_cache(audio_dir)
+    cache_stats = {"hits": 0, "synth": 0}
 
     for section in scene_def["sections"]:
         section_id = section["section_id"]
@@ -1948,7 +2345,19 @@ def main():
             print(f"  {scene_id} ({n_sentences} sentences)...", end=" ", flush=True)
             start_time = time.time()
 
-            scene_timing = process_scene(scene, audio_dir, args.voicevox_url, args.dry_run)
+            scene_timing = process_scene(
+                scene,
+                audio_dir,
+                args.voicevox_url,
+                args.dry_run,
+                audio_cache=audio_cache,
+                force_regen=args.force_regen_audio,
+                stats=cache_stats,
+                engine=engine,
+                tts_voice=tts_voice,
+                tts_rate=tts_rate,
+                cloud_api_key=cloud_api_key,
+            )
 
             # Add global offset
             scene_timing["global_start"] = round(global_offset, 3)
@@ -1964,17 +2373,28 @@ def main():
     timing_data["total_duration"] = round(total_duration, 3)
     timing_data["total_duration_minutes"] = round(total_duration / 60, 2)
 
+    # persist the refreshed audio cache (real runs only).
+    if not args.dry_run and audio_cache is not None:
+        _save_audio_cache(audio_dir, audio_cache)
+
     # Save timing.json
     timing_path = os.path.join(args.output_dir, "timing.json")
     with open(timing_path, "w", encoding="utf-8") as f:
         json.dump(timing_data, f, ensure_ascii=False, indent=2)
 
     # Summary
-    mode = "DRY-RUN (estimated)" if args.dry_run else "VOICEVOX"
+    if args.dry_run:
+        mode = "DRY-RUN (estimated)"
+    elif engine == "cloud":
+        mode = f"CLOUD ({tts_voice} rate={tts_rate})"
+    else:
+        mode = "VOICEVOX"
     print(f"\n{'=' * 50}")
     print(f"Generation complete ({mode})")
     print(f"  Scenes:    {len(timing_data['scenes'])}")
     print(f"  Sentences: {total_sentences}")
+    if not args.dry_run:
+        print(f"  Audio cache: {cache_stats['hits']} reused / {cache_stats['synth']} synthesized")
     print(
         f"  Duration:  {timing_data['total_duration']:.1f}s ({timing_data['total_duration_minutes']:.1f} min)"
     )
@@ -1988,16 +2408,30 @@ def main():
 
 
 def rebuild_single_scene_audio(
-    scene_json_path: str, scene_id: str, output_dir: str, voicevox_url: str = VOICEVOX_URL
+    scene_json_path: str,
+    scene_id: str,
+    output_dir: str,
+    voicevox_url: str = VOICEVOX_URL,
+    engine: str = "voicevox",
+    tts_voice: str | None = None,
+    tts_rate: float | None = None,
+    force_regen: bool = False,
 ) -> bool:
     """Rebuild audio for a single scene and update timing.json.
 
     This function is called by pipeline.py's --rebuild-scene mode.
     It does NOT modify the existing full-build code path.
 
+    Engine-aware (mirrors main()): VOICEVOX-specific normalization
+    (auto_generate_narration_speech, apply_known_misreading_fixes), the VOICEVOX
+    /version check, and register_user_dict run ONLY for engine="voicevox". For
+    engine="cloud" the Cloud API key is loaded instead. `force_regen=True`
+    bypasses the per-sentence audio cache -- the escape hatch to deliberately
+    re-roll Cloud's non-deterministic output for a scene whose text is unchanged.
+
     Steps:
       1. Load scene_definition.json, find the target scene
-      2. Run auto_generate_narration_speech (idempotent)
+      2. (voicevox) Run auto_generate_narration_speech + misreading fix
       3. Call process_scene() for the target scene only
       4. Load existing timing.json
       5. Replace the target scene's entry
@@ -2006,6 +2440,14 @@ def rebuild_single_scene_audio(
 
     Returns True on success.
     """
+    # Resolve Cloud params up front (fail loud on missing key before any work).
+    cloud_api_key = None
+    if engine == "cloud":
+        tts_voice = tts_voice or cloud_tts.DEFAULT_VOICE
+        tts_rate = tts_rate if tts_rate is not None else cloud_tts.DEFAULT_RATE
+        cloud_api_key = cloud_tts.load_tts_api_key()
+        print(f"[PARTIAL REBUILD] engine=cloud voice={tts_voice} rate={tts_rate}")
+
     # Load scene definition
     with open(scene_json_path, encoding="utf-8") as f:
         scene_def = json.load(f)
@@ -2023,57 +2465,83 @@ def rebuild_single_scene_audio(
         print(f"[PARTIAL REBUILD] ERROR: Scene '{scene_id}' not found in scene_definition.json")
         return False
 
-    # Auto-generate narration_speech if needed (idempotent, modifies scene_def in-place)
-    auto_generate_narration_speech(scene_def)
+    # VOICEVOX-only normalization (idempotent, modifies scene_def in-place).
+    # Skipped for Cloud so it never injects VOICEVOX kana into narration_speech
+    # (which the Cloud fallback path would then read).
+    if engine == "voicevox":
+        # Auto-generate narration_speech if needed
+        auto_generate_narration_speech(scene_def)
 
-    # Phase 0: Rule-based misreading fix.
-    # The full pipeline applies this in main() but partial rebuild used to skip
-    # it, so new scenes added via --rebuild-scene (or this function directly)
-    # got raw narration_speech with no dict-based corrections. The ある回 case:
-    # math_11b "辺" → mis-read as "あたり" because the 辺→へん rule never ran.
-    # Fix applies the dict and saves the updated scene_def to disk so subsequent
-    # runs see the corrected narration_speech.
-    rule_diffs = apply_known_misreading_fixes(scene_def, dry_run=False)
-    if rule_diffs:
-        print(f"[PARTIAL REBUILD] Applied {len(rule_diffs)} rule-based misreading fix(es)")
-        for d in rule_diffs[:10]:
-            print(f"  {d['scene_id']}[{d['index']}]: {d['before'][:50]}...")
-            print(f"    -> {d['after'][:50]}...")
-        if len(rule_diffs) > 10:
-            print(f"  ... and {len(rule_diffs) - 10} more")
-        with open(scene_json_path, "w", encoding="utf-8") as f:
-            json.dump(scene_def, f, ensure_ascii=False, indent=2)
-        print(f"  Saved updates to {scene_json_path}")
+        # Phase 0: Rule-based misreading fix.
+        # The full pipeline applies this in main() but partial rebuild used to skip
+        # it, so new scenes added via --rebuild-scene (or this function directly)
+        # got raw narration_speech with no dict-based corrections. The ある回 case:
+        # math_11b "辺" → mis-read as "あたり" because the 辺→へん rule never ran.
+        # Fix applies the dict and saves the updated scene_def to disk so subsequent
+        # runs see the corrected narration_speech.
+        rule_diffs = apply_known_misreading_fixes(scene_def, dry_run=False)
+        if rule_diffs:
+            print(f"[PARTIAL REBUILD] Applied {len(rule_diffs)} rule-based misreading fix(es)")
+            for d in rule_diffs[:10]:
+                print(f"  {d['scene_id']}[{d['index']}]: {d['before'][:50]}...")
+                print(f"    -> {d['after'][:50]}...")
+            if len(rule_diffs) > 10:
+                print(f"  ... and {len(rule_diffs) - 10} more")
+            with open(scene_json_path, "w", encoding="utf-8") as f:
+                json.dump(scene_def, f, ensure_ascii=False, indent=2)
+            print(f"  Saved updates to {scene_json_path}")
 
-    # Re-find target_scene after in-place modification
-    for section in scene_def.get("sections", []):
-        for scene in section.get("scenes", []):
-            if scene["scene_id"] == scene_id:
-                target_scene = scene
-                break
+        # Re-find target_scene after in-place modification
+        for section in scene_def.get("sections", []):
+            for scene in section.get("scenes", []):
+                if scene["scene_id"] == scene_id:
+                    target_scene = scene
+                    break
 
-    # Check VOICEVOX connection
-    try:
-        import requests
+        # Check VOICEVOX connection
+        try:
+            import requests
 
-        resp = requests.get(f"{voicevox_url}/version", timeout=5)
-        resp.raise_for_status()
-        print(f"[PARTIAL REBUILD] VOICEVOX connected: version {resp.text}")
-    except Exception as e:
-        print(f"[PARTIAL REBUILD] ERROR: Cannot connect to VOICEVOX at {voicevox_url}: {e}")
-        return False
+            resp = requests.get(f"{voicevox_url}/version", timeout=5)
+            resp.raise_for_status()
+            print(f"[PARTIAL REBUILD] VOICEVOX connected: version {resp.text}")
+        except Exception as e:
+            print(f"[PARTIAL REBUILD] ERROR: Cannot connect to VOICEVOX at {voicevox_url}: {e}")
+            return False
 
-    # Register dictionary
-    n_registered = register_user_dict(voicevox_url, DICT_FILE)
-    if n_registered > 0:
-        print(f"[PARTIAL REBUILD] Registered {n_registered} new dictionary entries")
+        # Register dictionary
+        n_registered = register_user_dict(voicevox_url, DICT_FILE)
+        if n_registered > 0:
+            print(f"[PARTIAL REBUILD] Registered {n_registered} new dictionary entries")
 
     # Generate audio for the single scene
     audio_dir = os.path.join(output_dir, "audio")
     os.makedirs(audio_dir, exist_ok=True)
 
     print(f"[PARTIAL REBUILD] Generating audio for scene '{scene_id}'...")
-    scene_timing = process_scene(target_scene, audio_dir, voicevox_url, dry_run=False)
+    # keep the per-sentence audio cache consistent with the wavs this
+    # path overwrites. If the cache were left stale here, a later full run could
+    # reuse a wav whose cached hash no longer matches its on-disk content.
+    audio_cache = _load_audio_cache(audio_dir)
+    rebuild_stats = {"hits": 0, "synth": 0}
+    scene_timing = process_scene(
+        target_scene,
+        audio_dir,
+        voicevox_url,
+        dry_run=False,
+        audio_cache=audio_cache,
+        force_regen=force_regen,
+        stats=rebuild_stats,
+        engine=engine,
+        tts_voice=tts_voice,
+        tts_rate=tts_rate,
+        cloud_api_key=cloud_api_key,
+    )
+    _save_audio_cache(audio_dir, audio_cache)
+    print(
+        f"[PARTIAL REBUILD] audio cache: {rebuild_stats['hits']} reused / "
+        f"{rebuild_stats['synth']} synthesized"
+    )
 
     # Load existing timing.json
     timing_path = os.path.join(output_dir, "timing.json")

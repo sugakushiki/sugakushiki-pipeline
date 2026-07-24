@@ -90,9 +90,7 @@ def _looks_cjk(s: str) -> bool:
     (incl. Ext-A), CJK compatibility, and fullwidth forms.
     """
     return any(
-        0x3000 <= ord(c) <= 0x9FFF
-        or 0xF900 <= ord(c) <= 0xFAFF
-        or 0xFF00 <= ord(c) <= 0xFFEF
+        0x3000 <= ord(c) <= 0x9FFF or 0xF900 <= ord(c) <= 0xFAFF or 0xFF00 <= ord(c) <= 0xFFEF
         for c in s
     )
 
@@ -108,12 +106,12 @@ def _formula_mobject(tex: str, font_size: int, color):
     if _looks_cjk(tex):
         return Text(tex, font=FONT, font_size=max(int(font_size * 0.62), 22), color=color)
     return MathTex(tex, font_size=font_size, color=color)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template with no on-screen person/year claims — declared empty under the
 # lint's "default" fallback key (checked, not silently skipped).
 LINT_FACTUAL_CLAIMS = {"default": {"people": [], "years": []}}
-
-
 
 
 class FormulaDisplay(Scene):
@@ -160,7 +158,7 @@ class FormulaDisplay(Scene):
         # Auto-promote 1-element `formulas` list to singular `formula`.
         # Previously this case fell through to build_static() which only reads
         # `self._formula` (default = hardcoded Fourier series), silently rendering
-        # the wrong formula. Day 12 found 4 scenes affected this way.
+        # the wrong formula. found 4 scenes affected this way.
         if self._formulas and len(self._formulas) == 1:
             self._formula = self._formulas[0]
             if self._labels and not self._subtitle:

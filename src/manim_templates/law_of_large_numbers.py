@@ -259,6 +259,8 @@ class LawOfLargeNumbers(Scene):
         conv_label.move_to(axes.c2p(900, 0.58))
         self.play(FadeIn(conv_label), run_time=0.5)
         self.wait(1.5)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -266,7 +268,6 @@ LINT_FACTUAL_CLAIMS = {
     "coin_flip": {"people": [], "years": []},
     "convergence": {"people": [], "years": []},
 }
-
 
 
 # ---------------------------------------------------------------------------

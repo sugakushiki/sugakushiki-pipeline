@@ -257,6 +257,12 @@ route_mapは世界地図上に都市と移動経路を描画する。数学者�
   - 背景は建築・室内装飾・自然光・書類や黒板など小道具に留める
   - 群像（議論シーン、講義、家族写真等）が **意図的に複数人物** を含む場合は scene_id や source_prompt 冒頭でその意図を明示する（例: "A heated debate between three mathematicians..."）
 
+**use_reference / is_subject（参照写真の使用）** ★主題者の肖像忠実度に直結★:
+  - `visual.use_reference` は **既定 true**（主題者の実在写真を参照として使い、実物の顔に忠実な肖像を生成する）。主題者（このエピソードの主役）が描かれるシーンでは **必ず true のままにする**
+  - **`use_reference: false` を付けてよいのは「そのシーンの主たる／唯一の人物が主題者ではない別の歴史的人物」か「人物が主役でない場面」だけ**。脇役が *言及される* だけ、あるいは主題者と *一緒に写る* だけで false にしてはいけない（主題者がいるなら参照を使い、脇役は AI が別人として描く）。地名・施設名（例: "Dunsink Observatory"）は人物ではないので一切影響しない
+  - 主題者以外の人物を主役として描くシーンには **`is_subject: false`** も併せて付ける（cross-scene 一貫性チェックの対象外にするため）
+  - 例: person_NN が「若き主題者がコルバーンと暗算で競う」なら主題者が主役 → use_reference: true（コルバーンは AI が別人として描く）。「父テオンの肖像」のように脇役が主役なら use_reference: false かつ is_subject: false
+
 **場面描写の必須要素**:
   - 具体的な地名や建物（例: Budapest, Cambridge, Princeton IAS building）
   - 時代の雰囲気（例: 1930s European academic atmosphere, Cold War era）
@@ -634,7 +640,7 @@ def build_qa_feedback_prompt(qa_report_path: str) -> str:
         if "fact" in agent_key:
             continue
 
-        agent_name = agent_result.get("agent_name", agent_key)
+        agent_result.get("agent_name", agent_key)
         issues = agent_result.get("issues", [])
 
         for issue in issues:
@@ -679,12 +685,12 @@ def _sanitize_json_keys(raw: str) -> str:
 def extract_json(text: str) -> dict:
     """Extract JSON from LLM response (handles markdown code blocks).
 
-    Day 19 強化 A: Claude が応答途中で「I'll output the complete JSON now,
+    強化 A: Claude が応答途中で「I'll output the complete JSON now,
     starting fresh」のように self-restart して複数 ```json ブロックを出力する
     ケースに対応。最初の (壊れた) ブロックを掴むのではなく、**ALL ```json
     ブロック を列挙し、parse 成功するものを後ろから採用** する。
 
-    Day 19 で ある回 で 3 回連続 build 失敗の根本原因がこれだった。Claude が
+    ある時点 で ある回 で 3 回連続 build 失敗の根本原因がこれだった。Claude が
     長文 JSON の途中でトークン制約や思考のリセットで「starting fresh」と
     再開、scene_definition_raw_attempt2.txt に 2 つの ```json ブロックが存在
     (pos 0 の壊れた 634 字 + pos 644 の正常 34502 字)。non-greedy regex は
@@ -767,6 +773,226 @@ def count_narration_chars(data: dict) -> int:
             for text in scene.get("narration", []):
                 total += len(text.replace("|", ""))
     return total
+
+
+# ─── timeline_recap schema normalization ─────────────────────
+#
+# The LLM is given only each Manim template's one-line docstring, not its param
+# schema. For timeline_recap ("Two-track life/work timeline") it emits a natural
+#     {name, birth_year, death_year, life_events:[{year,text}],
+#      work_events:[{year,text}]}
+# shape, but the template reads
+#     {title, milestones:[[year,label,track,colour],...], legend}
+# and, when `milestones` is absent, used to SILENTLY fall back to its Laplace
+# self-test -- rendering Laplace's life events under another episode's title
+#. The template now raises on that mismatch; here we
+# rewrite the params upstream so real pipeline runs render the right person.
+
+
+def _timeline_fmt_year(year) -> str:
+    """Render a milestone year label, appending 年 unless already an era word."""
+    s = str(year).strip()
+    if not s:
+        return s
+    return s if s.endswith(("年", "世紀", "頃", "代")) else f"{s}年"
+
+
+def _timeline_year_sort_key(year) -> int:
+    """Leading (signed) integer of a year for chronological ordering."""
+    m = re.search(r"-?\d+", str(year))
+    return int(m.group()) if m else 9999
+
+
+def _timeline_event_label(ev: dict) -> str:
+    """Pull the display label from an event dict (LLM key naming varies)."""
+    for k in ("text", "label", "event", "description", "title"):
+        v = ev.get(k)
+        if v:
+            return str(v)
+    return ""
+
+
+def _milestones_in_list_form(milestones) -> bool:
+    """True if `milestones` is already the template's schema.
+
+    The template reads each milestone as [year, label, track, colour] (indexes
+    m[0]..m[3]). "Already normalized" therefore means a non-empty list whose
+    entries are ALL list/tuple rows -- NOT the LLM's per-milestone dict shape
+    ({year, life, work}), which would break the template with KeyError: 0.
+    Used for idempotency: such scenes are left untouched.
+    """
+    if not isinstance(milestones, list) or not milestones:
+        return False
+    return all(isinstance(m, (list, tuple)) for m in milestones)
+
+
+def _milestone_dict_to_rows(ev: dict) -> list:
+    """Convert one per-milestone dict to (sort_key, row) tuples.
+
+    The LLM sometimes emits milestones as dicts like
+    {"year": 1815, "life": "...", "work": "..."} instead of the template's
+    [year, label, track, colour] rows. A dict carrying BOTH a life and a work
+    label splits into two rows (work above the axis in gold, life below in
+    white), sorted with everything else by year. A dict with neither but a
+    generic label (text/label/...) falls back to a single row, honouring an
+    explicit track/colour when present. Empty labels are dropped.
+    """
+    y = ev.get("year", "")
+    sk = _timeline_year_sort_key(y)
+    yr = _timeline_fmt_year(y)
+    rows: list[tuple[int, list]] = []
+    work_label = str(ev.get("work") or "").strip()
+    life_label = str(ev.get("life") or "").strip()
+    if work_label:
+        rows.append((sk, [yr, work_label, "work", "gold"]))
+    if life_label:
+        rows.append((sk, [yr, life_label, "life", "white"]))
+    if not rows:
+        # No life/work keys: fall back to a generic label, honouring an
+        # explicit track/colour so we never silently drop the milestone.
+        label = _timeline_event_label(ev)
+        if label:
+            track = str(ev.get("track") or "work").strip() or "work"
+            colour = str(ev.get("colour") or ev.get("color") or "").strip()
+            if not colour:
+                colour = "white" if track == "life" else "gold"
+            rows.append((sk, [yr, label, track, colour]))
+    return rows
+
+
+def _life_work_to_milestones(params: dict) -> dict | None:
+    """Convert the LLM's timeline schemas to the template's milestones schema.
+
+    Handles two natural LLM shapes the template does not read directly:
+
+      1. {name, birth_year, death_year,
+          life_events:[{year, text}], work_events:[{year, text}]}
+      2. {title, milestones:[{year, life, work}, ...]}  <- per-milestone dicts
+         (this second shape has a `milestones` key but its entries are dicts,
+          so it still breaks the template with KeyError: 0
+
+    Returns the rewritten params dict, or None when `params` carries no
+    recognizable timeline data (so the caller leaves it untouched -- e.g. an
+    empty dict or the {"mode": "laplace"} self-test).
+    """
+    life = params.get("life_events") or []
+    work = params.get("work_events") or []
+    birth = params.get("birth_year")
+    death = params.get("death_year")
+
+    # A `milestones` key whose entries are dicts is the LLM's per-milestone
+    # shape (not the template's [year,label,track,colour] rows): treat it as
+    # convertible data rather than passing the crash-inducing dicts through.
+    raw_milestones = params.get("milestones")
+    dict_milestones = (
+        [m for m in raw_milestones if isinstance(m, dict)]
+        if isinstance(raw_milestones, list)
+        else []
+    )
+
+    if not (life or work or birth is not None or death is not None or dict_milestones):
+        return None
+
+    rows: list[tuple[int, list]] = []  # (sort_key, [year, label, track, colour])
+    if birth is not None:
+        rows.append(
+            (_timeline_year_sort_key(birth), [_timeline_fmt_year(birth), "誕生", "life", "white"])
+        )
+    for ev in life:
+        if isinstance(ev, dict):
+            y = ev.get("year", "")
+            rows.append(
+                (
+                    _timeline_year_sort_key(y),
+                    [_timeline_fmt_year(y), _timeline_event_label(ev), "life", "white"],
+                )
+            )
+    for ev in work:
+        if isinstance(ev, dict):
+            y = ev.get("year", "")
+            rows.append(
+                (
+                    _timeline_year_sort_key(y),
+                    [_timeline_fmt_year(y), _timeline_event_label(ev), "work", "gold"],
+                )
+            )
+    if death is not None:
+        rows.append(
+            (_timeline_year_sort_key(death), [_timeline_fmt_year(death), "没", "life", "white"])
+        )
+    for ev in dict_milestones:
+        rows.extend(_milestone_dict_to_rows(ev))
+
+    rows.sort(key=lambda r: r[0])
+    milestones = [r[1] for r in rows]
+
+    name = str(params.get("name", "")).strip()
+    title = params.get("title") or (f"{name}の歩んだ時間" if name else "歩んだ時間")
+
+    out = {"title": title, "milestones": milestones, "legend": [["gold", "業績"]]}
+    if "duration" in params:
+        out["duration"] = params["duration"]
+    return out
+
+
+def normalize_timeline_recap_scenes(scene_def: dict) -> int:
+    """Rewrite timeline_recap scenes' params to the template's milestones schema.
+
+    Idempotent: scenes whose `milestones` are ALREADY the template's
+    [year,label,track,colour] list rows are left untouched, as are scenes with
+    no recognizable timeline data (the Laplace self-test). Crucially, a
+    `milestones` key that is a list of per-milestone DICTS ({year, life, work})
+    is NOT the template's schema -- it crashes the template with KeyError: 0
+ -- so it is converted rather than passed through. A scene
+    that selects timeline_recap but emits some OTHER unknown schema is left
+    untouched -- the template's fail-loud shape guard then surfaces it via the
+    pipeline placeholder banner rather than silently shipping wrong data.
+
+    Returns the number of scenes rewritten (for logging).
+    """
+    rewritten = 0
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual", {})
+            if visual.get("type") != "manim" or visual.get("template") != "timeline_recap":
+                continue
+            params = visual.get("params")
+            if not isinstance(params, dict):
+                continue
+            # Already the template's list-of-rows schema? leave it. (A dict-form
+            # `milestones` is NOT list form, so it falls through to conversion.)
+            if _milestones_in_list_form(params.get("milestones")):
+                continue
+            converted = _life_work_to_milestones(params)
+            if converted is not None:
+                visual["params"] = converted
+                rewritten += 1
+    return rewritten
+
+
+def strip_llm_cloud_readings(scene_def: dict) -> int:
+    """Drop any narration_speech_cloud the LLM produced. Returns the count removed.
+
+    By design the LLM does NOT own the Cloud reading: gen_cloud_readings.py builds
+    narration_speech_cloud from narration at pipeline time (native は; comma-isolated
+    particles only -> わ). But when episode_config additional_instructions tell the
+    LLM to "narration_speech_cloud を用意 (助詞は→わ表記)", it over-applies the rule and
+    rewrites word-internal は to わ as well (blanket-わ). Chirp3-HD then inserts a
+    phantom pause at every lone わ (~25% longer by A/B) and the reading sounds unnatural.
+    gen_cloud only FILLS scenes that lack a cloud, so an LLM-emitted blanket-わ survives
+    all the way to synthesis.
+
+    Stripping here -- the deterministic point where the LLM output is finalized --
+    removes that whole failure class at the source: gen_cloud then regenerates every
+    cloud from narration, so word-internal は stays は. narration_speech (the VOICEVOX
+    kana spell-out, which gen_cloud reuses for symbol sentences) is left untouched.
+    """
+    stripped = 0
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            if scene.pop("narration_speech_cloud", None) is not None:
+                stripped += 1
+    return stripped
 
 
 # ─── Validation ──────────────────────────────────────────────────────────────
@@ -866,16 +1092,35 @@ def validate_scene_definition(data: dict) -> tuple[list[str], bool]:
                 if not visual.get("route"):
                     warnings.append(f"{scene_id}: route_map has no route")
 
-    # ── Character count check (hard gate for retry) ──
-    if total_chars < CHAR_COUNT_MIN:
-        warnings.append(f"ERROR: CHAR COUNT TOO LOW: {total_chars} chars (min: {CHAR_COUNT_MIN})")
+    # ── Character count check (ADVISORY, not a hard length target) ──
+    # Length must follow content, not be forced into a window (user directive
+    # 2026-07-11): do NOT retry to pad a tight script up to a MIN, nor trim good
+    # content down to a MAX. Normal over/under vs the soft target is accepted.
+    # Only a *pathological* shortfall (< 50% of the intended length) triggers a
+    # retry -- a backstop against a broken/truncated generation, not against
+    # content-driven length. See / feedback_topic_before_duration.
+    char_mid = (CHAR_COUNT_MIN + CHAR_COUNT_MAX) / 2
+    pathological_floor = int(char_mid * 0.5)
+    if total_chars < pathological_floor:
+        warnings.append(
+            f"ERROR: CHAR COUNT PATHOLOGICALLY LOW: {total_chars} chars "
+            f"(< {pathological_floor}, likely a broken/truncated generation) -- retrying"
+        )
         retry_needed = True
+    elif total_chars < CHAR_COUNT_MIN:
+        warnings.append(
+            f"ADVISORY: below the soft target ({total_chars} chars, soft range "
+            f"{CHAR_COUNT_MIN}-{CHAR_COUNT_MAX}) -- accepted, length follows content"
+        )
     elif total_chars > CHAR_COUNT_MAX:
-        warnings.append(f"ERROR: CHAR COUNT TOO HIGH: {total_chars} chars (max: {CHAR_COUNT_MAX})")
-        retry_needed = True
+        warnings.append(
+            f"ADVISORY: above the soft target ({total_chars} chars, soft range "
+            f"{CHAR_COUNT_MIN}-{CHAR_COUNT_MAX}) -- accepted, length follows content"
+        )
     else:
         warnings.append(
-            f"OK: Char count OK: {total_chars} chars (target: {CHAR_COUNT_MIN}-{CHAR_COUNT_MAX})"
+            f"OK: Char count within soft target: {total_chars} chars "
+            f"({CHAR_COUNT_MIN}-{CHAR_COUNT_MAX})"
         )
 
     # Duration estimate (4.5 chars/sec + 0.8s pause per sentence)
@@ -1039,6 +1284,22 @@ def generate_script(
                 f.write(response_text)
             print(f"  Raw response saved to: {raw_path}")
             continue
+
+        # follow-up: rewrite any timeline_recap scene from the LLM's natural
+        # life/work schema to the `milestones` schema the template reads, before
+        # validation / best-result tracking / save. Without this the template
+        # silently fell back to its Laplace self-test.
+        n_tl = normalize_timeline_recap_scenes(scene_def)
+        if n_tl:
+            print(f"  Normalized {n_tl} timeline_recap scene(s) -> milestones schema")
+
+        # Cloud reading is gen_cloud_readings' job, not the LLM's: strip any
+        # narration_speech_cloud the model emitted so its blanket は->わ over-
+        # conversion never reaches synthesis (gen_cloud regenerates from narration
+        # with native は). See strip_llm_cloud_readings for the full rationale.
+        n_cloud = strip_llm_cloud_readings(scene_def)
+        if n_cloud:
+            print(f"  Stripped {n_cloud} LLM narration_speech_cloud (gen_cloud will regenerate)")
 
         # Validate
         warnings, retry_needed = validate_scene_definition(scene_def)

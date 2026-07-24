@@ -200,7 +200,7 @@ def get_wikidata_labels(qid: str, timeout: int = 10) -> dict:
     entity = data.get("entities", {}).get(qid, {})
     labels = {lang: lbl["value"] for lang, lbl in entity.get("labels", {}).items()}
     aliases: list[str] = []
-    for lang, alist in entity.get("aliases", {}).items():
+    for _lang, alist in entity.get("aliases", {}).items():
         for a in alist:
             aliases.append(a["value"])
     return {"labels": labels, "aliases": aliases}
@@ -277,7 +277,7 @@ def main() -> int:
     qid_to_variants: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     qid_type: dict[str, str] = {}  # qid -> type (person/theorem)
     for ep_id, cands in ep_candidates.items():
-        for (term, typ), count in cands.items():
+        for (term, typ), _count in cands.items():
             qid = qid_map.get((term, typ))
             if not qid:
                 continue

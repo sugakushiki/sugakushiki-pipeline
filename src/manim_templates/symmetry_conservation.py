@@ -355,7 +355,7 @@ class SymmetryConservation(Scene):
 
         y_positions = [1.0, -0.2, -1.4]
 
-        for i, (sym, law, y) in enumerate(zip(sym_labels, law_labels, y_positions, strict=False)):
+        for _i, (sym, law, y) in enumerate(zip(sym_labels, law_labels, y_positions, strict=False)):
             # Symmetry box (left)
             s_box = _make_box(sym, width=3.2, height=0.65, color=ACCENT_CYAN, font_size=22)
             s_box.move_to(LEFT * 3.0 + UP * y)
@@ -395,6 +395,8 @@ class SymmetryConservation(Scene):
         note.move_to(DOWN * 2.0)
         self.play(FadeIn(note), run_time=0.8)
         self.wait(2.0 * ws)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -404,7 +406,6 @@ LINT_FACTUAL_CLAIMS = {
     "rotational": {"people": [], "years": []},
     "theorem": {"people": [], "years": []},
 }
-
 
 
 # -----------------------------------------------------------------------

@@ -49,7 +49,6 @@ from style import (
     ACCENT_GOLD,
     ACCENT_PINK,
     BG_COLOR,
-    EDGE_COLOR,
     FONT,
     TEXT_DIM,
     TEXT_WHITE,

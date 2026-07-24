@@ -4,7 +4,7 @@ Usage:
     python scripts/quick_baseline_check.py <episode_dir> <baseline_json>
 
 Example:
-    python scripts/quick_baseline_check.py episodes/020_abel docs/internal/baselines/ep020.json
+    python scripts/quick_baseline_check.py examples/moriarty docs/internal/baselines/ep020.json
 
 Compares SHA256 hashes of episode artifacts (audio/, visuals/, key files) against
 the recorded baseline. Reports PASS / FAIL with detailed diff for any mismatches.
@@ -41,12 +41,9 @@ def check_category(episode_dir: Path, category: str, expected: dict) -> tuple[in
     for filename, expected_hash in expected.items():
         if category == "key_files":
             file_path = episode_dir / filename
-            actual_hash = (
-                expected_hash["sha256"] if isinstance(expected_hash, dict) else expected_hash
-            )
+            (expected_hash["sha256"] if isinstance(expected_hash, dict) else expected_hash)
         else:
             file_path = cat_dir / filename
-            actual_hash = expected_hash
 
         if not file_path.exists():
             fail_count += 1

@@ -468,7 +468,7 @@ class Brachistochrone(Scene):
 
         pts = [[start_x, start_y, 0]]
         cur_x, cur_y = start_x, start_y
-        for i, ang_deg in enumerate(angles_from_vertical):
+        for _i, ang_deg in enumerate(angles_from_vertical):
             ang_rad = math.radians(ang_deg)
             dx = layer_height * math.tan(ang_rad)
             dy = -layer_height

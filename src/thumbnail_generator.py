@@ -2,8 +2,8 @@
 thumbnail_generator.py - サムネイル自動生成（3パターン）
 
 Usage:
-    python src/thumbnail_generator.py episodes/005_archimedes/episode_config.json --output-dir episodes/005_archimedes
-    python src/thumbnail_generator.py episodes/005_archimedes/episode_config.json --output-dir episodes/005_archimedes --pattern A --phrase "2200年前のアルゴリズム"
+    python src/thumbnail_generator.py examples/moriarty/episode_config.json --output-dir examples/moriarty
+    python src/thumbnail_generator.py examples/moriarty/episode_config.json --output-dir examples/moriarty --pattern A --phrase "2200年前のアルゴリズム"
 
 Output:
     {output-dir}/thumbnails/
@@ -17,6 +17,7 @@ import glob
 import json
 import os
 import random
+import re as _thumb_re
 import sys
 
 from PIL import Image, ImageDraw, ImageFont
@@ -182,8 +183,6 @@ def wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list:
 #   4. 総合点最高の画像を採択
 #
 # 後方互換: scene_def=None の場合は旧来の person_*.png グロブ動作
-
-import re as _thumb_re
 
 # 「主題者の顔が写るシーン」を判定するための正規表現（単語境界ベース）
 # 文字列内 "woman walking" が "man " にマッチするような誤検出を防ぐ
@@ -538,7 +537,7 @@ def generate_pattern_c(
     canvas = resize_and_crop(source_img.copy(), WIDTH, HEIGHT)
 
     # 数式シンボルを半透明で散りばめる（テキスト領域と重ならない位置）
-    # Day 15 構造強化: fontsize 縮小 + canvas 内 positions 計算 + alpha 引き上げ
+    # 構造強化: fontsize 縮小 + canvas 内 positions 計算 + alpha 引き上げ
     # 過去の bug: fontsize=100 で生成された 587×139 image を canvas 1280×720 に paste すると、
     # x=900+ の位置で 200-400px はみ出し → 4/6 の数式が画面外で消失。
     # alpha=30-50 の scale 後 mean alpha=4.47/255 (1.75% opacity) で残りも事実上不可視。
@@ -558,7 +557,7 @@ def generate_pattern_c(
         max_x = max(20, WIDTH - sym_w - 20)
         max_y = max(20, HEIGHT - sym_h - 200)  # テキスト領域 (下 200px) は避ける
 
-        # Day 18 強化 C: long math_symbol 用 adaptive positions。
+        # 強化 C: long math_symbol 用 adaptive positions。
         # 元の 6 positions は top-left + top-center + top-right の水平距離が
         # sym_w を上回る前提だが、long formula (sym_w > ~600px) では
         # top-center が両端と重なり、 "C ≈ 250,000Sta,000 stadia,000 stadia"
@@ -568,12 +567,12 @@ def generate_pattern_c(
         horizontal_gap = max_x - 60
         if sym_w > horizontal_gap * 0.55:
             positions = [
-                (60, 40),                          # top-left
-                (max_x, 50),                       # top-right
-                (60, max_y - 80),                  # bottom-left
-                (max_x, max_y - 60),               # bottom-right
-                (60, max_y // 2),                  # mid-left  (replaces top-center)
-                (max_x, max_y // 2 + 20),          # mid-right (replaces bottom-center)
+                (60, 40),  # top-left
+                (max_x, 50),  # top-right
+                (60, max_y - 80),  # bottom-left
+                (max_x, max_y - 60),  # bottom-right
+                (60, max_y // 2),  # mid-left  (replaces top-center)
+                (max_x, max_y // 2 + 20),  # mid-right (replaces bottom-center)
             ]
         else:
             positions = [
@@ -649,6 +648,18 @@ def load_thumbnail_config(config_path: str, images_dir: str, args) -> dict:
         else:
             phrase = title
 
+    # 長さガード: 長すぎる phrase はサムネで折返し/見切れする。
+    # title_draft 由来で自動取得すると、長文タイトルがそのまま phrase になりやすい。
+    _PHRASE_MAX = 16
+    if len(phrase) > _PHRASE_MAX:
+        print(
+            f"  [WARN] thumbnail phrase が長すぎます ({len(phrase)} 字 > {_PHRASE_MAX}): '{phrase}'"
+        )
+        print(
+            "         サムネで折返し/見切れの恐れ。短い専用 phrase を "
+            "episode_config.json thumbnail.phrase に設定推奨"
+        )
+
     # scene_definition.json を一度だけロード（自動選定・fallback 両方で使用）
     scene_def = None
     episode_dir = os.path.dirname(images_dir.rstrip(os.sep))
@@ -713,7 +724,7 @@ def load_thumbnail_config(config_path: str, images_dir: str, args) -> dict:
         source_image = _auto_select()
 
     source_image_path = os.path.join(images_dir, source_image)
-    fallback_resolved_name = None  # Day 15 構造強化: fallback で別画像が選ばれた場合に記録
+    fallback_resolved_name = None  # 構造強化: fallback で別画像が選ばれた場合に記録
     if not os.path.exists(source_image_path):
         # 指定 source_image が見つからない場合、blind glob ではなく
         # select_best_thumbnail_image() による Vision採点付き自動選定に落とす。
@@ -738,8 +749,8 @@ def load_thumbnail_config(config_path: str, images_dir: str, args) -> dict:
                 print("  ERROR: No person images found")
                 sys.exit(1)
 
-    # Day 15 構造強化: fallback で別画像が選ばれた場合、config に書き戻して
-    # silent fallback を明示状態に転換 。次回ビルドで再現性確保。
+    # 構造強化: fallback で別画像が選ばれた場合、config に書き戻して
+    # silent fallback を明示状態に転換。次回ビルドで再現性確保。
     if fallback_resolved_name and config_path:
         try:
             with open(config_path, encoding="utf-8") as f:

@@ -15,7 +15,9 @@ episode_config.json の各フィールドの説明とルール。
 | `subject_en` | string | 画像検索用の英語名 | |
 | `theme` | string | エピソードのテーマ | |
 | `title_draft` | string | タイトル案。推奨形式: `名前 ── サブタイトル` | `──` 未含有でWARNING |
-| `target_duration_minutes` | number | 目標尺（分） | 5〜20 |
+| `target_duration_minutes` | number | 目標尺（分） | 5〜22（通常10〜19、深掘り長尺は例外で22まで） |
+| `speed_scale` | number | 読み上げ速度 (VOICEVOX speedScale) の per-ep override。 | optional。既定 0.87（`audio_generator.SPEED_SCALE`）。0.5〜1.5 域外は advisory WARN。global 定数を直接編集せずここで指定する |
+| `tts` | object | TTS エンジン設定 `{engine, voice, rate}`。`engine`=`"voicevox"`(既定)/`"cloud"`(Google Cloud TTS Chirp3-HD)。`voice`(cloud のみ、既定 `ja-JP-Chirp3-HD-Enceladus`)、`rate`(cloud speakingRate、既定 0.90、0.25〜4.0 域外は advisory WARN) | optional。**未指定=voicevox で完全後方互換**。CLI `--tts-engine/--tts-voice/--tts-rate` で一時上書き可。cloud は VOICEVOX GUI 不要 (`GOOGLE_TTS_API_KEY` が要る)、読みは scene_def の `narration_speech_cloud` で調整、QA は Gemini STT (`scripts/stt_qa.py`)。ロールバックは `engine` を `voicevox` に戻して再ビルド |
 | `hook` | string | フック（冒頭ナレーション案） | |
 | `key_topics` | string[] | 主要トピック | 空配列不可 |
 | `modern_connection` | string | 現代との接続 | |
@@ -102,7 +104,7 @@ config作成時（企画段階）に高リスク項目を事前にリストア�
 | 必須フィールド欠落 | 上記16フィールド |
 | 型不一致 | 各フィールドの期待型と実際の型 |
 | `episode_id` 形式不正 | `^\d{3}_[a-z_]+$` にマッチしない |
-| `target_duration_minutes` 範囲外 | 5未満または20超 |
+| `target_duration_minutes` 範囲外 | 5未満または22超 |
 | `verified_facts` がlist | dict以外の型（過去にAttributeErrorクラッシュ） |
 | `key_topics` が空配列 | |
 | `key_episodes` が空配列 | |

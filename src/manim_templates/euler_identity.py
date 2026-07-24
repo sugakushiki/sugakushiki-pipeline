@@ -84,7 +84,6 @@ class EulerIdentity(Scene):
     # -------------------------------------------------------------------
     def build_series(self):
         duration = self._duration
-        highlight = self._highlight_color
 
         # --- Layout plan
         # title:     y = +3.15

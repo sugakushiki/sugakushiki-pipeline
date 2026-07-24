@@ -2,9 +2,9 @@
 video_assembler.py - Assemble final video from visual segments, audio, and subtitles
 
 Usage:
-    python video_assembler.py scene_definition.json timing.json --output-dir episodes/001_erdos
-    python video_assembler.py scene_definition.json timing.json --output-dir episodes/001_erdos --no-subtitles
-    python video_assembler.py scene_definition.json timing.json --output-dir episodes/001_erdos --dry-run
+    python video_assembler.py scene_definition.json timing.json --output-dir examples/moriarty
+    python video_assembler.py scene_definition.json timing.json --output-dir examples/moriarty --no-subtitles
+    python video_assembler.py scene_definition.json timing.json --output-dir examples/moriarty --dry-run
 
 Input:  scene_definition.json + timing.json + visuals/*.mp4 + audio/*.wav + subtitles_drawtext.txt
 Output: {output_dir}/output.mp4
@@ -32,6 +32,57 @@ WIDTH = 1920
 HEIGHT = 1080
 FPS = 30
 FONT_FILE = "_font.ttc"  # Local copy of BIZ UDMincho (Windows path workaround)
+
+
+# ─── FFmpeg subprocess timeouts ──────────────────────────────────────────────
+# ある回: a stuck ffmpeg in the assemble step hung a background run >1h
+# before a manual kill. Every ffmpeg/ffprobe call below is bounded so a stuck
+# encode fails fast instead of hanging. Tiered by workload, env-overridable:
+#   - ffprobe: metadata read (sub-second normally)
+#   - per-scene: pad/freeze/black for one <=30s segment
+#   - full-video: concat + final merge re-encode the whole 10-19 min episode,
+#     which on CPU-only hardware legitimately takes minutes -> a generous ceiling
+#     (1800s) that still catches the pathological >1h hang without false-positives
+#     on a long, legitimate encode. Tune down via env if your hardware is fast.
+# Windows note: ffmpeg/ffprobe are leaf processes, so run()'s kill-on-timeout
+# (TerminateProcess) reaps them without a process-tree walk.
+
+
+def _ffmpeg_timeout_s(env_var: str, default: int) -> int:
+    """Read a positive-int timeout override from the environment, else default."""
+    raw = os.environ.get(env_var)
+    if raw:
+        try:
+            val = int(raw.strip())
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return default
+
+
+_FFPROBE_TIMEOUT_S = _ffmpeg_timeout_s("SUGAKUSHIKI_FFPROBE_TIMEOUT_S", 60)
+_FFMPEG_TIMEOUT_S = _ffmpeg_timeout_s("SUGAKUSHIKI_FFMPEG_TIMEOUT_S", 300)
+_FFMPEG_FULL_TIMEOUT_S = _ffmpeg_timeout_s("SUGAKUSHIKI_FFMPEG_FULL_TIMEOUT_S", 1800)
+
+
+class _FFmpegTimeout(RuntimeError):
+    """An ffmpeg/ffprobe subprocess exceeded its timeout and was killed."""
+
+
+def _run_ffmpeg(cmd, timeout, label, **kwargs):
+    """subprocess.run(cmd) bounded by `timeout`.
+
+    Returns the CompletedProcess, or raises _FFmpegTimeout (the process is
+    killed) so callers fail fast instead of hanging on a stuck ffmpeg. ffmpeg/
+    ffprobe are leaf processes, so run()'s kill-on-timeout reaps them cleanly
+    on Windows.
+    """
+    kwargs.setdefault("capture_output", True)
+    try:
+        return subprocess.run(cmd, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        raise _FFmpegTimeout(f"{label}: ffmpeg timed out after {timeout}s") from exc
 
 
 # ─── Audio helpers ───────────────────────────────────────────────────────────
@@ -91,7 +142,18 @@ def get_video_duration(filepath: str) -> float:
         "-show_format",
         filepath,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        result = _run_ffmpeg(
+            cmd,
+            _FFPROBE_TIMEOUT_S,
+            "get_video_duration",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except _FFmpegTimeout as exc:
+        print(f"  [WARN] {exc}")
+        return 0.0
     if result.returncode != 0:
         return 0.0
     data = json.loads(result.stdout)
@@ -109,14 +171,21 @@ def pad_video_with_freeze(
     """Extend a video by freezing its last frame for pad_duration seconds.
 
     Uses tpad filter which is efficient and avoids re-encoding the whole video.
-    Falls back to a simpler approach if tpad fails.
+    Falls back to a simpler approach if tpad fails. Any ffmpeg timeout degrades
+    to copying the input unchanged -- the freeze-pad is cosmetic and a stuck
+    encode must not hang assembly.
     """
     if pad_duration <= 0.01:
         shutil.copy2(input_path, output_path)
         return
+    try:
+        _pad_video_with_freeze_impl(input_path, output_path, pad_duration, width, height, fps)
+    except _FFmpegTimeout as exc:
+        print(f"  [WARN] {exc} -> copying segment without freeze-pad")
+        shutil.copy2(input_path, output_path)
 
-    pad_frames = int(pad_duration * fps)
 
+def _pad_video_with_freeze_impl(input_path, output_path, pad_duration, width, height, fps):
     # Method: tpad filter (efficient, single pass)
     cmd = [
         "ffmpeg",
@@ -136,7 +205,9 @@ def pad_video_with_freeze(
         "-an",  # no audio in visual segments
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = _run_ffmpeg(
+        cmd, _FFMPEG_TIMEOUT_S, "pad tpad", text=True, encoding="utf-8", errors="replace"
+    )
     if result.returncode == 0:
         return
 
@@ -150,7 +221,7 @@ def pad_video_with_freeze(
         # Extract last frame
         duration = get_video_duration(input_path)
         seek_time = max(0, duration - 0.1)
-        subprocess.run(
+        _run_ffmpeg(
             [
                 "ffmpeg",
                 "-y",
@@ -162,11 +233,12 @@ def pad_video_with_freeze(
                 "1",
                 last_frame,
             ],
-            capture_output=True,
+            _FFMPEG_TIMEOUT_S,
+            "pad extract-frame",
         )
 
         # Make freeze video from last frame
-        subprocess.run(
+        _run_ffmpeg(
             [
                 "ffmpeg",
                 "-y",
@@ -190,7 +262,8 @@ def pad_video_with_freeze(
                 str(fps),
                 freeze_vid,
             ],
-            capture_output=True,
+            _FFMPEG_TIMEOUT_S,
+            "pad freeze",
         )
 
         # Concat original + freeze
@@ -199,7 +272,7 @@ def pad_video_with_freeze(
             f.write(f"file '{os.path.abspath(input_path)}'\n")
             f.write(f"file '{os.path.abspath(freeze_vid)}'\n")
 
-        subprocess.run(
+        _run_ffmpeg(
             [
                 "ffmpeg",
                 "-y",
@@ -220,7 +293,8 @@ def pad_video_with_freeze(
                 "-an",
                 output_path,
             ],
-            capture_output=True,
+            _FFMPEG_TIMEOUT_S,
+            "pad concat",
         )
 
     finally:
@@ -275,7 +349,7 @@ def build_combined_audio(scene_ids: list[str], timing: dict, audio_dir: str, wor
     output_path = os.path.join(work_dir, "combined_audio.wav")
     segments = []
 
-    for i, scene_id in enumerate(scene_ids):
+    for _i, scene_id in enumerate(scene_ids):
         scene_timing = timing["scenes"].get(scene_id, {})
         pause_after = scene_timing.get("pause_after", 0.5)
 
@@ -312,7 +386,7 @@ def build_combined_video(
     """
     padded_files = []
 
-    for i, scene_id in enumerate(scene_ids):
+    for _i, scene_id in enumerate(scene_ids):
         scene_timing = timing["scenes"].get(scene_id, {})
         pause_after = scene_timing.get("pause_after", 0.5)
 
@@ -322,27 +396,33 @@ def build_combined_video(
             # Generate black placeholder
             dur = scene_timing.get("duration", 5.0) + pause_after
             placeholder = os.path.join(work_dir, f"_black_{scene_id}.mp4")
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    f"color=c=#1a1a2e:s={WIDTH}x{HEIGHT}:d={dur:.3f}:r={FPS}",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "fast",
-                    "-crf",
-                    "23",
-                    "-pix_fmt",
-                    "yuv420p",
-                    placeholder,
-                ],
-                capture_output=True,
-            )
-            padded_files.append(placeholder)
+            try:
+                _run_ffmpeg(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        f"color=c=#1a1a2e:s={WIDTH}x{HEIGHT}:d={dur:.3f}:r={FPS}",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "fast",
+                        "-crf",
+                        "23",
+                        "-pix_fmt",
+                        "yuv420p",
+                        placeholder,
+                    ],
+                    _FFMPEG_TIMEOUT_S,
+                    f"black placeholder {scene_id}",
+                )
+                padded_files.append(placeholder)
+            except _FFmpegTimeout as exc:
+                # Drop the segment rather than append a missing file (which would
+                # break the concat below). The gap is surfaced by the print.
+                print(f"  [ERROR] {exc} -> dropping segment {scene_id}")
             continue
 
         if pause_after > 0.01:
@@ -382,7 +462,18 @@ def build_combined_video(
         "-an",
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        result = _run_ffmpeg(
+            cmd,
+            _FFMPEG_FULL_TIMEOUT_S,
+            "concat",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except _FFmpegTimeout as exc:
+        print(f"  ERROR in concat: {exc}")
+        sys.exit(1)
     if result.returncode != 0:
         print(f"  ERROR in concat: {result.stderr[:500]}")
         sys.exit(1)
@@ -448,9 +539,26 @@ def merge_final(
 
     # cwd=output_dir so drawtext's fontfile=_font.ttc (relative) resolves
     # to output_dir/_font.ttc regardless of the caller's cwd.
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=output_dir_abs
-    )
+    try:
+        result = _run_ffmpeg(
+            cmd,
+            _FFMPEG_FULL_TIMEOUT_S,
+            "merge",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=output_dir_abs,
+        )
+    except _FFmpegTimeout as exc:
+        print(f"  ERROR in merge: {exc}")
+        # Retry without subtitles: the no-subtitle path uses -c:v copy (no
+        # re-encode), so it cannot hit the same drawtext-encode stall.
+        if subtitle_path:
+            print("  Retrying without subtitles...")
+            merge_final(video_path, audio_path, None, output_path, output_dir)
+        else:
+            sys.exit(1)
+        return
     if result.returncode != 0:
         print(f"  ERROR in merge: {result.stderr[:500]}")
 
@@ -477,7 +585,7 @@ def verify_inputs(
     total_duration = 0.0
     total_with_pause = 0.0
 
-    for i, scene_id in enumerate(scene_ids):
+    for _i, scene_id in enumerate(scene_ids):
         scene_timing = timing["scenes"].get(scene_id, {})
         duration = scene_timing.get("duration", 0.0)
         pause_after = scene_timing.get("pause_after", 0.5)
@@ -610,9 +718,12 @@ def main():
 
     # Check FFmpeg
     try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True, timeout=30)
     except FileNotFoundError:
         print("ERROR: FFmpeg not found in PATH")
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print("ERROR: FFmpeg did not respond to -version within 30s")
         sys.exit(1)
 
     # Create work directory for temp files

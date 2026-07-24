@@ -49,7 +49,6 @@ from style import (
     ACCENT_GOLD,
     ACCENT_PINK,
     BG_COLOR,
-    EDGE_COLOR,
     FONT,
     TEXT_DIM,
     TEXT_WHITE,
@@ -102,7 +101,6 @@ class SpherePacking(Scene):
                     centers.append(p)
 
         circ_group = VGroup()
-        center_circle = None
         for p in centers:
             is_center = np.linalg.norm(p) < 1e-6
             color = ACCENT_GOLD if is_center else ACCENT_CYAN
@@ -110,17 +108,13 @@ class SpherePacking(Scene):
             c.set_fill(color, opacity=0.18 if not is_center else 0.35)
             c.move_to(center_off + p)
             circ_group.add(c)
-            if is_center:
-                center_circle = c
 
         # Lines from the central circle to its six touching neighbours
         contact_lines = VGroup()
         for ang in range(0, 360, 60):
             d = np.array([math.cos(math.radians(ang)), math.sin(math.radians(ang)), 0.0])
             neigh = center_off + 2 * r * d
-            contact_lines.add(
-                Line(center_off, neigh, color=ACCENT_PINK, stroke_width=2.0)
-            )
+            contact_lines.add(Line(center_off, neigh, color=ACCENT_PINK, stroke_width=2.0))
 
         note1 = Text(
             "平面では各円が",

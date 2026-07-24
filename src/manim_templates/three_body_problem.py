@@ -256,7 +256,9 @@ class ThreeBodyProblem(Scene):
         annot.move_to([0, -1.9, 0])
         self.play(FadeIn(annot), run_time=0.6)
 
-        anim_total = 0.5 + 0.6 + 0.3 + 0.3 + 0.3 + 0.8 + 0.3 + 1.0 + 0.3 + 0.15 * len(intersections) + 0.6
+        anim_total = (
+            0.5 + 0.6 + 0.3 + 0.3 + 0.3 + 0.8 + 0.3 + 1.0 + 0.3 + 0.15 * len(intersections) + 0.6
+        )
         self.wait(max(1.5, duration - anim_total))
 
     # ------------------------------------------------------------------
@@ -346,9 +348,7 @@ class ThreeBodyProblem(Scene):
             dot = Dot(point=pos, radius=0.07, color=ACCENT_PINK)
             self.play(FadeIn(dot), run_time=0.15)
             if prev_pos is not None:
-                arrow = Arrow(
-                    prev_pos, pos, color=EDGE_COLOR, stroke_width=2, buff=0.05
-                )
+                arrow = Arrow(prev_pos, pos, color=EDGE_COLOR, stroke_width=2, buff=0.05)
                 self.play(FadeIn(arrow), run_time=0.1)
             prev_pos = pos
 

@@ -105,12 +105,12 @@ def _temp_to_color(temp, min_t=0.0, max_t=1.0):
         return color_gradient([BLUE, YELLOW], 101)[int(t * 2 * 100)]
     else:
         return color_gradient([YELLOW, RED], 101)[int((t - 0.5) * 2 * 100)]
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template with no on-screen person/year claims — declared empty under the
 # lint's "default" fallback key (checked, not silently skipped).
 LINT_FACTUAL_CLAIMS = {"default": {"people": [], "years": []}}
-
-
 
 
 # ---------------------------------------------------------------------------

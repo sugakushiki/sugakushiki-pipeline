@@ -51,12 +51,10 @@ Used by: Episode 029 (Pascal), 遺産6 - パスカルの賭けと『パンセ』
 from manim import (
     Create,
     FadeIn,
-    Line,
     MathTex,
     Rectangle,
     Scene,
     Text,
-    VGroup,
     config,
 )
 from style import (
@@ -123,8 +121,11 @@ class PascalsWagerTable(Scene):
         # Cell rectangles
         def cell_rect(cx, cy, color, fill_op=0.2):
             r = Rectangle(
-                width=cell_w * 0.92, height=cell_h * 0.85,
-                color=color, fill_color=color, fill_opacity=fill_op,
+                width=cell_w * 0.92,
+                height=cell_h * 0.85,
+                color=color,
+                fill_color=color,
+                fill_opacity=fill_op,
                 stroke_width=2.0,
             )
             r.move_to([cx, cy, 0])
@@ -147,27 +148,39 @@ class PascalsWagerTable(Scene):
         cell22_txt.move_to([x_right_col, y_bot_row, 0])
 
         # Build header & matrix in two stages
-        self.play(FadeIn(col1_lbl), FadeIn(col2_lbl), FadeIn(row1_lbl), FadeIn(row2_lbl), run_time=0.7)
         self.play(
-            Create(cell11), Create(cell12), Create(cell21), Create(cell22),
+            FadeIn(col1_lbl), FadeIn(col2_lbl), FadeIn(row1_lbl), FadeIn(row2_lbl), run_time=0.7
+        )
+        self.play(
+            Create(cell11),
+            Create(cell12),
+            Create(cell21),
+            Create(cell22),
             run_time=1.0,
         )
         self.play(
-            FadeIn(cell11_txt), FadeIn(cell12_txt), FadeIn(cell21_txt), FadeIn(cell22_txt),
+            FadeIn(cell11_txt),
+            FadeIn(cell12_txt),
+            FadeIn(cell21_txt),
+            FadeIn(cell22_txt),
             run_time=0.8,
         )
 
         # Lower legend (Text for Japanese, MathTex disallowed)
         legend = Text(
             "c, d, e > 0 (有限の値)",
-            font=FONT, font_size=22, color=ACCENT_CYAN,
+            font=FONT,
+            font_size=22,
+            color=ACCENT_CYAN,
         )
         legend.move_to([0.5, -1.30, 0])
         self.play(FadeIn(legend), run_time=0.5)
 
         msg = Text(
             "+∞ のセルが他の値を支配する ── これが賭けの核心",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         msg.move_to([0, -1.92, 0])
         self.play(FadeIn(msg), run_time=0.6)
@@ -185,7 +198,8 @@ class PascalsWagerTable(Scene):
         # MathTex; Japanese row legend appears as separate Text below.)
         eq_believe = MathTex(
             r"E[\mathrm{Believe}] = p \cdot (+\infty) + (1-p) \cdot (-c) = +\infty",
-            font_size=26, color=ACCENT_GOLD,
+            font_size=26,
+            color=ACCENT_GOLD,
         )
         eq_believe.move_to([0, 1.50, 0])
         self.play(FadeIn(eq_believe), run_time=0.8)
@@ -194,7 +208,8 @@ class PascalsWagerTable(Scene):
         # non-believer cells are finite, so the expectation is finite)
         eq_not = MathTex(
             r"E[\mathrm{NotBelieve}] = p \cdot (-d) + (1-p) \cdot (+e) = \mathrm{finite}",
-            font_size=26, color=ACCENT_CYAN,
+            font_size=26,
+            color=ACCENT_CYAN,
         )
         eq_not.move_to([0, 0.55, 0])
         self.play(FadeIn(eq_not), run_time=0.8)
@@ -202,7 +217,9 @@ class PascalsWagerTable(Scene):
         # Condition reminder (Text for Japanese)
         cond = Text(
             "p > 0 (神が存在する確率が 0 より大きい)",
-            font=FONT, font_size=22, color=TEXT_DIM,
+            font=FONT,
+            font_size=22,
+            color=TEXT_DIM,
         )
         cond.move_to([0, -0.20, 0])
         self.play(FadeIn(cond), run_time=0.5)
@@ -210,7 +227,8 @@ class PascalsWagerTable(Scene):
         # Conclusion (MathTex with ASCII Believe/NotBelieve)
         conclusion = MathTex(
             r"\therefore\;E[\mathrm{Believe}] > E[\mathrm{NotBelieve}]\quad(+\infty > \mathrm{finite})",
-            font_size=28, color=ACCENT_PINK,
+            font_size=28,
+            color=ACCENT_PINK,
         )
         conclusion.move_to([0, -1.05, 0])
         self.play(FadeIn(conclusion), run_time=0.8)
@@ -218,7 +236,9 @@ class PascalsWagerTable(Scene):
         # Legend mapping Believe/NotBelieve to Japanese (Text)
         legend = Text(
             "Believe = 信じる、NotBelieve = 信じない",
-            font=FONT, font_size=18, color=TEXT_DIM,
+            font=FONT,
+            font_size=18,
+            color=TEXT_DIM,
         )
         legend.move_to([0, -1.55, 0])
         self.play(FadeIn(legend), run_time=0.4)
@@ -226,7 +246,9 @@ class PascalsWagerTable(Scene):
         # Disclaimer
         disclaimer = Text(
             "これは「神の存在証明」ではなく、信仰の決定の合理性の議論",
-            font=FONT, font_size=20, color=ACCENT_PINK,
+            font=FONT,
+            font_size=20,
+            color=ACCENT_PINK,
         )
         disclaimer.move_to([0, -1.92, 0])
         self.play(FadeIn(disclaimer), run_time=0.6)

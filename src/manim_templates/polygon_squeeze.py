@@ -132,7 +132,7 @@ class PolygonSqueezeBuildup(Scene):
         prev_upper_tex = None
         prev_n_label = None
 
-        for i, n in enumerate(ARCHIMEDES_STEPS):
+        for _i, n in enumerate(ARCHIMEDES_STEPS):
             # Inscribed polygon (cyan)
             inscribed = RegularPolygon(n=n, color=ACCENT_CYAN, stroke_width=2.5)
             inscribed.scale(circle_radius)
@@ -326,6 +326,8 @@ class PolygonSqueezeFinal(Scene):
 
         wait = max(duration - 5.0, 3.0)
         self.wait(wait)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -336,9 +338,9 @@ LINT_FACTUAL_CLAIMS = {
 }
 
 
-        # End FadeOut removed: leaves the last frame visible for FFmpeg
-        # to pad when audio exceeds animation length. Scene transitions
-        # are handled at video_assembler time, not inside Manim.
+# End FadeOut removed: leaves the last frame visible for FFmpeg
+# to pad when audio exceeds animation length. Scene transitions
+# are handled at video_assembler time, not inside Manim.
 
 
 # =========================================================

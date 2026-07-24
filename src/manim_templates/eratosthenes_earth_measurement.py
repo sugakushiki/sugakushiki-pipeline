@@ -50,7 +50,6 @@ import math
 
 from manim import (
     Arc,
-    Arrow,
     Circle,
     Create,
     DashedLine,
@@ -58,8 +57,6 @@ from manim import (
     FadeIn,
     Line,
     MathTex,
-    Polygon,
-    Rectangle,
     Scene,
     Text,
     VGroup,
@@ -72,7 +69,6 @@ from style import (
     BG_COLOR,
     FONT,
     TEXT_DIM,
-    TEXT_WHITE,
     load_params,
 )
 
@@ -113,8 +109,7 @@ class EratosthenesEarthMeasurement(Scene):
         self.play(FadeIn(title), run_time=0.6)
 
         ground_y = -0.8
-        ground = Line([-5.5, ground_y, 0], [5.5, ground_y, 0],
-                      color=TEXT_DIM, stroke_width=2.0)
+        ground = Line([-5.5, ground_y, 0], [5.5, ground_y, 0], color=TEXT_DIM, stroke_width=2.0)
         self.play(Create(ground), run_time=0.4)
 
         # Sun centered, smaller, lower
@@ -124,8 +119,15 @@ class EratosthenesEarthMeasurement(Scene):
         # Parallel rays straight down (between title and ground)
         rays = VGroup()
         for x in (-3.0, -1.5, 0.0, 1.5, 3.0):
-            rays.add(Line([x, 1.6, 0], [x, ground_y, 0],
-                          color=ACCENT_GOLD, stroke_width=1.6, stroke_opacity=0.55))
+            rays.add(
+                Line(
+                    [x, 1.6, 0],
+                    [x, ground_y, 0],
+                    color=ACCENT_GOLD,
+                    stroke_width=1.6,
+                    stroke_opacity=0.55,
+                )
+            )
         self.play(FadeIn(rays), run_time=0.5)
 
         # Well: a vertical slot with a lit bottom
@@ -136,16 +138,33 @@ class EratosthenesEarthMeasurement(Scene):
         well_left = well_x - 0.30
         well_right = well_x + 0.30
         well_walls = VGroup(
-            Line([well_left, well_top_y, 0], [well_left, well_bottom_y, 0],
-                 color=TEXT_DIM, stroke_width=2.0),
-            Line([well_right, well_top_y, 0], [well_right, well_bottom_y, 0],
-                 color=TEXT_DIM, stroke_width=2.0),
-            Line([well_left, well_bottom_y, 0], [well_right, well_bottom_y, 0],
-                 color=ACCENT_PINK, stroke_width=3.0),
+            Line(
+                [well_left, well_top_y, 0],
+                [well_left, well_bottom_y, 0],
+                color=TEXT_DIM,
+                stroke_width=2.0,
+            ),
+            Line(
+                [well_right, well_top_y, 0],
+                [well_right, well_bottom_y, 0],
+                color=TEXT_DIM,
+                stroke_width=2.0,
+            ),
+            Line(
+                [well_left, well_bottom_y, 0],
+                [well_right, well_bottom_y, 0],
+                color=ACCENT_PINK,
+                stroke_width=3.0,
+            ),
         )
         # Light into the well — direct ray reaching bottom
-        well_ray = Line([well_x, 1.6, 0], [well_x, well_bottom_y, 0],
-                        color=ACCENT_GOLD, stroke_width=2.4, stroke_opacity=0.95)
+        well_ray = Line(
+            [well_x, 1.6, 0],
+            [well_x, well_bottom_y, 0],
+            color=ACCENT_GOLD,
+            stroke_width=2.4,
+            stroke_opacity=0.95,
+        )
         well_label = Text("井戸の底まで光が届く", font=FONT, font_size=18, color=ACCENT_PINK)
         well_label.move_to([-2.0, -1.95, 0])
         self.play(Create(well_walls), FadeIn(well_ray), run_time=0.6)
@@ -154,8 +173,12 @@ class EratosthenesEarthMeasurement(Scene):
         # Gnomon: vertical stick with NO shadow
         gnomon_x = 1.5
         gnomon_top_y = ground_y + 0.9
-        gnomon = Line([gnomon_x, ground_y, 0], [gnomon_x, gnomon_top_y, 0],
-                      color=ACCENT_CYAN, stroke_width=4.0)
+        gnomon = Line(
+            [gnomon_x, ground_y, 0],
+            [gnomon_x, gnomon_top_y, 0],
+            color=ACCENT_CYAN,
+            stroke_width=4.0,
+        )
         gnomon_label = Text("グノモン（垂直の棒）", font=FONT, font_size=15, color=ACCENT_CYAN)
         gnomon_label.move_to([3.4, gnomon_top_y - 0.05, 0])
         no_shadow_label = Text("影なし", font=FONT, font_size=18, color=ACCENT_PINK)
@@ -173,8 +196,7 @@ class EratosthenesEarthMeasurement(Scene):
         self.play(FadeIn(title), run_time=0.6)
 
         ground_y = -0.8
-        ground = Line([-5.5, ground_y, 0], [5.5, ground_y, 0],
-                      color=TEXT_DIM, stroke_width=2.0)
+        ground = Line([-5.5, ground_y, 0], [5.5, ground_y, 0], color=TEXT_DIM, stroke_width=2.0)
         self.play(Create(ground), run_time=0.4)
 
         # Sun off-vertical by visual angle (exaggerated for visibility, ~25 deg)
@@ -187,8 +209,12 @@ class EratosthenesEarthMeasurement(Scene):
         # Vertical gnomon at x = 0
         gnomon_x = 0.0
         gnomon_top_y = ground_y + 1.5
-        gnomon = Line([gnomon_x, ground_y, 0], [gnomon_x, gnomon_top_y, 0],
-                      color=ACCENT_CYAN, stroke_width=4.0)
+        gnomon = Line(
+            [gnomon_x, ground_y, 0],
+            [gnomon_x, gnomon_top_y, 0],
+            color=ACCENT_CYAN,
+            stroke_width=4.0,
+        )
         gnomon_label = Text("グノモン", font=FONT, font_size=15, color=ACCENT_CYAN)
         gnomon_label.move_to([-1.10, gnomon_top_y - 0.05, 0])
         self.play(Create(gnomon), FadeIn(gnomon_label), run_time=0.5)
@@ -197,48 +223,64 @@ class EratosthenesEarthMeasurement(Scene):
         a_rad = math.radians(visual_angle_deg)
         ray_start_x = gnomon_x + 1.6 * math.sin(a_rad)
         ray_start_y = gnomon_top_y + 1.6 * math.cos(a_rad)
-        ray = Line([ray_start_x, ray_start_y, 0],
-                   [gnomon_x, gnomon_top_y, 0],
-                   color=ACCENT_GOLD, stroke_width=2.4)
+        ray = Line(
+            [ray_start_x, ray_start_y, 0],
+            [gnomon_x, gnomon_top_y, 0],
+            color=ACCENT_GOLD,
+            stroke_width=2.4,
+        )
         # Extension to ground at shadow tip
         shadow_len = gnomon_top_y - ground_y  # vertical drop
         shadow_dx = shadow_len * math.tan(a_rad)
         shadow_tip_x = gnomon_x - shadow_dx
-        ray_ext = DashedLine([gnomon_x, gnomon_top_y, 0],
-                             [shadow_tip_x, ground_y, 0],
-                             color=ACCENT_GOLD, stroke_width=1.4,
-                             dash_length=0.10, stroke_opacity=0.6)
+        ray_ext = DashedLine(
+            [gnomon_x, gnomon_top_y, 0],
+            [shadow_tip_x, ground_y, 0],
+            color=ACCENT_GOLD,
+            stroke_width=1.4,
+            dash_length=0.10,
+            stroke_opacity=0.6,
+        )
         self.play(Create(ray), Create(ray_ext), run_time=0.6)
 
         # Shadow on the ground
-        shadow = Line([gnomon_x, ground_y, 0], [shadow_tip_x, ground_y, 0],
-                      color=ACCENT_PINK, stroke_width=4.0)
+        shadow = Line(
+            [gnomon_x, ground_y, 0],
+            [shadow_tip_x, ground_y, 0],
+            color=ACCENT_PINK,
+            stroke_width=4.0,
+        )
         shadow_label = Text("影", font=FONT, font_size=18, color=ACCENT_PINK)
         shadow_label.move_to([(gnomon_x + shadow_tip_x) / 2, ground_y - 0.30, 0])
         self.play(Create(shadow), FadeIn(shadow_label), run_time=0.4)
 
         # Angle arc at top of gnomon between vertical and ray
         angle_arc = Arc(
-            radius=0.45, start_angle=math.pi / 2,
+            radius=0.45,
+            start_angle=math.pi / 2,
             angle=-a_rad,
-            color=ACCENT_PINK, stroke_width=2.6,
+            color=ACCENT_PINK,
+            stroke_width=2.6,
         )
         angle_arc.move_arc_center_to([gnomon_x, gnomon_top_y, 0])
 
         # Angle label inside wedge
         angle_label = MathTex(r"7^\circ 12'", font_size=28, color=ACCENT_PINK)
         label_offset = 0.70
-        angle_label.move_to([
-            gnomon_x + label_offset * math.sin(a_rad / 2),
-            gnomon_top_y - label_offset * math.cos(a_rad / 2) + 0.10,
-            0,
-        ])
+        angle_label.move_to(
+            [
+                gnomon_x + label_offset * math.sin(a_rad / 2),
+                gnomon_top_y - label_offset * math.cos(a_rad / 2) + 0.10,
+                0,
+            ]
+        )
         self.play(Create(angle_arc), FadeIn(angle_label), run_time=0.6)
 
         # Formula bar at bottom — keep at y = -1.95 (above subtitle clearance)
         formula = MathTex(
             r"7^\circ 12' = 7.2^\circ = \tfrac{1}{50}\times 360^\circ",
-            font_size=30, color=ACCENT_GOLD,
+            font_size=30,
+            color=ACCENT_GOLD,
         )
         formula.move_to([0, -1.95, 0])
         self.play(FadeIn(formula), run_time=0.6)
@@ -263,10 +305,8 @@ class EratosthenesEarthMeasurement(Scene):
         visual_angle_deg = 50.0
         theta_alex = math.radians(90 + visual_angle_deg / 2)
         theta_syene = math.radians(90 - visual_angle_deg / 2)
-        alex_pt = [center[0] + R * math.cos(theta_alex),
-                   center[1] + R * math.sin(theta_alex), 0]
-        syene_pt = [center[0] + R * math.cos(theta_syene),
-                    center[1] + R * math.sin(theta_syene), 0]
+        alex_pt = [center[0] + R * math.cos(theta_alex), center[1] + R * math.sin(theta_alex), 0]
+        syene_pt = [center[0] + R * math.cos(theta_syene), center[1] + R * math.sin(theta_syene), 0]
 
         # Two radii to the cities (from center to surface)
         radius_alex = Line(center, alex_pt, color=ACCENT_GOLD, stroke_width=2.0)
@@ -274,9 +314,11 @@ class EratosthenesEarthMeasurement(Scene):
 
         # Arc on top between the two cities (north of center)
         arc_between = Arc(
-            radius=R, start_angle=theta_syene,
+            radius=R,
+            start_angle=theta_syene,
             angle=theta_alex - theta_syene,
-            color=ACCENT_PINK, stroke_width=4.5,
+            color=ACCENT_PINK,
+            stroke_width=4.5,
         )
         arc_between.move_arc_center_to(center)
 
@@ -291,21 +333,35 @@ class EratosthenesEarthMeasurement(Scene):
         alex_label.move_to([alex_pt[0] - 0.40, alex_pt[1] + 0.35, 0])
         syene_label = Text("シエネ", font=FONT, font_size=15, color=ACCENT_GOLD)
         syene_label.move_to([syene_pt[0] + 0.40, syene_pt[1] + 0.35, 0])
-        self.play(FadeIn(alex_dot), FadeIn(syene_dot),
-                  FadeIn(alex_label), FadeIn(syene_label), run_time=0.6)
+        self.play(
+            FadeIn(alex_dot),
+            FadeIn(syene_dot),
+            FadeIn(alex_label),
+            FadeIn(syene_label),
+            run_time=0.6,
+        )
 
         # Parallel sun rays from top (between title and arc)
         rays = VGroup()
         for x in (-2.4, -1.2, 0.0, 1.2, 2.4):
-            rays.add(Line([x, 2.55, 0], [x, 2.05, 0],
-                          color=ACCENT_GOLD, stroke_width=1.6, stroke_opacity=0.55))
+            rays.add(
+                Line(
+                    [x, 2.55, 0],
+                    [x, 2.05, 0],
+                    color=ACCENT_GOLD,
+                    stroke_width=1.6,
+                    stroke_opacity=0.55,
+                )
+            )
         self.play(FadeIn(rays), run_time=0.5)
 
         # Central angle label and arc near center (below the city dots)
         ctr_arc = Arc(
-            radius=0.45, start_angle=theta_syene,
+            radius=0.45,
+            start_angle=theta_syene,
             angle=theta_alex - theta_syene,
-            color=ACCENT_PINK, stroke_width=2.4,
+            color=ACCENT_PINK,
+            stroke_width=2.4,
         )
         ctr_arc.move_arc_center_to(center)
         ctr_lbl = MathTex(r"7^\circ 12'", font_size=22, color=ACCENT_PINK)
@@ -318,15 +374,15 @@ class EratosthenesEarthMeasurement(Scene):
         # (Japanese label split from MathTex to satisfy CLAUDE.md MathTex rule)
         arc_lbl_jp = Text("弧長", font=FONT, font_size=18, color=ACCENT_PINK)
         arc_lbl_jp.move_to([-3.50, 2.40, 0])
-        arc_lbl_math = MathTex(r"\approx 5{,}000 \;\text{stadia}",
-                               font_size=22, color=ACCENT_PINK)
+        arc_lbl_math = MathTex(r"\approx 5{,}000 \;\text{stadia}", font_size=22, color=ACCENT_PINK)
         arc_lbl_math.move_to([-2.55, 2.40, 0])
         self.play(FadeIn(arc_lbl_jp), FadeIn(arc_lbl_math), run_time=0.4)
 
         # The key relation — to the RIGHT of the diagram
         formula = MathTex(
             r"\tfrac{7.2^\circ}{360^\circ} = \tfrac{1}{50}",
-            font_size=24, color=ACCENT_GOLD,
+            font_size=24,
+            color=ACCENT_GOLD,
         )
         formula.move_to([2.95, 2.40, 0])
         self.play(FadeIn(formula), run_time=0.5)
@@ -334,7 +390,8 @@ class EratosthenesEarthMeasurement(Scene):
         # Footer: total circumference
         total = MathTex(
             r"C = 50 \times 5{,}000 = 250{,}000 \;\text{stadia}",
-            font_size=26, color=ACCENT_GOLD,
+            font_size=26,
+            color=ACCENT_GOLD,
         )
         total.move_to([0, -1.85, 0])
         self.play(FadeIn(total), run_time=0.6)

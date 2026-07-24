@@ -87,7 +87,6 @@ def create_cylinder_2d(center, radius, height, color=ACCENT_PINK):
 
 def create_sphere_2d(center, radius, color=ACCENT_CYAN):
     """Create a 2D representation of a sphere (circle + equator ellipse)."""
-    cx, cy = center[0], center[1]
 
     outline = Circle(radius=radius, color=color, stroke_width=2.5)
     outline.move_to(center)
@@ -329,6 +328,8 @@ class SphereCylinderTombstone(Scene):
 
         wait = max(duration - 5.0, 2.0)
         self.wait(wait)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -339,9 +340,9 @@ LINT_FACTUAL_CLAIMS = {
 }
 
 
-        # End FadeOut removed: leaves the last frame visible for FFmpeg
-        # to pad when audio exceeds animation length. Scene transitions
-        # are handled at video_assembler time, not inside Manim.
+# End FadeOut removed: leaves the last frame visible for FFmpeg
+# to pad when audio exceeds animation length. Scene transitions
+# are handled at video_assembler time, not inside Manim.
 
 
 # =========================================================

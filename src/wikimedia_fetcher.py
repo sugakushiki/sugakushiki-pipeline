@@ -6,9 +6,9 @@ downloads up to 3 best candidates, and auto-assigns them to person/intro
 ken_burns scenes in scene_definition.json.
 
 Usage:
-    python src/wikimedia_fetcher.py episodes/001_erdos/episode_config.json
-    python src/wikimedia_fetcher.py episodes/001_erdos/episode_config.json --dry-run
-    python src/wikimedia_fetcher.py episodes/001_erdos/episode_config.json --max-photos 5
+    python src/wikimedia_fetcher.py examples/moriarty/episode_config.json
+    python src/wikimedia_fetcher.py examples/moriarty/episode_config.json --dry-run
+    python src/wikimedia_fetcher.py examples/moriarty/episode_config.json --max-photos 5
 
 Pipeline integration:
     Runs automatically between 'script' and 'images' steps when --qa or --qa-quick is used.
@@ -826,7 +826,7 @@ def fetch_and_assign(
         print("ERROR: episode_config.json に subject_en が必要です")
         sys.exit(1)
 
-    # Day 17 fix : skip fetch when references will not be used.
+    # fix: skip fetch when references will not be used.
     # Two ways to opt out:
     #   (A) Episode-level (preferred for subjects with no contemporary
     #       photo, e.g. 3rd-century 劉徽 / 7th-century Brahmagupta):
@@ -901,7 +901,7 @@ def fetch_and_assign(
         print(
             f"ERROR: wikimedia_photo_urls must be a flat list of URL strings, "
             f"got dict with keys {list(fallback_urls.keys())}. "
-            f"See episodes/010_gauss/episode_config.json for the correct format."
+            f"See examples/moriarty/episode_config.json for the correct format."
         )
         sys.exit(1)
     if fallback_urls:
@@ -1241,7 +1241,11 @@ def _license_url(license_short: str) -> str:
 
 def _format_credit(assignment: dict) -> str:
     """Format attribution string for video credits (CC BY compliant)."""
-    author = assignment["author"] or "Wikimedia Commons"
+    # Empty author -> "Unknown author", NOT "Wikimedia Commons" (the repository is not the
+    # creator). A PD/CC0 historical engraving genuinely has an unknown author; crediting it
+    # to "Wikimedia Commons" misattributes authorship. A CC-BY work always carries a
+    # real author, so this default only ever applies to unattributed PD/CC0 items.
+    author = assignment["author"] or "Unknown author"
     license_short = assignment["license"].upper().replace("-", " ")
     license_url = _license_url(assignment["license"])
     title = assignment["wikimedia_title"].replace("File:", "")

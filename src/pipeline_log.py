@@ -81,9 +81,7 @@ _atexit_registered = False
 
 def _utc_iso_ms() -> str:
     """ISO 8601 UTC timestamp with millisecond precision and 'Z' suffix."""
-    return (
-        datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    )
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _truncate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -273,6 +271,7 @@ def close() -> None:
 # X3 stderr channel (child-side emit + parent-side parser)
 # ---------------------------------------------------------------------------
 
+
 def emit_stderr(
     level: str,
     step: str,
@@ -311,6 +310,22 @@ def emit_stderr(
     except Exception:
         # A logger failure must never crash the child. Silent drop.
         pass
+
+
+def emit_stderr_warn_summary(step: str, count: int) -> None:
+    """Child convenience: report an advisory-check warning count to the parent's
+    end-of-run roll-up via the X3 stderr channel.
+
+    No-op unless running under the pipeline (PIPELINE_RUN set by the parent) and
+    count > 0, so standalone script runs stay quiet. PIPELINE_RUN (not
+    PIPELINE_LOG_FILE) is the gate: the roll-up must work in normal builds where
+    structured logging (--log-file) is disabled by default. The parent tallies
+    these per step and surfaces the roll-up in the final summary, so a reader who
+    scans only the tail cannot miss a mid-log advisory block.
+    """
+    if count <= 0 or not os.environ.get("PIPELINE_RUN"):
+        return
+    emit_stderr(LEVEL_WARNING, step, f"{count} advisory warning(s)", warn_count=count)
 
 
 def parse_marker_line(line: str) -> dict[str, Any] | None:

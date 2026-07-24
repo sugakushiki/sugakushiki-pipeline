@@ -21,11 +21,10 @@ from style import (
     TEXT_WHITE,
     load_params,
 )
+
 # Factual-claim metadata (read by qa_manim_consistency.py). Single-class
 # template; "default" is the lint's fallback key when no mode is given.
 LINT_FACTUAL_CLAIMS = {"default": {"people": [["Erdős", "エルデシュ"]], "years": []}}
-
-
 
 
 class ErdosNetworkGrow(Scene):

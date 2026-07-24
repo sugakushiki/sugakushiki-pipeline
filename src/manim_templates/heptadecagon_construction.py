@@ -208,7 +208,6 @@ class HeptadecagonConstruction(Scene):
         self.wait(0.8 * ws)
 
         # Fermat primes
-        fermat_primes = [3, 5, 17, 257, 65537]
         fermat_formulas = [
             r"2^{2^0}+1=3",
             r"2^{2^1}+1=5",

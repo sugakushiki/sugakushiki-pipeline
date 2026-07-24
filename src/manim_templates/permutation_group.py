@@ -361,6 +361,8 @@ class PermutationGroupCommutativeCompare(Scene):
         elapsed_phase3 = 0.7 + 0.8 + 0.6 + 0.7
         remaining_phase3 = max(0.5, phase3_budget - elapsed_phase3)
         self.wait(remaining_phase3)
+
+
 # Factual-claim metadata (read by qa_manim_consistency.py). This template's
 # modes render no on-screen person/year claims, so they are declared empty
 # (checked, not silently skipped).
@@ -369,7 +371,6 @@ LINT_FACTUAL_CLAIMS = {
     "composition": {"people": [], "years": []},
     "commutative_compare": {"people": [], "years": []},
 }
-
 
 
 SCENES = {
