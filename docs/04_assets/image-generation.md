@@ -16,6 +16,46 @@
 
 ---
 
+## 実写リファレンスが効く条件（最重要）
+
+肖像が実写をもとに生成されるか、テキストだけから生成されるかは **2 段のゲート**で決まる。
+どちらか一方でも閉じていると、**エラーも警告も出ないまま** text-only 生成に落ちる。
+出来上がった顔が別人に見えて初めて分かる、という壊れ方をするので、先に確認する。
+
+**① 回ぜんたいのゲート**（`episode_config.json`）— 3 つすべてが必要:
+
+```
+use_reference = bool(ref_photos) and birth_year and backend == "flash"
+```
+
+| 条件 | 欠けたときに起きること |
+|---|---|
+| 参照写真が取得できている | 参照する画像が無いので当然 text-only |
+| **`birth_year` が書かれている** | **その回の肖像が全部 silent に text-only になる** |
+| backend が Gemini Flash | 他 backend は image-conditioning に非対応 |
+
+**`birth_year` を書き忘れる**のが一番多い閉じ方。年齢変換の入力としてだけでなく
+**ゲートそのもの**なので、無いと `wikimedia_photo_urls` を丁寧に用意しても 1 枚も
+Gemini に渡らない。`config_validator` の推奨フィールド WARN と、images step の直前に
+走る `lint_portrait_reference`（advisory）が指摘する。
+
+**② シーン単位のゲート**（`scene_definition.json` の visual block）— 2 つとも必要:
+
+- `has_person` — `source_prompt` が人物を描写していると判定されること（自動判定）
+- `use_reference` が明示的に `false` でないこと。**未設定は `true` 扱い**（`.get("use_reference", True)`）
+
+未設定＝参照ありが既定、という点は読み違えやすい。`use_reference` を書いていない
+シーンは「参照なし」ではなく「参照あり」なので、`lint_portrait_reference` も
+**実効値**で判定する（フラグの字面ではなく `.get()` の既定値まで解決した値を見る。
+リテラルで判定していた頃は未設定シーンを「参照なし」と誤検知して偽陽性を出していた）。
+
+**若年シーンで参照を外す必要はない。** 68 歳の写真を参照して 11 歳のシーンを描かせても
+generator は prompt の年齢語で適切に若年化する。過齢化が起きたケースは年齢の指定が
+弱かったのが原因で、対処は `use_reference: false` ではなく
+`This MUST be a small CHILD of about nine` のような**強い年齢明記**。
+
+---
+
 ## Vision QA
 
 - 検証エンジン: Claude Sonnet（Max 契約内コスト 0）
@@ -68,6 +108,11 @@ source_prompt の時代物 cliché を image step 入口で自動検出。事前
 
 主題者以外の人物（例: Leibniz 回での Newton）を ken_burns で扱う際、リファレンス汚染を防ぐ。visual block に明示する。
 
+**主題者のシーンには付けない。** 上記「実写リファレンスが効く条件」のとおり未設定が
+既定 `true` なので、主題者の肖像には何も書かないのが正しい。多人数シーンは
+参照を効かせるより text-only のほうが安定する（眼鏡・髭などの識別的特徴は
+`source_prompt` に明記して補う）。
+
 ### 紙幣・通貨
 
 法的に再現ルール対象になり得るため、間接的（発表会見・報道風）な画像で表現。`source_prompt` に直接 banknote のクローズアップを指定しない。
@@ -86,6 +131,8 @@ source_prompt の時代物 cliché を image step 入口で自動検出。事前
 | 画像が再生成されない | `image_generator` は既存スキップ仕様。`source_prompt` 変更時は該当ファイルを削除して再ビルド |
 | Gemini Flash の点配置・形状指示が守られない | プロンプトに数値化した位置関係 + 禁止事項を明記。手動生成 + 透かし除去フォールバック |
 | 性別反転（Vision QA リトライ） | feedback の累積を不変の `source_prompt` で吸収（`strengthen_prompt` 修正済） |
+| 肖像が別人に見える | まず**参照写真が実際に渡っているか**を疑う（上記 2 段のゲート）。image-conditioning のほうが text-only より一貫して忠実なので、「似ていない」の多くはゲートが閉じている |
+| 画像クレジットが絵画を「写真」と呼ぶ | 参照呼称は `death_year` の没年ヒューリスティックで決まる。未設定だと「肖像写真」側に倒れる。合わない回は `portrait_reference_kind` で明示 override |
 
 ---
 

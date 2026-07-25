@@ -245,6 +245,42 @@ Manimで生成するアニメーション。テンプレートIDまたはカス�
 | `random_graph_coloring` | `random_graph_coloring.py` | `RandomGraphColoring` | `intro` / `demonstration` / `result` |
 
 パラメータは `_manim_params.json` 経由で渡される（visual_generator.pyが自動書き出し・削除）。
+上の表は**抜粋**であって全一覧ではない（実際のテンプレート数はこの表の桁違いに多い）。
+現物は `src/manim_templates/` を直接見る — 各ファイルの docstring と `SCENES` dict が
+mode と用途を説明している。
+
+#### `params.mode` — 多モードテンプレートでは必須
+
+1 つのテンプレートが `construct()` 内の `mode` 分岐で複数のバリアントを描き分ける。
+`LINT_FACTUAL_CLAIMS` のキーが 2 つ以上あるテンプレートで `params.mode` を省くと、
+**既定 mode が黙って描かれる**。ナレーションと食い違っても絵は出てくるので気付きにくい
+（マンデルブロ集合を描かせるつもりが単一軌道だけ描かれた、という取りこぼしがあった）。
+visuals step の前に走る lint が未指定を WARN する。
+
+#### データ駆動テンプレートの `params` は省略しない
+
+`timeline_recap` のように**データを外から受け取る**テンプレートは、`params` が空だと
+モジュールの self-test 用の既定データ（別題材の年表）を描いてしまう。必須キーを欠いた
+`params` は visuals step の前に検出して **abort** する（`--allow-empty-template-params`
+で意図的に通せる）。
+
+#### テンプレートを書く／直すときの制約
+
+シーン定義側ではなくテンプレート側の規約。破ると **lint やレンダは通るのに画面が壊れる**
+種類の失敗になるので、`src/manim_templates/` を触る前に確認する。
+
+| 制約 | 破ったときに起きること |
+|---|---|
+| **1 ファイル 1 クラス** + `construct()` 内 mode 分岐 | 探索は AST で**最初の 1 クラス**しか拾わない。2 つ目以降は黙って無視される |
+| `SCENES` dict + docstring + `LINT_FACTUAL_CLAIMS` | スクリプト生成 LLM が読む面。無いと存在しないテンプレート名を生成しうる |
+| Y 座標は **−2.0 〜 +3.3** | 下端 240px は字幕帯。はみ出すと字幕と重なる |
+| 末尾に `FadeOut` を入れない | 黒フレームが padding として残る |
+| 尺配分は `style.pace(duration, weights, intro, coda)` を使う | `per = 本体尺 / 数値` と手書きすると、分母が `run_time` 係数の総和より小さいときアニメが割り当て尺を超過し、mp4 が音声尺に切り詰められて**結論部分が消える**。尺は一致してしまうので stale 検出では捕まらない |
+| 日本語は `Text(font=FONT)`、`MathTex` に Unicode/日本語を入れない | 豆腐化・レンダエラー |
+
+詳細チェックリストとカラーパレット: `.claude/rules/manim-development.md`（`src/manim_templates/**/*.py`
+編集時に自動ロード）。図の意味・美観と bbox 衝突は描画後に `manim_vision_qa` /
+`manim_text_collision_qa` が見る。
 
 ### 5.3 `text_overlay` — テキスト表示
 

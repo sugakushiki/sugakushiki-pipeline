@@ -11,6 +11,9 @@
 
 ### アーキテクチャ
 
+工程の順序は `pipeline.py` の `ALL_STEPS` に従う
+（script → audio → subtitles → photos → images → thumbnail → visuals → assemble → credits → bgm）。
+
 ```
 episode_config.json
   │
@@ -20,13 +23,13 @@ episode_config.json
   │                    │         │
   │                    │    qa_checker.py --gate script
   │                    │         │
-  │                    │    ┌────┴────────────────────────┐
-  │                    │    │ Agent 1: FactChecker (Opus)  │
-  │                    │    │ Agent 2: StyleChecker (Son.) │
-  │                    │    │ Agent 3: SourceManager (Son.) │
-  │                    │    │ Agent 4: ContentReviewer (Op.)│
-  │                    │    │ Agent 5: Consistency (Son.)   │
-  │                    │    └────┬────────────────────────┘
+  │                    │    ┌────┴─────────────────────────┐
+  │                    │    │ Agent 1: FactChecker    (Opus)│
+  │                    │    │ Agent 2: StyleChecker   (Son.)│
+  │                    │    │ Agent 3: SourceManager  (Son.)│
+  │                    │    │ Agent 4: ContentReviewer(Opus)│
+  │                    │    │ Agent 5: Consistency    (Opus)│
+  │                    │    └────┬─────────────────────────┘
   │                    │         │
   │                    │    qa_report_script.json
   │                    │         │
@@ -34,18 +37,23 @@ episode_config.json
   │                    │    [WARN] → レポート表示、続行
   │                    │    [FAIL] → パイプライン停止、修正を要求
   │                    │
-  ├─→ image_generator.py ─→ images/
-  │                              │
-  │                    ┌─────────┤ ★ Gate 2: 画像QA（将来）
-  │                    │         │
   ├─→ audio_generator.py ─→ audio/ + timing.json
   │                              │
-  │                    ┌─────────┤ ★ Gate 3: 音声QA（将来）
+  │                    ┌─────────┤ ★ Gate 3: 音声QA（実装済 = 発音チェック）
   │                    │         │
-  └─→ video_assembler.py ─→ output.mp4
+  ├─→ image_generator.py ─→ images/
+  │                              │
+  │                    ┌─────────┤ ★ Gate 2: 画像QA（実装済）
+  │                    │         │
+  └─→ video_assembler.py ─→ output_assembled.mp4 ─→ bgm_mixer.py ─→ output_final.mp4
                                  │
-                       ┌─────────┤ ★ Gate 4: 最終QA（将来）
+                       ┌─────────┤ ★ Gate 4 相当: 完了後の出力検証（実装済）
 ```
+
+**この図は 4 つの Gate だけを描いている。** 現在の QA はこれより広く、合成前の予防
+（事前事実チェック・読み lint・cliche scanner）、合成後の検出（STT・発話速度・Manim の
+Vision と bbox 衝突）、出荷物の検証（stale 検出・概要欄の導入文）を含む。
+全体像は `docs/architecture.md` §4、実行時のフラグは `docs/03_quality/qa.md` を見る。
 
 ---
 
@@ -250,13 +258,18 @@ warning数件の手動修正は通常5分以内で完了する。
 
 | # | エージェント | バックエンド | 役割 |
 |---|---|---|---|
-| 1 | ImageQualityChecker | Gemini（Vision） | 生成画像の品質評価（不自然な人物、文字化け、時代考証） |
-| 2 | ImageConsistency | Gemini（Vision） | エピソード内の画風一貫性チェック |
+| 1 | ImageQualityChecker | Vision | 生成画像の品質評価（不自然な人物、文字化け、時代考証） |
+| 2 | ImageConsistency | Vision | エピソード内の画風一貫性チェック |
 
 ### 実装方針
-- Gemini APIのVision機能を活用（画像入力が可能）
 - IMAGE_GUIDE.mdの基準に基づいて評価
 - 品質スコアが閾値以下の画像は再生成をトリガー
+
+> **実装との差分**: 構想段階では Gemini Vision を想定していたが、実装
+> (`qa_image_checker.py`) は **Claude Code CLI 経由の Claude Vision** を使う
+> (`_call_claude_cli`)。判定精度と、Max 契約内で追加コストが出ないことによる。
+> 実際の判定観点は上の 2 エージェント構想ではなく、narration との整合を軸にした
+> 5 観点（主要人物の有無 / 性別 / 人数 / 活動・小道具 / 細部）。
 
 ---
 
@@ -270,9 +283,14 @@ warning数件の手動修正は通常5分以内で完了する。
 | 2 | TimingValidator | ルールベース | 音声長とscene duration の乖離チェック |
 
 ### 実装方針
-- LLM不要。ルールベースで実装可能
 - audio_generator.pyの`--dry-run`結果と実音声長の比較
 - 新出の漢字読みをvoicevox_dict.jsonと照合
+
+> **実装との差分**: 「LLM 不要・ルールベース」の構想だったが、実装
+> (`audio_generator.check_pronunciation_with_claude`) は **Claude を使う**。
+> 誤読は文脈依存（同じ漢字が文によって読み分かれる）で、辞書と正規表現だけでは
+> 分離できなかったため。**voicevox 専用**で、Cloud TTS 回では走らない
+> （Cloud 側は合成前 lint → 合成後 STT → 出荷物 STT の 3 層。`cloud_tts_qa.md` 参照）。
 
 ---
 
@@ -283,7 +301,7 @@ warning数件の手動修正は通常5分以内で完了する。
 | # | エージェント | バックエンド | 役割 |
 |---|---|---|---|
 | 1 | SyncValidator | ルールベース | 音声・映像・字幕の同期精度 |
-| 2 | DurationChecker | ルールベース | 最終動画尺が8-12分の目標範囲内か |
+| 2 | DurationChecker | ルールベース | 最終動画尺が目標範囲内か（canonical な尺は `docs/02_pipeline/VIDEO_SPEC.md`） |
 | 3 | FinalReviewer | Opus | 完成動画のメタデータ + scene_definitionから総合品質レビュー |
 
 ### 実装方針
