@@ -338,6 +338,16 @@ def run_guard(scene_path: str, voicevox_url: str) -> list:
 
 
 def main():
+    # This tool reports on hiragana ゔ (U+3094), which the Windows console codepage
+    # cannot encode -- printing a finding would raise UnicodeEncodeError and take
+    # down the guard exactly when it has something to say. Unlike the em-dash cases
+    # elsewhere, an ASCII substitute is not available: the character IS the subject.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="VOICEVOX 誤読 pre-build ガード")
     parser.add_argument("scene_definition", help="scene_definition.json のパス")
     parser.add_argument(

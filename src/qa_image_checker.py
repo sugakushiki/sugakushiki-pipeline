@@ -280,6 +280,15 @@ JSONのみ（```なし）で回答:
 
 
 def main():
+    # Progress and result lines carry emoji and em dashes that the Windows console
+    # codepage cannot encode. This runs as a subprocess of the pipeline, so it needs
+    # its own guard -- the parent's does not reach it.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="Gate 2: Image Quality Check")
     parser.add_argument("scene_json", help="Path to scene_definition.json")
     parser.add_argument("--output", default=None, help="Output path for QA report JSON")

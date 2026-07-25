@@ -442,6 +442,56 @@ _MULTICLASS_LEGACY = {
 }
 
 
+def check_console_encoding_guard() -> tuple[int, list[str]]:
+    """Entry points that can print non-cp932 text must guard stdout encoding.
+
+    On a Windows console the codepage is cp932, and printing a character it cannot
+    encode raises UnicodeEncodeError -- the process dies mid-report. The characters
+    are not exotic: em dashes in messages, ✅/❌ in measured-reading notes,
+    superscripts and hiragana ゔ in the misreading dictionaries, rare kanji quoted
+    back from a finding.
+
+    What makes this class nasty is WHERE it lands. Every instance found sat on a
+    warning or failure path, so the happy path exercised none of them: lint_video_spec
+    crashed only when it detected a deprecated duration, i.e. only on the one
+    regression it exists to catch, and had therefore never crashed at all.
+
+    Checks entry points only (a `main()` or a `__main__` block). Library modules
+    inherit the guard from whichever process imports them.
+    """
+    roots = [ROOT / "src", ROOT / "scripts"]
+    violations: list[str] = []
+    scanned = 0
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            is_entry = "def main(" in text or '__name__ == "__main__"' in text
+            if not is_entry:
+                continue
+            scanned += 1
+            if 'reconfigure(encoding="utf-8"' in text:
+                continue
+            bad = set()
+            for line in text.splitlines():
+                if "print(" not in line and "append(" not in line:
+                    continue
+                for ch in line:
+                    try:
+                        ch.encode("cp932")
+                    except UnicodeEncodeError:
+                        bad.add(ch)
+            if bad:
+                rel = path.relative_to(ROOT).as_posix()
+                sample = "".join(sorted(bad)[:6])
+                violations.append(f"{rel}: prints {sample!r} with no utf-8 stdout guard")
+    return scanned, violations
+
+
 def check_manim_single_class() -> tuple[int, list[str], list[str]]:
     """Enforce CLAUDE.md '1 file 1 Scene class'.
 
@@ -1054,6 +1104,16 @@ def check_forbidden_phrases() -> tuple[int, int, list[str]]:
 
 
 def main() -> int:
+    # Findings quote the offending source text, which routinely contains characters
+    # the Windows console codepage cannot encode (em dash, rare kanji, the CJK block
+    # boundaries this file's own regexes name). Without this the smoke test dies
+    # while reporting rather than reporting.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
     print("=" * 60)
     print("  Smoke test (pre-pipeline static health)")
     print("=" * 60)
@@ -1278,6 +1338,20 @@ def main() -> int:
             print(f"    {m}")
     if not new_v and not legacy_v:
         print(f"  OK: {scanned} templates scanned, all single Scene class")
+
+    _section("20. Console encoding guard (cp932 crash on the warning path)")
+    scanned, enc_v = check_console_encoding_guard()
+    if enc_v:
+        print(f"  FAIL: {len(enc_v)} entry point(s) can crash while reporting ({scanned} 走査)")
+        for m in enc_v:
+            print(f"    {m}")
+        print(
+            '    対処: main() 冒頭で sys.stdout.reconfigure(encoding="utf-8") '
+            "(ASCII 代替が使える文字なら置換でもよい)"
+        )
+        overall_fail += len(enc_v)
+    else:
+        print(f"  OK: {scanned} entry points scanned, none can crash on non-cp932 output")
 
     print("\n" + "=" * 60)
     if overall_fail:

@@ -1328,9 +1328,17 @@ def main():
     # Line-buffer stdout/stderr so a long run's log is monitorable in real time
     # even when redirected to a file. Without this, block-buffering makes the log
     # look frozen for minutes (observed when tailing pipeline_log during a build).
+    #
+    # encoding="utf-8" is the second half of the same call for a different reason:
+    # this file prints em dashes, and modules imported into THIS process (
+    # audio_generator, qa_retry) print characters the Windows console codepage
+    # cannot represent at all. Without it those lines raise UnicodeEncodeError and
+    # kill the run -- and they sit on warning paths, so the failure would land in
+    # the middle of a long build rather than at startup. Subprocess steps need
+    # their own guard; this one only covers what the parent prints.
     try:
-        sys.stdout.reconfigure(line_buffering=True)
-        sys.stderr.reconfigure(line_buffering=True)
+        sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+        sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
     except Exception:
         pass
 

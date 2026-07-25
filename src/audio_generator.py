@@ -2098,6 +2098,18 @@ def main():
     # decl must precede ANY read of SPEED_SCALE in this function (the argparse
     # help f-string below reads it), so declare it first.
     global SPEED_SCALE
+
+    # The misreading dictionaries hold characters the Windows console codepage
+    # cannot encode (superscripts, ✅/❌ in the measured-reading notes, hiragana ゔ,
+    # rare kanji), and warning paths echo those entries back. ASCII substitution is
+    # not an option here -- the characters are the data. Needed even though the
+    # pipeline parent sets the same thing: the audio step runs as a subprocess.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(
         description="Generate VOICEVOX audio from scene_definition.json"
     )
