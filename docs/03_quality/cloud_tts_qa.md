@@ -52,10 +52,12 @@ Chirp3-HD は同期リクエストで `phoneme` を honor するので、読み�
 - コンマで孤立した助詞 `は` / `へ` → `わ` / `え` (孤立した「は」を Chirp が
   ハ と読む問題。ダッシュ由来の空白付き `、 は` も空白畳み込みで拾う)
 - 数字直後の「京」→ けい (10^16 の位。東京・京都は数字が前置しないので不変)
-- 括弧の除去 (`「」` `『』` `《》` 等) — Chirp3-HD は括弧を**非決定的に音声化する**
-  (同じ《》でも無音になる回と「うぇ」と発声する回がある)。字幕表示用の括弧は
-  narration 側に残し、cloud 側からだけ落とす。合成直前の `cloud_tts.strip_for_cloud`
-  にも同じ除去があり、手書きの cloud が生成を迂回しても TTS には届かない
+- 括弧の処理 — Chirp3-HD は括弧を**非決定的に音声化する** (同じ《》でも無音になる回と
+  「うぇ」と発声する回がある)。`「」` と `《》` は**除去**し、`『』` (書名) は `、` に
+  **変換**する = 書名の前後に短い間が残る。字幕表示用の括弧は narration 側にそのまま
+  残し、cloud 側だけを書き換える。なお合成直前の `cloud_tts.strip_for_cloud` は
+  4 種とも**除去**するので、生成を迂回した手書きの cloud でも括弧が TTS に届くことはない
+  (その場合 `『』` の間は付かない)
 - 数式トークンのスペルアウト
 
 > **`episode_config.json` の `additional_instructions` に「`narration_speech_cloud` を
@@ -78,9 +80,13 @@ Chirp3-HD は同期リクエストで `phoneme` を honor するので、読み�
 | 検出 | visuals 後 | `scripts/manim_text_collision_qa.py` | ラベルの bbox 衝突 (決定論) |
 | 出荷物 | on-demand | `scripts/verify_shipped_audio.py` | **`output_final.mp4` から**各シーンを切り出して STT |
 
-すべて **advisory** (WARN、既定 exit 0、`--strict` で exit 1)。build は止めず
-「まず見るべき箇所」を示す。`GOOGLE_API_KEY` 不在 / `google-genai` 未導入 /
-Claude CLI 不在は graceful skip。
+**6 本とも advisory** で、単独実行しても常に exit 0。build は止めず「まず見るべき箇所」を
+示す。`GOOGLE_API_KEY` 不在 / `google-genai` 未導入 / Claude CLI 不在は graceful skip。
+
+WARN を exit 1 に昇格させる `--strict` を持つのは
+`cloud_reading_lint` / `stt_qa` / `cloud_speed_qa` / `manim_vision_qa` の 4 本。
+`manim_text_collision_qa` と `verify_shipped_audio` は `--strict` を持たない
+(常に exit 0)。CI 等で失敗させたい場合は前者 4 本だけが対象になる。
 
 ### `cloud_reading_lint` のカテゴリ
 
