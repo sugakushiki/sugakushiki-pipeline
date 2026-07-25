@@ -20,7 +20,7 @@ GitHub Issue でバグ報告を受け付けています。Issue Template ([.gith
 Fork して自前で運用する場合の参考情報:
 
 - 環境構築は [README.md](README.md) のクイックスタートを参照
-- パイプライン前の静的健全性検査: `python scripts/smoke_test.py` (約 5 秒)
+- パイプライン前の静的健全性検査: `python scripts/smoke_test.py` (数秒)
 - lint チェック: `python -m ruff check src/ scripts/`
 - 詳細な仕様・規約は `docs/` 配下を参照 ([docs/INDEX.md](docs/INDEX.md) が入口)
 
