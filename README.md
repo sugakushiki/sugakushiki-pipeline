@@ -15,8 +15,9 @@ flowchart LR
     Config[episode_config.json] --> Pre[事前事実チェック]
     Pre --> Script[1. script] --> QA1[QA Gate 1]
     QA1 --> Audio[2. audio + 読み・速度 QA] --> Sub[3. subtitles]
-    Sub --> Assets[4-6. 画像 + サムネイル] --> QA2[QA Gate 2]
-    QA2 --> Visual[7. visuals + Manim lint] --> Stale[stale 検出]
+    Sub --> Images[4-5. Wikimedia 取得 + 画像生成] --> QA2[QA Gate 2]
+    QA2 --> Thumb[6. サムネイル + Vision QA]
+    Thumb --> Visual[7. visuals + Manim lint] --> Stale[stale 検出]
     Stale --> Assemble[8-10. assemble + 概要欄 + BGM]
     Assemble --> Verify[完了後 出力検証] --> Final[output_final.mp4]
 ```

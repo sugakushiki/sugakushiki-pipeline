@@ -42,6 +42,27 @@ PINK = "#f72585"           # 重要ポイント
 - **`FadeIn` を使用**。`Write` は描画タイミングがずれるため不可
 - **duration-aware**: `duration` パラメータを受け取り、アニメーション時間を動的調整
 
+### 尺配分は `style.pace()` を使う (手書きの割り算をしない)
+
+`per = 本体尺 / 数値` と手書きしてはいけない。分母が `run_time` 係数の**総和**より小さいと
+アニメの合計が割り当て尺を超過し、**mp4 が音声尺に合わせて切り詰められて結論部分が消える**。
+
+```python
+from style import pace
+
+# 各 play/wait の run_time 重みを play 順に並べる。返り値は run_time の *リスト*
+rt = pace(duration, [1.0, 0.8, 1.0, 1.2], intro=1.0, coda=3.0)
+self.play(Create(axes), run_time=rt[0])
+self.play(Write(label), run_time=rt[1])
+```
+
+分母は**常に重みの実際の総和**なので、アニメの合計は `duration - intro - coda` に
+ぴったり収まる。
+
+厄介なのは**壊れ方**で、尺が縮むのではなく**末尾が失われる**。切り詰め後の mp4 は
+音声尺とぴったり一致するので、尺の突き合わせで見る stale 検出は素通りする。
+検出できるのは実際に終盤フレームを見たときだけ (下記「検証」参照)。
+
 ### 末尾静止の anti-pattern
 
 **`used = 固定アニメ秒; self.wait(max(1.0, duration - used))` で残り全部を末尾の 1 回の wait に流す設計は禁止**。ナレーションが長い scene (例: 40〜65秒) では固定アニメが 5〜13秒で終わり、**残り 30〜60秒が完全静止**になる。complex_rotation 等の既存テンプレも同じ設計で同症状を持つ (横展開リファクタ候補)。
