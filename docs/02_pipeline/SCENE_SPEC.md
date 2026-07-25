@@ -504,7 +504,7 @@ visuals step の前に走る lint が未指定を WARN する。
 
 | 項目 | 値 |
 |---|---|
-| フォント | BIZ UDMincho（`_font.ttc` ローカルコピー） |
+| フォント | BIZ UDMincho（インストール済みのシステムフォントから `_font.ttc` としてビルド時にコピー） |
 | フォントサイズ | 42 |
 | 下端マージン | 100px |
 | 文字色 | white、borderw=3、bordercolor=black |

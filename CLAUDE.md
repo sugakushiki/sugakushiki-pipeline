@@ -21,7 +21,7 @@
 | Manim | v0.19.2 (`-qh` で 1080p) |
 | VOICEVOX | 0.25.1 (localhost:50021、GUI アプリ起動必須) |
 | FFmpeg | 2026-02 以降推奨 |
-| フォント | BIZ UDMincho (日本語全般、OFL 1.1) |
+| フォント | BIZ UDMincho (日本語全般)。**同梱せず各自インストール** — Manim はフォント名で解決し、字幕焼き込み用の `_font.ttc` は `video_assembler.ensure_font_file()` がシステムフォントから複製する |
 
 ## Windows 固有の制約
 

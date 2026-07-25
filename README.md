@@ -3,7 +3,6 @@
 ![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
 ![Manim 0.19.2](https://img.shields.io/badge/manim-0.19.2-orange.svg)
 ![License MIT](https://img.shields.io/badge/license-MIT-green.svg)
-![Font OFL 1.1](https://img.shields.io/badge/font-OFL%201.1-lightgrey.svg)
 
 `episode_config.json` 1 ファイルから 10 ステップを自動実行し、ナレーション・字幕・Manim 数学アニメ・画像・BGM を統合して 10〜19 分の YouTube 完成動画 ([詳細仕様](docs/02_pipeline/VIDEO_SPEC.md)) を生成するパイプライン。
 日本語数学史 YouTube チャンネル「[数学史記 (@sugakushiki)](https://youtube.com/@sugakushiki)」の制作基盤として継続運用している。
@@ -74,7 +73,7 @@ flowchart LR
 | Google Cloud TTS | `tts.engine=cloud` の場合に必要 (`GOOGLE_TTS_API_KEY`)。Chirp3-HD |
 | Anthropic Claude Code CLI | スクリプト生成・QA・Vision 評価で使用 |
 | Google AI Studio API | Gemini Flash 画像生成、および Cloud 音声の STT 読み確認で使用 (`GOOGLE_API_KEY`) |
-| フォント | BIZ UDMincho (リポジトリに同梱、OFL 1.1) |
+| フォント | **BIZ UDMincho を別途インストール** (同梱していない)。Manim はフォント名で解決するため、インストールされていないと日本語が描画できない。Windows 10/11 には標準搭載。他 OS は [OFL 版](https://github.com/googlefonts/morisawa-biz-ud-mincho) を導入する |
 
 `GOOGLE_API_KEY` (Gemini) と `GOOGLE_TTS_API_KEY` (音声合成) は**別のキー**。
 取り違えると「存在しない API ブロック」を追うことになるので、起動時の preflight が
@@ -236,10 +235,7 @@ sugakushiki/
 ├── requirements-dev.txt          # 開発依存 (ruff)
 ├── pyproject.toml                # ruff config (将来 build config 拡張余地)
 ├── .python-version               # 3.11.0
-├── _font.ttc                     # BIZ UDMincho (OFL 1.1)
-├── LICENSE                       # MIT
-└── LICENSES/
-    └── OFL.txt                   # SIL Open Font License 1.1 (同梱)
+└── LICENSE                       # MIT
 ```
 
 ---
@@ -256,7 +252,7 @@ sugakushiki/
 ## ライセンス
 
 - **本体コード・ドキュメント**: MIT License (Copyright © 2026 sugakushiki) — [`LICENSE`](LICENSE) 参照
-- **フォント (`_font.ttc`)**: BIZ UDMincho、SIL Open Font License Version 1.1 — [`LICENSES/OFL.txt`](LICENSES/OFL.txt) を同梱
+- **フォント**: 同梱していない。BIZ UDMincho は利用者が各自インストールする (Windows は標準搭載、他 OS は [OFL 版](https://github.com/googlefonts/morisawa-biz-ud-mincho))
 - **音楽 (BGM)**: YouTube Audio Library 楽曲を本リポジトリには同梱せず、`episode_config.json` で URL のみ指定する運用 (利用は YouTube Audio Library の許諾範囲)
 - **画像**: Wikimedia Commons から取得した画像はパイプライン生成物に紐づくため本リポジトリには含めない (各動画の概要欄および `wikimedia_credits.json` でクレジット記載)
 
@@ -269,5 +265,5 @@ sugakushiki/
 - [Wikimedia Commons](https://commons.wikimedia.org/) — 公開ドメイン肖像画・写真
 - [Anthropic Claude](https://www.anthropic.com/) — スクリプト生成・QA・Vision 評価
 - [Google Gemini](https://ai.google.dev/) — 画像生成 (Gemini Flash)
-- [BIZ UDMincho Project Authors / Morisawa Inc.](https://github.com/morisawa/biz-udgothic) — 日本語フォント
+- [BIZ UDMincho Project Authors / Morisawa Inc.](https://github.com/googlefonts/morisawa-biz-ud-mincho) — 日本語フォント
 - 「モリアーティ教授」(Sir Arthur Conan Doyle『シャーロック・ホームズ』シリーズ、パブリックドメイン) — `examples/moriarty/` の題材

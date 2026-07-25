@@ -112,7 +112,7 @@ python src/pipeline.py examples/moriarty/episode_config.json \
 ## ライセンス
 
 - 本体コード・ドキュメント: MIT License — リポジトリルートの [`LICENSE`](../../LICENSE) 参照
-- フォント (`_font.ttc` BIZ UDMincho): SIL Open Font License Version 1.1 — [`LICENSES/OFL.txt`](../../LICENSES/OFL.txt)
+- フォント: 同梱していない。BIZ UDMincho は利用者が各自インストールする ([README](../../README.md) の必須前提を参照)
 - Conan Doyle 原作 *The Final Problem* (1893) / *The Valley of Fear* (1914-15): パブリックドメイン
 - Sherlockian 学術文献の引用: 学術引用フェアユース範囲
 

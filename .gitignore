@@ -43,4 +43,3 @@ test_output/
 *.wav
 *.mp3
 
-# Note: _font.ttc IS tracked (OFL 1.1 bundled with the project).
