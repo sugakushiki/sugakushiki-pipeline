@@ -52,7 +52,20 @@
 | stale subtitle (assemble 直前) | narration hash / timing hash が subtitles.srt と不一致 | `--allow-stale-subtitles` |
 
 環境系の preflight (Python モジュール / Claude CLI 認証 / VOICEVOX サーバ /
-Cloud TTS キー) も欠けていれば即座に止まる。こちらは escape を用意していない。
+Cloud TTS キー) も欠けていれば即座に止まる。escape は Claude CLI 認証の
+`--skip-auth-probe` だけで、他は用意していない。
+
+> **Claude CLI 認証はビルド途中でも失効する**。長時間ビルドの最中に OAuth
+> セッションが切れると、以降の `claude -p` を使う QA (LLM QA agents / 画像・Manim の
+> Vision QA / 概要欄の意味レビュー) が**一斉に沈黙する** — 各呼び出し元が
+> graceful degrade する設計なので、ビルドは "green" のまま終わってしまう。
+> このため認証 ping は起動時 preflight だけでなく、**Vision QA の直前**
+> (ビルド開始から ~40 分 = 失効しやすい時刻) にもう一度走る。失効していれば
+> 該当 QA を skip した上で、最終サマリに「N 件の QA を skip した。再認証して
+> 再実行すること」を出す。判定は positive signal (healthy な ping は `pong` を
+> 返す) で行い、401 の文言マッチには依存しない。
+> **恒久策は運用側**: 長時間ビルドの前に `claude setup-token` (1 年 OAuth) を
+> 設定して失効の頻度そのものを下げる。
 
 > **空 params と stale の escape は特に慎重に**。前者は他エピソードのデータを
 > 黙って描画し (テンプレの self-test 既定値が出る)、後者は音声と映像・字幕が
@@ -83,16 +96,33 @@ Gate 2 は image step **後**に走り、5 つの観点で判定する:
 ### 事前事実チェック
 
 `episode_config.json` の内容を script 生成**前**に検証する。C (Claude 知識) +
-D (算術サニティ) + E (Wikidata 照合) の 3 層。
+D (算術サニティ) + E (Wikidata 照合) + F (references の書誌 review) の 4 層。
 
 | フラグ | 既定 | 内容 |
 |---|---|---|
 | `--skip-fact-check` | off | 事前事実チェック自体を skip |
 | `--fact-check-allow-warn` | off | WARNING で止まらず続行 (CRITICAL は止まる) |
 | `--use-gemini-fact` | off | Gemini Grounding (web 検索あり) で照合する |
+| `--skip-reference-check` | off | F 層 (references 書誌 review) だけ skip |
 
 - レポート: `episodes/<id>/pre_script_fact_check_report.json`
 - Claude の結果はキャッシュ: `_pre_script_fact_cache.json`
+
+**F 層だけは advisory で、他の 3 層と混ざらない。** `references` は書籍・論文の
+自由記述引用なので、誤りの中身は著者・書名・出版年・出版社・訳者の attribution に
+出る。決定論 API (Google Books / Open Library) での照合は実測で偽陽性を潰せなかった
+— 実在する書籍が未収録で 0 件になる、復刻版の年で年比較が外れる、ISBN がほとんど
+付いていない。そこで版・翻訳・掲載誌を推論できる LLM に寄せ、代わりに次の制約を
+掛けている:
+
+- 高確信のものだけを挙げ、確信が無ければ PASS する
+- **正しい値を断定しない** (`correction` は書かない)。人間の web 照合を促すに留める
+- 掲載誌・非英語・古い一次資料を「存在しない」と断じない
+- URL だけの reference は対象外 (URL の到達性検証に委ねる)
+- 結果は `report["reference_advisory"]` に隔離し、ブロック判定源の
+  `report["issues"]` には**混ぜない** → warning でもビルドは止まらない
+
+指摘は**必ず一次資料で web 照合してから**反映する。鵜呑みにしない。
 
 ### 読み・音声
 
@@ -131,6 +161,61 @@ D (算術サニティ) + E (Wikidata 照合) の 3 層。
 **読みや速度を変更したら `--steps` に `subtitles` を含める。** narration の文面が
 変わらなくても、読みの修正や速度正規化で音声尺が変われば字幕のタイムスタンプは
 古くなる。この場合 text hash は一致するので、timing 署名の側で検出される。
+
+### 概要欄 (description) のガード
+
+`scene_definition.json` の `description.intro` は公開 YouTube 概要欄の【導入】に
+そのまま焼き込まれる。script 生成時に LLM が書いた文がそのまま残るため、**後から
+入力を直しても intro だけが取り残される**方向の drift が 2 つある。どちらも
+advisory で、`credits` step (焼く当のステップ) と完了後の出力検証の両方で照合する。
+
+| 種別 | 何を見るか | 判定 | フラグ |
+|---|---|---|---|
+| config → intro (staleness) | episode_config の導入系フィールドを編集したのに intro が生成時のまま | 決定論 (署名 + hash) | escape なし (`--accept` で明示的に受け入れる) |
+| narration → intro (意味一致) | 本編にある数学的前提条件・限定詞を intro が落として不正確化 | Claude (advisory) | `--skip-intro-check` |
+
+**config → intro** は署名方式で見る。生成時に `_description_meta.json` へ
+「導入系 config フィールド (`theme` / `hook` / `modern_connection` /
+`description.intro_guidance` の 4 つ) の署名」と「intro テキストの hash」を刻印し、
+照合時は **config 署名が変化 AND intro テキストが刻印時から不変**の両方が成立した
+ときだけ WARN する。intro を手で直せば hash が変わって自動的に黙るので、手動同期の
+あとに WARN が居座らない。intro は短い要約・`intro_guidance` は長い手書き指示なので
+**内容の類似度では分離できない** (同期済みの回でも ratio が 0.05〜0.5 に散らばる)。
+署名方式が唯一の道だった。対象フィールドを 4 つに絞ってあるのは、`references` や
+`bgm` の編集で誤発火させないため。sidecar が無い回 (出荷済み) は no-op。
+
+```bash
+python scripts/check_description_staleness.py episodes/XXX
+```
+
+config を直したが intro は意図して据え置く、という判断をしたときは `--accept` で
+再刻印して WARN を解消する。
+
+**narration → intro** は Claude の advisory review。既存の 6-gram 表層チェック
+(`qa_checker._detect_description_drift`) は言い換えで表層が変わると意味 drift を
+取りこぼすので、そこを埋める層になる。要約による省略それ自体は問題にしない
+(人名・年号・背景を落とすのは正常)。挙げるのは**本編が持っている限定詞を落とした
+結果、記述が数学的に誤りになる**ものだけ。でっち上げ防止の接地として、指摘には
+`narration_evidence` = その限定詞を含む本編該当文の引用を必須にしてある (本編に
+実在しない限定詞は報告できない)。結果は intro + narration の hash でキャッシュされ、
+内容が変わるまで Claude を呼ばない。
+
+```bash
+python scripts/check_intro_semantic.py episodes/XXX
+```
+
+`credits` step が Claude を呼んでキャッシュし、完了後の出力検証はキャッシュを
+読むだけ (安い)。**修正するかどうかは人間が本編と照合して決める。**
+
+### 環境・認証
+
+| フラグ | 既定 | 内容 |
+|---|---|---|
+| `--skip-auth-probe` | off | Claude CLI 認証 ping (起動 preflight + Vision QA 直前の再確認) を skip。オフライン / Claude を使わない mechanical な再ビルド向け |
+| `--no-keep-awake` | off | ビルド中の system sleep 抑止を無効化 (Windows のみ有効、他 OS では no-op) |
+
+`--no-keep-awake` を外した既定では、pipeline 起動時に system sleep を抑止し
+終了時に解除する。長時間ビルドが OS のスリープでプロセスごと落ちるのを防ぐ。
 
 ### 観測性
 

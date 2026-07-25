@@ -15,6 +15,7 @@
 | Manim テンプレート作成・修正 | [SCENE_SPEC.md](02_pipeline/SCENE_SPEC.md) | `.claude/rules/manim-development.md` (path-scoped) / [pitfalls.md](03_quality/pitfalls.md) |
 | 画像生成 (Wikimedia + Gemini Flash + Vision QA) | [IMAGE_GUIDE.md](04_assets/IMAGE_GUIDE.md) | [image-generation.md](04_assets/image-generation.md) / `.claude/rules/image-generation.md` (path-scoped) |
 | QA 運用・指摘対応 | [qa.md](03_quality/qa.md) | `.claude/rules/qa-workflows.md` (path-scoped、QA 再検証 hook 連動) |
+| Cloud TTS 回の読み・速度を詰める | [cloud_tts_qa.md](03_quality/cloud_tts_qa.md) | [qa.md](03_quality/qa.md) / [pitfalls.md](03_quality/pitfalls.md) の Cloud TTS 節 |
 | パイプライン落とし穴を調べる | [pitfalls.md](03_quality/pitfalls.md) (カテゴリ別整理) | -- |
 
 ---
@@ -47,12 +48,14 @@
 ### 02_pipeline/ — パイプライン仕様
 - [EPISODE_CONFIG_TEMPLATE.md](02_pipeline/EPISODE_CONFIG_TEMPLATE.md) — `episode_config.json` のスキーマ詳細
 - [SCENE_SPEC.md](02_pipeline/SCENE_SPEC.md) — Manim シーン仕様
+- [VIDEO_SPEC.md](02_pipeline/VIDEO_SPEC.md) — 動画フォーマットの SSOT (尺・解像度・エンドカード等)
 - [SYMPY_HELPER_DESIGN.md](02_pipeline/SYMPY_HELPER_DESIGN.md) — SymPy ヘルパーの設計
 
 ### 03_quality/ — 品質・QA・落とし穴
 - [STYLE_GUIDE.md](03_quality/STYLE_GUIDE.md) — トーン・VOICEVOX・Manim・ビジュアル・出典ルール
 - [pitfalls.md](03_quality/pitfalls.md) — 過去のバグをカテゴリ別に集約
 - [qa.md](03_quality/qa.md) — QA フラグ詳細・再検証 hook 配線
+- [cloud_tts_qa.md](03_quality/cloud_tts_qa.md) — Cloud TTS 回の読み制御・速度正規化・出荷前チェックリスト
 - [QA_PIPELINE.md](03_quality/QA_PIPELINE.md) — QA エージェント設計詳細
 - [QA_INTEGRATION_GUIDE.md](03_quality/QA_INTEGRATION_GUIDE.md) — QA 統合運用ガイド
 

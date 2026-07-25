@@ -27,6 +27,7 @@ Requires: FFmpeg in PATH. Manim required unless --skip-manim.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -653,6 +654,17 @@ def generate_text_overlay(
 # Files to exclude from template discovery
 _MANIM_EXCLUDE = {"style.py", "__init__.py", "_manim_params.json"}
 
+# Alias mapping: generic template names → closest match in available templates.
+# Only generic aliases that make sense regardless of episode. Module-level so
+# both generate_manim() and the visual-cache staleness key resolve the
+# same way (single source of truth).
+TEMPLATE_ALIASES = {
+    "graph_coloring": "random_graph_coloring",
+    "coloring": "random_graph_coloring",
+    "world_map": "route_map",
+    "travel_map": "route_map",
+}
+
 
 def _snake_to_pascal(name: str) -> str:
     """Convert snake_case to PascalCase: 'erdos_network' → 'ErdosNetwork'."""
@@ -829,15 +841,6 @@ def generate_manim(
 
     # Map template name → file and class (auto-discovered from directory)
     TEMPLATE_MAP = discover_manim_templates(manim_templates_dir)
-
-    # Alias mapping: generic names → closest match in available templates
-    # Only generic aliases that make sense regardless of episode
-    TEMPLATE_ALIASES = {
-        "graph_coloring": "random_graph_coloring",
-        "coloring": "random_graph_coloring",
-        "world_map": "route_map",
-        "travel_map": "route_map",
-    }
 
     # Resolve alias if needed
     resolved = template
@@ -2835,6 +2838,211 @@ def _dispatch_scene_visual(
         generate_text_overlay(fallback_visual, output_path, scene_duration)
 
 
+# ===========================================================================
+# Phase 2: incremental visual rebuild (per-scene mp4 cache)
+#
+# Mirrors the audio per-sentence cache (audio_generator.py). A scene's mp4 is
+# reused instead of re-rendered when nothing that affects its output changed.
+# Key = CONTENT hash (never mtime): the visual block + scene duration + the
+# render backend's external inputs (manim template .py + style.py, or the
+# source image). The stale-visual preflight (pipeline.py, before assemble)
+# is the backstop: any reused mp4 whose duration drifts from timing.json is
+# caught there. Default-on; --force-regen-visuals bypasses; --scenes restricts.
+# ===========================================================================
+
+VISUAL_CACHE_FILE = "_visual_cache.json"
+
+
+def _load_visual_cache(visuals_dir: str) -> dict:
+    """Load the per-scene visual cache; return {} on a cold/corrupt cache."""
+    path = os.path.join(visuals_dir, VISUAL_CACHE_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_visual_cache(visuals_dir: str, cache: dict) -> None:
+    """Persist the visual cache (best-effort; never fails the build)."""
+    path = os.path.join(visuals_dir, VISUAL_CACHE_FILE)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except OSError as e:
+        print(f"    [WARN] visual cache 保存失敗 (続行): {e}")
+
+
+def _file_hash(path: str) -> str:
+    """sha256[:16] of a file's bytes, or 'none' if unreadable."""
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:16]
+    except OSError:
+        return "none"
+
+
+def _file_fingerprint(path: str) -> str:
+    """'{len}:{sha256[:16]}' of a file's bytes, or '' if unreadable.
+
+    Used for the source-image key input and for detecting out-of-band mp4
+    swaps/truncation (mirrors audio_generator._wav_fingerprint).
+    """
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        return f"{len(data)}:{hashlib.sha256(data).hexdigest()[:16]}"
+    except OSError:
+        return ""
+
+
+def _resolve_manim_template_path(visual: dict, manim_templates_dir: str | None) -> str | None:
+    """Resolve a manim scene's template .py path (alias-aware), or None.
+
+    Mirrors the resolution in generate_manim() so the cache key hashes the same
+    file that actually renders. None when unresolved (scene degrades to a
+    text_overlay fallback → no template file involved).
+    """
+    if not manim_templates_dir or not os.path.isdir(manim_templates_dir):
+        return None
+    template = visual.get("template", "")
+    tmap = discover_manim_templates(manim_templates_dir)
+    resolved = template if template in tmap else TEMPLATE_ALIASES.get(template, template)
+    if resolved not in tmap:
+        return None
+    template_file, _ = tmap[resolved]
+    path = os.path.join(manim_templates_dir, template_file)
+    return path if os.path.exists(path) else None
+
+
+def _resolve_source_image(scene: dict, images_dir: str) -> str | None:
+    """Resolve the source-image path for image-backed scenes, or None.
+
+    Mirrors the ken_burns/pillow_chart source resolution in
+    _dispatch_scene_visual (visual.source, else images/{scene_id}.png).
+    """
+    visual = scene.get("visual", {})
+    if visual.get("type") not in ("ken_burns", "pillow_chart"):
+        return None
+    source = visual.get("source")
+    if source:
+        p = os.path.join(images_dir, source)
+        if os.path.exists(p):
+            return p
+    fallback = os.path.join(images_dir, f"{scene.get('scene_id', '')}.png")
+    return fallback if os.path.exists(fallback) else None
+
+
+def _local_import_names(py_path: str) -> set:
+    """Top-level module names imported by a .py file (for local-dep resolution)."""
+    import ast as _ast
+
+    try:
+        with open(py_path, encoding="utf-8") as f:
+            tree = _ast.parse(f.read())
+    except (OSError, SyntaxError):
+        return set()
+    names = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.ImportFrom) and node.module and (node.level or 0) == 0:
+            names.add(node.module.split(".")[0])
+        elif isinstance(node, _ast.Import):
+            for alias in node.names:
+                names.add(alias.name.split(".")[0])
+    return names
+
+
+def _manim_render_deps(template_path: str, manim_templates_dir: str) -> list:
+    """Local .py files a manim template's render depends on (for the cache key).
+
+    Transitive closure within manim_templates_dir: the template itself + any
+    sibling module it imports (e.g. hamiltonian_cycle imports polyhedron_euler)
+    + the shared style.py. Editing any of them must invalidate dependent scenes,
+    so all are hashed into the staleness key. Returns sorted absolute paths.
+    """
+    seen: set = set()
+    stack = [template_path]
+    while stack:
+        p = stack.pop()
+        if p in seen or not os.path.exists(p):
+            continue
+        seen.add(p)
+        for name in _local_import_names(p):
+            sib = os.path.join(manim_templates_dir, name + ".py")
+            if os.path.exists(sib) and sib not in seen:
+                stack.append(sib)
+    style = os.path.join(manim_templates_dir, "style.py")
+    if os.path.exists(style):
+        seen.add(style)
+    return sorted(seen)
+
+
+def _visual_staleness_key(
+    scene: dict,
+    duration: float,
+    manim_templates_dir: str | None,
+    images_dir: str,
+    skip_manim: bool = False,
+) -> str:
+    """Content hash (sha256[:16]) of everything that changes a scene's mp4.
+
+    Inputs: the visual block (type/params/source/style/…), the scene duration
+    (audio-cascade trigger), and the render backend's external files — for
+    manim the template's local-dependency closure (template .py + imported
+    sibling modules + shared style.py) (+ skip_manim, which swaps the real
+    render for a text_overlay fallback); for image types the source-image
+    fingerprint. A key mismatch => re-render.
+
+    NOT tracked (use --force-regen-visuals after changing these): the renderer
+    code in visual_generator.py itself, fonts, and non-.py assets.
+    """
+    visual = scene.get("visual", {})
+    parts = [
+        json.dumps(visual, sort_keys=True, ensure_ascii=False),
+        f"dur={round(float(duration), 3)}",
+    ]
+    vtype = visual.get("type")
+    if vtype == "manim":
+        parts.append(f"skip_manim={bool(skip_manim)}")
+        tpath = _resolve_manim_template_path(visual, manim_templates_dir)
+        if tpath:
+            # Hash the template's full local-dependency closure so editing a
+            # shared module (e.g. polyhedron_euler, style) invalidates dependents.
+            for dep in _manim_render_deps(tpath, manim_templates_dir):
+                parts.append(f"dep:{os.path.basename(dep)}={_file_hash(dep)}")
+        else:
+            parts.append("tmpl=none")
+    elif vtype in ("ken_burns", "pillow_chart"):
+        img = _resolve_source_image(scene, images_dir)
+        parts.append("img=" + (_file_fingerprint(img) if img else "none"))
+    payload = "\x00".join(parts)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _visual_cache_entry_matches(cache: dict | None, scene_id: str, key: str, mp4_path: str) -> bool:
+    """True iff the cached entry, the on-disk mp4, and the current key agree.
+
+    Requires cache present, entry exists, stored key == key, mp4 exists, and
+    (for new-format entries) the mp4 fingerprint matches — so an out-of-band
+    mp4 swap/truncation is a miss (mirrors _cache_entry_matches).
+    """
+    if cache is None:
+        return False
+    entry = cache.get(scene_id)
+    if not entry:
+        return False
+    stored_key = entry.get("key") if isinstance(entry, dict) else entry
+    if stored_key != key:
+        return False
+    if not os.path.exists(mp4_path):
+        return False
+    stored_fp = entry.get("mp4") if isinstance(entry, dict) else None
+    if stored_fp is not None:
+        return _file_fingerprint(mp4_path) == stored_fp
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate visual segments from scene_definition.json + timing.json"
@@ -2855,6 +3063,18 @@ def main():
     )
     parser.add_argument(
         "--blender-templates", default=None, help="Directory containing Blender templates"
+    )
+    parser.add_argument(
+        "--scenes",
+        default=None,
+        help="comma-separated scene_ids to (re-)render; other scenes keep "
+        "their existing mp4 untouched. Omit to consider all scenes.",
+    )
+    parser.add_argument(
+        "--force-regen-visuals",
+        action="store_true",
+        help="ignore the per-scene visual cache and re-render every "
+        "in-scope scene (the cache is still refreshed afterwards).",
     )
     args = parser.parse_args()
 
@@ -2935,6 +3155,22 @@ def main():
     }
     total_duration = 0.0
 
+    # Phase 2: incremental rebuild (default-on). Reuse an unchanged scene's
+    # mp4 instead of re-rendering. --scenes limits which scenes are considered;
+    # --force-regen-visuals bypasses the cache. The whole cache dict is loaded,
+    # mutated only for in-scope re-rendered scenes, and saved back — so reused
+    # and out-of-scope (--scenes) scenes keep their prior entries.
+    visual_cache = _load_visual_cache(visuals_dir)
+    scene_filter = None
+    if args.scenes:
+        scene_filter = {s.strip() for s in args.scenes.split(",") if s.strip()}
+        print(f"--scenes: {sorted(scene_filter)} のみ対象 (他は既存 mp4 を保持)")
+    if args.force_regen_visuals:
+        print
+    reused = 0
+    rendered = 0
+    kept = 0  # out-of-scope (--scenes) scenes left untouched
+
     for section in scene_def["sections"]:
         section_id = section["section_id"]
         print(f"\n=== Section: {section_id} ===")
@@ -2947,6 +3183,30 @@ def main():
             scene_timing = timing["scenes"].get(scene_id, {})
             duration = scene_timing.get("duration", 5.0)  # fallback 5s
             total_duration += duration
+
+            output_file = os.path.join(visuals_dir, f"{scene_id}.mp4")
+
+            # --scenes: out-of-scope scenes keep their existing mp4 (and cache
+            # entry) untouched, but are still counted so assemble sees them.
+            if scene_filter is not None and scene_id not in scene_filter:
+                stats[vtype] = stats.get(vtype, 0) + 1
+                kept += 1
+                miss = "" if os.path.exists(output_file) else " (mp4 無し!)"
+                print(f"  {scene_id} ({vtype}, {duration:.1f}s)... [KEEP]{miss}")
+                continue
+
+            # cache reuse decision (content key + on-disk mp4 fingerprint).
+            key = _visual_staleness_key(
+                scene, duration, manim_dir, images_dir, skip_manim=args.skip_manim
+            )
+            if not args.force_regen_visuals and _visual_cache_entry_matches(
+                visual_cache, scene_id, key, output_file
+            ):
+                stats[vtype] = stats.get(vtype, 0) + 1
+                reused += 1
+                size_kb = os.path.getsize(output_file) / 1024
+                print(f"  {scene_id} ({vtype}, {duration:.1f}s)... [REUSE] ({size_kb:.0f}KB)")
+                continue
 
             print(f"  {scene_id} ({vtype}, {duration:.1f}s)...", end=" ", flush=True)
             start_time = time.time()
@@ -2964,18 +3224,30 @@ def main():
             elapsed = time.time() - start_time
             stats[vtype] = stats.get(vtype, 0) + 1
 
-            output_file = os.path.join(visuals_dir, f"{scene_id}.mp4")
             if os.path.exists(output_file):
                 size_kb = os.path.getsize(output_file) / 1024
                 print(f"[OK] ({elapsed:.1f}s, {size_kb:.0f}KB)")
+                rendered += 1
+                # Record the render we just produced (content key + fingerprint).
+                visual_cache[scene_id] = {"key": key, "mp4": _file_fingerprint(output_file)}
             else:
                 print("[NG] output missing")
                 stats["stub"] = stats.get("stub", 0) + 1
+                # Drop any stale entry so a later run re-renders rather than
+                # trusting a vanished mp4.
+                visual_cache.pop(scene_id, None)
+
+    # Persist the cache (best-effort). Reused / out-of-scope entries are kept.
+    _save_visual_cache(visuals_dir, visual_cache)
 
     # Summary
     print(f"\n{'=' * 50}")
     print("Visual generation complete")
     print(f"  Total scenes:  {sum(stats.values())}")
+    reuse_line = f"  Rendered: {rendered}  Reused (cache): {reused}"
+    if scene_filter is not None:
+        reuse_line += f"  Kept (--scenes): {kept}"
+    print(reuse_line)
     print(f"  Total duration: {total_duration:.1f}s ({total_duration / 60:.1f} min)")
     for vtype, count in stats.items():
         if count > 0:
@@ -3008,6 +3280,8 @@ def rebuild_single_scene_visual(
       2. Load timing.json, get the target scene's duration
       3. Delete existing visuals/{scene_id}.mp4
       4. Call process_scene() for the target scene only
+      5. Update the visual cache for this scene (keeps a later full build
+         from reusing a stale mp4)
 
     Returns True on success.
     """
@@ -3076,6 +3350,19 @@ def rebuild_single_scene_visual(
         blender_templates_dir=blender_templates_dir,
     )
     elapsed = time.time() - start_time
+
+    # keep the visual cache consistent so a later full build cannot reuse
+    # a stale mp4 (or, on failure, skip re-rendering this scene). Load-update-save
+    # the whole cache, mirroring audio_generator.rebuild_single_scene_audio.
+    visual_cache = _load_visual_cache(visuals_dir)
+    if os.path.exists(output_path):
+        key = _visual_staleness_key(
+            target_scene, duration, manim_templates_dir, images_dir, skip_manim=False
+        )
+        visual_cache[scene_id] = {"key": key, "mp4": _file_fingerprint(output_path)}
+    else:
+        visual_cache.pop(scene_id, None)
+    _save_visual_cache(visuals_dir, visual_cache)
 
     if os.path.exists(output_path):
         size_kb = os.path.getsize(output_path) / 1024

@@ -76,6 +76,18 @@ ALL_STEPS = [
     "bgm",
 ]
 
+# steps that invoke the Claude CLI (directly or via a QA sub-step) and would
+# fail SILENTLY if the logged-in OAuth session expired. The startup auth preflight
+# runs whenever ANY of these is in the requested steps (not just "script"):
+#   script  -> pre-script fact check + reference review + script gen + QA gate
+#   images  -> image-narration Vision QA (qa_image_checker.py)
+#   thumbnail-> thumbnail Vision QA (qa_thumbnail_vision.py)
+#   visuals -> Manim Vision QA (manim_vision_qa.py)
+#   credits -> intro-semantic review
+# audio/subtitles/photos/assemble/bgm never call Claude (pure mechanical rebuilds
+# of just those skip the probe).
+CLAUDE_DEPENDENT_STEPS = frozenset({"script", "images", "thumbnail", "visuals", "credits"})
+
 # Output filenames
 # Why: prior layout wrote output.mp4 from assemble, then overwrote into output_final.mp4
 # from bgm. A failed bgm step left a stale output_final.mp4 from the previous run,
@@ -382,7 +394,7 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
         # 【音声合成】is only expected for VOICEVOX (attribution required). Cloud TTS
         # (Google Cloud Chirp3-HD) needs no attribution, so credits_generator omits
         # the section for engine=cloud (engine-aware, credits_generator.py) -- don't
-        # WARN, else a false-positive fires on every cloud episode. See feedback_cloud_tts_no_attribution.
+        # WARN, else a false-positive fires on every cloud episode. See internal notes.
         required_sections = [
             s
             for s in _DESCRIPTION_REQUIRED_SECTIONS
@@ -547,6 +559,55 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
             except OSError:
                 pass
 
+    # (Phase C): description.intro staleness vs episode_config.
+    # _description_meta.json (stamped by script_generator) records the intro-
+    # config signature + intro text hash at generation time. WARN only when the
+    # config's intro-narrative fields (theme/hook/modern_connection/
+    # intro_guidance) changed AND description.intro is still the byte-identical
+    # generated text -> credits_generator would bake the stale intro into
+    # description.txt (public 概要欄). Editing the intro by hand clears it (text
+    # hash differs -> assumed synced). Backward compat: no sidecar -> no-op.
+    # Complements the credits drift check above (which compares description.txt
+    # vs scene_def and cannot see a config->intro drift where both are stale).
+    if os.path.exists(scene_json) and os.path.exists(episode_config_path):
+        try:
+            from description_meta import check_staleness as _intro_check
+
+            with open(episode_config_path, encoding="utf-8") as _f:
+                _cfg_b42 = json.load(_f)
+            with open(scene_json, encoding="utf-8") as _f:
+                _sd_b42 = json.load(_f)
+            _stale = _intro_check(episode_dir, _cfg_b42, _sd_b42)
+            if _stale:
+                warnings.append(
+                    f"  [credits] description.intro STALE: {_stale} "
+                    "scene_def.description.intro を config に合わせて更新し "
+                    "`--steps credits` で description.txt を再生成してください。"
+                )
+        except Exception:  # noqa: BLE001 - verification helper, never fatal
+            pass
+
+    # (F): narration -> description.intro semantic review roll-up (ADVISORY).
+    # The credits step runs the Claude call and caches it; here we only READ the
+    # cached report (no Claude call, keeps verify cheap) and echo any dropped-
+    # qualifier flags into the final advisory box the user always reads. Mirrors
+    #'s "verify in several places, execute in one". No-op when no cache /
+    # stale cache / intro empty / the check was skipped.
+    if os.path.exists(scene_json):
+        try:
+            from intro_semantic_check import format_report, read_cached_report
+
+            with open(scene_json, encoding="utf-8") as _f:
+                _sd_b21 = json.load(_f)
+            _isem = read_cached_report(_sd_b21, episode_dir)
+            if _isem and _isem.get("issues"):
+                warnings.append(
+                    "  [credits] description.intro 限定詞欠落候補:\n"
+                    + format_report(_isem)
+                )
+        except Exception:  # noqa: BLE001 - verification helper, never fatal
+            pass
+
     scene_def = None
     if os.path.exists(scene_json):
         try:
@@ -625,47 +686,17 @@ def _preflight_modules() -> list[str]:
     return missing
 
 
-def _preflight_claude_cli(timeout_sec: int = 25) -> tuple[bool, str]:
-    """Ping Claude CLI with a trivial prompt. Returns (ok, message).
+def _preflight_claude_cli(timeout_sec: int = 25) -> tuple[bool, str, str]:
+    """Ping Claude CLI with a trivial prompt. Returns (ok, reason, message).
 
-    Cost: ~10-20s when healthy, 2-5s when 401. Trades a fixed startup cost
-    for avoiding the expired-token-style 57-minute dead-end on an expired token.
+    delegates to claude_backend.probe_claude_cli (single source of truth
+    for the ping + classification, unit-tested via classify_claude_ping). Cost
+    ~8-20s healthy, faster on 401. Trades a fixed startup cost for avoiding the
+    expired-token dead-end where the whole QA layer fails silently mid-build.
     """
-    try:
-        result = subprocess.run(
-            [
-                "claude",
-                "-p",
-                "--output-format",
-                "text",
-                "--allowedTools",
-                "Read",
-                "--model",
-                "claude-opus-4-6",
-                "reply exactly with the word pong",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except subprocess.TimeoutExpired:
-        return False, f"Claude CLI ping timed out after {timeout_sec}s"
-    except FileNotFoundError:
-        return False, "Claude CLI ('claude' command) not found in PATH"
+    from claude_backend import probe_claude_cli
 
-    combined = (result.stdout or "") + (result.stderr or "")
-    if result.returncode != 0:
-        hint = (
-            "authentication (401)"
-            if "401" in combined or "authenticat" in combined.lower()
-            else "non-zero exit"
-        )
-        return False, f"Claude CLI failed [{hint}]: {combined.strip()[:300]}"
-    if "pong" not in (result.stdout or "").lower():
-        return False, f"Claude CLI unexpected response: {(result.stdout or '').strip()[:200]}"
-    return True, "OK"
+    return probe_claude_cli(timeout_sec)
 
 
 def _preflight_voicevox(
@@ -708,11 +739,15 @@ def _env_or_dotenv(key: str) -> str | None:
     return None
 
 
-def run_preflight_checks(steps: list[str], engine: str = "voicevox") -> None:
+def run_preflight_checks(
+    steps: list[str], engine: str = "voicevox", skip_auth_probe: bool = False
+) -> None:
     """Run fail-fast environment checks; sys.exit(1) with clear guidance on failure.
 
     `engine` gates the VOICEVOX server check: engine="cloud" needs no local
     VOICEVOX (Cloud TTS is a remote REST API), so that check is skipped.
+    `skip_auth_probe` skips the Claude CLI auth ping (offline / mechanical
+    rebuild where a stale token is acceptable).
     """
     print("=" * 60)
     print("  Preflight Checks")
@@ -750,23 +785,39 @@ def run_preflight_checks(steps: list[str], engine: str = "voicevox") -> None:
         sys.exit(1)
     print("OK")
 
-    # (2) Claude CLI auth — only if steps that call it will run
-    claude_steps = {"script"}  # QA gate and pronunciation check also call Claude CLI
-    needs_claude = bool(claude_steps & set(steps))
-    if needs_claude:
+    # (2) Claude CLI auth — run whenever ANY Claude-dependent step will run
+    # (not just "script"). A --steps qa/credits/visuals rebuild also calls Claude,
+    # and previously skipped this probe -> its QA silently degraded on a dead token.
+    needs_claude = bool(CLAUDE_DEPENDENT_STEPS & set(steps))
+    if skip_auth_probe:
+        print("  [2/3] Claude CLI auth... skipped (--skip-auth-probe)")
+    elif needs_claude:
         print("  [2/3] Claude CLI auth... ", end="", flush=True)
-        ok, msg = _preflight_claude_cli()
+        ok, reason, msg = _preflight_claude_cli()
         if not ok:
             print("FAIL")
             print(f"    {msg}")
             print()
-            print("  Fix: Open Claude Code in VSCode/terminal and re-login if needed,")
-            print("       or set ANTHROPIC_API_KEY in the environment.")
+            if reason == "auth":
+                print("  OAuth セッションが失効している可能性が高いです。再認証してください:")
+                print("    claude setup-token   (1年有効な OAuth トークンを発行)")
+                print("  または ANTHROPIC_API_KEY を環境変数に設定。")
+            elif reason == "not_found":
+                print(
+                    "  'claude' コマンドが PATH にありません。Claude Code CLI を確認してください。"
+                )
+            elif reason == "timeout":
+                print("  応答なし (ネットワーク or CLI ハング)。再試行するか、Claude を使わない")
+                print("  ステップだけなら --skip-auth-probe を付けてください。")
+            else:
+                print("  Claude CLI が異常応答。再認証 (claude setup-token) と CLI の動作を確認、")
+                print("  または Claude を使わないビルドなら --skip-auth-probe を付けてください。")
             print()
             pipeline_log.emit(
                 pipeline_log.LEVEL_CRITICAL,
                 "preflight",
                 "claude cli auth failed",
+                reason=reason,
                 detail=msg,
             )
             pipeline_log.close()
@@ -844,6 +895,7 @@ def _run_partial_rebuild(
     tts_voice: str | None = None,
     tts_rate: float | None = None,
     force_regen: bool = False,
+    skip_intro_check: bool = False,
 ) -> None:
     """Rebuild a single scene and re-run assembly + credits + bgm.
 
@@ -1025,6 +1077,8 @@ def _run_partial_rebuild(
     intro_pause = bgm_config.get("intro_pause", 1.0)
     if intro_pause > 0:
         cmd.extend(["--intro-pause", str(intro_pause)])
+    if skip_intro_check:
+        cmd.append("--skip-intro-check")
     run_step("credits (partial rebuild)", cmd, required=False)
 
     # --- Step 6: BGM mixing (full, unavoidable) ---
@@ -1106,6 +1160,48 @@ def _drain_stderr(stream, on_marker, on_raw) -> None:
 # (cloud_reading_lint / speed_qa / manim_vision_qa / dead-air) cannot be missed by a
 # reader who scans only the 'Pipeline Complete' tail.
 _advisory_warn_counts: dict[str, int] = {}
+
+# parent-side auth-probe warnings raised mid-build (a token that was valid at
+# startup expired before a late Claude QA step). Surfaced prominently in the final
+# summary so the "QA silently skipped" case is unmissable.
+_auth_probe_warnings: list[str] = []
+
+
+def _reprobe_claude_mid_build(context: str, resume_hint: str, skip: bool) -> bool:
+    """ mid-build auth re-probe before a late Claude-dependent QA step.
+
+    Returns True if Claude is reachable (proceed with the step), False if the
+    token looks expired/unreachable. On failure it does NOT abort (these late QA
+    steps are advisory / never-blocking, and the expensive assets are already
+    built) -- instead it prints a LOUD notice, records a roll-up warning, and the
+    caller SKIPS the step (running it would only yield a buried cascade of
+    "Claude returned no output"). `skip` short-circuits to True (--skip-auth-probe).
+    """
+    if skip:
+        return True
+    ok, reason, msg = _preflight_claude_cli()
+    if ok:
+        return True
+    banner = (
+        f"Claude CLI auth 失効の可能性 ({reason}) -- {context} を skip します。\n"
+        f"    {msg}\n"
+        f"    再認証: claude setup-token  →  再開: {resume_hint}"
+    )
+    print(f"\n{'!' * 60}")
+    print
+    print(f"{'!' * 60}\n")
+    _auth_probe_warnings.append(f"{context}: {reason} ({resume_hint})")
+    try:
+        pipeline_log.emit(
+            pipeline_log.LEVEL_WARNING,
+            "auth_probe",
+            "claude auth expired mid-build",
+            reason=reason,
+            context=context,
+        )
+    except Exception:
+        pass
+    return False
 
 
 def _tally_advisory_warning(event: dict) -> None:
@@ -1340,6 +1436,14 @@ def main():
         "re-synthesize just the changed sentences).",
     )
     parser.add_argument(
+        "--force-regen-visuals",
+        action="store_true",
+        help=" Phase 2: re-render every scene, ignoring the per-scene "
+        "visual cache. Default: the visuals step reuses unchanged scene mp4s "
+        "and re-renders only scenes whose visual/params/template/source-image/"
+        "duration changed (48min -> minutes on review iterations).",
+    )
+    parser.add_argument(
         "--normalize-cloud-speed",
         action="store_true",
         help="after Cloud TTS synthesis, atempo-normalize per-sentence "
@@ -1354,6 +1458,23 @@ def main():
         "--fact-check-allow-warn",
         action="store_true",
         help="continue on WARNING (CRITICAL still aborts)",
+    )
+    parser.add_argument(
+        "--skip-reference-check",
+        action="store_true",
+        help="skip references bibliographic review (advisory F layer, never blocks)",
+    )
+    parser.add_argument(
+        "--skip-intro-check",
+        action="store_true",
+        help=" (F): skip narration->description.intro semantic review in the "
+        "credits step (advisory, Claude, cached; never blocks)",
+    )
+    parser.add_argument(
+        "--skip-auth-probe",
+        action="store_true",
+        help="skip the Claude CLI auth ping (startup preflight + mid-build "
+        "re-probe). Use for offline / mechanical rebuilds where a stale token is ok.",
     )
     parser.add_argument(
         "--skip-qa-image-narration",
@@ -1554,10 +1675,12 @@ def main():
     # ─── Preflight: fail fast on venv / Claude auth / VOICEVOX issues ───
     # a past run lost 57min on expired Claude token + 30min on system-Python run.
     # Cheap upfront checks avoid these dead-ends.
-    # --rebuild-scene only touches visuals/assemble/bgm → smaller check set.
-    # Cloud engine skips the VOICEVOX server check (no local server needed).
-    preflight_steps = ["assemble", "bgm"] if args.rebuild_scene else steps
-    run_preflight_checks(preflight_steps, engine=tts_engine)
+    # --rebuild-scene touches visuals/assemble/credits/bgm → smaller check set.
+    # "credits" is kept so the auth probe still runs: the partial rebuild's
+    # credits step calls Claude (intro-semantic review). Cloud engine skips the
+    # VOICEVOX server check (no local server needed).
+    preflight_steps = ["assemble", "credits", "bgm"] if args.rebuild_scene else steps
+    run_preflight_checks(preflight_steps, engine=tts_engine, skip_auth_probe=args.skip_auth_probe)
 
     # ─── Validate config ─────────────────────────────────────────────────
     from config_validator import print_validation_result, validate_config
@@ -1605,6 +1728,7 @@ def main():
             tts_voice=tts_voice,
             tts_rate=tts_rate,
             force_regen=args.force_regen_audio,
+            skip_intro_check=args.skip_intro_check,
         )
         pipeline_progress.finish("complete", _output_final_summary(episode_dir))
         return  # Exit without entering the full-build path
@@ -1669,6 +1793,7 @@ def main():
             _report = run_pre_script_fact_check(
                 episode_config=config,
                 episode_dir=episode_dir,
+                use_references=not args.skip_reference_check,
             )
             print_pre_script_fact_check_report(_report)
             save_report(_report, episode_dir)
@@ -2446,6 +2571,8 @@ def main():
             ]
             if args.skip_manim:
                 cmd.append("--skip-manim")
+            if args.force_regen_visuals:
+                cmd.append("--force-regen-visuals")
             run_step("visuals", cmd)
 
             # ─── レンダ後の白帯チェック (納品物検査) ───
@@ -2490,13 +2617,23 @@ def main():
             # 判定。決定論 lint (Y座標/MathTex/末尾静止) が捕まえない意味・美観の欠陥
             # を出荷前に検出。
             # advisory (Anthropic Max 内コスト0)。
+            # the visuals step lands ~30-40 min into a build (after audio /
+            # photos / image-gen / manim render), the canonical window for the
+            # startup OAuth token to have expired. Re-probe right before this Claude
+            # Vision QA so a dead token is surfaced loudly (and the step skipped)
+            # instead of the Vision QA silently returning "no output" per scene.
             vqa_script = os.path.join(os.path.dirname(src_dir), "scripts", "manim_vision_qa.py")
             if os.path.exists(vqa_script):
-                run_step(
-                    "manim_vision_qa (Vision: 意味/動き/衝突)",
-                    [sys.executable, vqa_script, scene_json],
-                    required=False,
-                )
+                if _reprobe_claude_mid_build(
+                    "Manim Vision QA",
+                    "python src/pipeline.py <config> --steps visuals,credits --skip-script",
+                    skip=args.skip_auth_probe,
+                ):
+                    run_step(
+                        "manim_vision_qa (Vision: 意味/動き/衝突)",
+                        [sys.executable, vqa_script, scene_json],
+                        required=False,
+                    )
 
             # misreading: deterministic text-collision preflight. manim_vision_qa (Sonnet
             # vision) MISSED the gp_ap/curve label proximity -- the user found those by
@@ -2590,6 +2727,8 @@ def main():
         intro_pause = bgm_config.get("intro_pause", 1.0)
         if intro_pause > 0:
             cmd.extend(["--intro-pause", str(intro_pause)])
+        if args.skip_intro_check:
+            cmd.append("--skip-intro-check")
         run_step("credits", cmd, required=False)
 
     # ─── Step 8: BGM mixing ──────────────────────────────────────────────
@@ -2700,6 +2839,16 @@ def main():
     if _advisory_warn_counts:
         _roll = "  ".join(f"{k}={v}" for k, v in _advisory_warn_counts.items())
         print(f"  [!] advisory warnings -- {_roll} (review each step's output above)")
+
+    # mid-build Claude auth expiry -> some Claude QA was SKIPPED (not run
+    # silently). Surface prominently with resume guidance so it is unmissable.
+    if _auth_probe_warnings:
+        print(
+            f"  [!!] Claude auth 失効で {len(_auth_probe_warnings)} 件の QA を skip しました "
+            "-- 再認証 (claude setup-token) 後に該当ステップを再実行してください:"
+        )
+        for _w in _auth_probe_warnings:
+            print(f"       - {_w}")
 
     print(f"{'=' * 60}")
 

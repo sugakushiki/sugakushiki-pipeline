@@ -648,6 +648,184 @@ def _save_cache(cache_path: str, data: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# F: References bibliographic review -- ADVISORY only
+#
+# Empirically (2026-07-24) the deterministic API approach (a)/(b) cannot reach
+# FP=0: Open Library returns 0 hits for the real Laugwitz book AND Shannon's
+# journal articles (coverage gap -> "0 hits = fabricated" false-positives real
+# works), and reprint/reissue years (Dupuy 'La vie d'Évariste Galois': config
+# cites the correct 1896 original, API returns the 1992 reprint) make a year
+# compare false-positive on correct citations. ISBN is absent from all 693
+# references. So the FP-safe path is an LLM advisory review that can reason about
+# editions / translations / journals (layer F).
+#
+# Signal/noise measured on 9 shipped episodes (~65 correct refs) + a torture set:
+#   recall 4/4 on planted errors (wrong author / wrong year / fabricated title /
+#   translation-year), 0 hallucinated FP on clearly-correct entries, and it found
+#   2 REAL latent errors in shipped configs, both web-confirmed. Anti-hallucination
+#   held: correction stays null, verify_hint points at primary sources.
+#
+# ADVISORY = these issues go under report["reference_advisory"], NEVER merged
+# into report["issues"], so they cannot contribute to the pipeline's blocking
+# severity count (the human web-verifies each flag; approach-A default).
+# ---------------------------------------------------------------------------
+
+
+def _reference_is_url_only(ref: str) -> bool:
+    """True when a reference is essentially just a site/URL pointer (MacTutor /
+    Wikipedia / Britannica). These are validated by credits_generator's URL
+    checks, so the bibliographic review skips them. Heuristic: a URL is present
+    AND the non-URL remainder carries no year (no author/title/publisher clause
+    to attribute-check)."""
+    r = ref.strip()
+    if "http" not in r:
+        return False
+    non_url = re.sub(r"https?://\S+", "", r)
+    return not re.search(r"(1[5-9]\d\d|20\d\d)", non_url)
+
+
+def build_reference_check_prompt(episode_config: dict) -> str:
+    """Narrow, advisory, anti-hallucination prompt for reviewing references.
+
+    Design (calibrated 2026-07-24): flag ONLY high-confidence wrong attributions;
+    do NOT assert corrections (LLMs fabricate bibliographic detail -- ask the
+    human to web-verify instead); stay quiet when unsure (precision over recall);
+    never declare a journal / non-English / old primary source "nonexistent"
+    just because it is outside the model's knowledge (that is the API's failure
+    mode we are avoiding)."""
+    subject = episode_config.get("mathematician_ja") or episode_config.get("mathematician", "?")
+    subject_en = episode_config.get("mathematician", "")
+    refs = [r for r in episode_config.get("references", []) if isinstance(r, str)]
+    book_refs = [r for r in refs if not _reference_is_url_only(r)]
+    ref_lines = "\n".join(f"  [{i}] {r}" for i, r in enumerate(book_refs)) or "  (なし)"
+
+    return f"""あなたは数学史の書誌 (参考文献) の正確性を検証する専門家です。
+以下は動画「{subject} ({subject_en})」の episode_config.json の references です。
+これらは YouTube 概要欄の【主要参考文献】に出るため、著者・書名・出版年・出版社・
+訳者の attribution が誤っていると学術的信頼性を損ないます。
+
+# 検証対象の references (URL のみの項目は除外済み)
+{ref_lines}
+
+# タスク
+各 reference について、あなたの知識ベースで **高い確信をもって誤り** と判断できる
+attribution のみを報告してください。特に次に注意:
+1. 著者がその書名の著者か (別人の著作を誤帰属していないか)
+2. 出版年 — とりわけ **原典 / 翻訳 / 復刻 (reprint) の年を取り違えていないか**
+3. 出版社・叢書名・訳者の誤り
+4. 実在しない書名・でっちあげの疑い
+
+# 重要な制約 (厳守)
+- **正しい値を断定しないでください**。あなたも版・訳・復刻の年を誤りやすい。
+  「ここが疑わしい、人間が一次資料 (出版社ページ / WorldCat / 図書館目録) で
+  確認すべき」という **確認喚起** として報告し、correction には推測を書かない
+  (確証がなければ null)。
+- **確信が持てない項目は報告しない** (precision 優先)。雑音を出すくらいなら PASS。
+- ジャーナル論文・非英語文献・古い一次資料は、あなたの知識に無くても
+  「存在しない」と判断しないでください (知識ベースの網羅性の限界)。
+
+# 出力形式 (JSON のみ、JSON 以外のテキストは書かない)
+```json
+{{
+  "status": "PASS" または "WARN",
+  "issues": [
+    {{
+      "severity": "warning" または "info",
+      "ref_index": 0,
+      "ref_quote": "問題の reference から短く引用",
+      "finding": "なぜ疑わしいか (年の取り違え/著者誤帰属/等)",
+      "verify_hint": "人間が確認すべき一次情報源",
+      "correction": null,
+      "confidence": 0.0-1.0
+    }}
+  ],
+  "reviewed_count": 検証した book reference 数,
+  "summary": "1-2文"
+}}
+```
+- WARN = 高確信の疑わしい項目が1件以上。PASS = 報告なし。
+- confidence < 0.7 の項目は原則 info。確証度の低いものは出さない。
+- 出力は assistant の text ブロックに直接、ツールを使わず書いてください。
+"""
+
+
+def _references_hash(episode_config: dict) -> str:
+    """Hash the references list only, so the reference cache invalidates when a
+    reference is edited but not when unrelated config fields change."""
+    refs = [r for r in episode_config.get("references", []) if isinstance(r, str)]
+    return hashlib.sha256(json.dumps(refs, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def run_reference_check(episode_config: dict, episode_dir: str, debug: bool = False) -> dict:
+    """ layer F: advisory bibliographic review of references via Claude.
+
+    Returns {status, issues, reviewed_count, summary}. Issues are ADVISORY --
+    severity is capped to warning/info (never critical), source-tagged, and the
+    caller stores this under report["reference_advisory"] (NOT report["issues"]),
+    so it never feeds the pipeline's blocking severity count. Graceful-degrades
+    to status="UNAVAILABLE" on empty/parse failure."""
+    book_refs = [
+        r
+        for r in episode_config.get("references", [])
+        if isinstance(r, str) and not _reference_is_url_only(r)
+    ]
+    if not book_refs:
+        return {
+            "status": "PASS",
+            "issues": [],
+            "reviewed_count": 0,
+            "summary": "書籍 reference なし",
+        }
+
+    cache_path = os.path.join(episode_dir, "_reference_check_cache.json")
+    cache = _load_cache(cache_path)
+    ref_hash = _references_hash(episode_config)
+    if cache.get("reference_hash") == ref_hash and "reference_report" in cache:
+        print("  [reference-check] cache hit, skipping Claude call")
+        report = cache["reference_report"]
+    else:
+        print(f"  [reference-check] reviewing {len(book_refs)} book reference(s) via Claude...")
+        from claude_backend import call_claude
+
+        prompt = build_reference_check_prompt(episode_config)
+        t0 = time.time()
+        response = call_claude(
+            prompt=prompt, model="opus", debug=debug, prefix="refcheck", allowed_tools="Read"
+        )
+        elapsed = time.time() - t0
+        print(f"  [reference-check] returned in {elapsed:.1f}s ({elapsed / 60:.1f} min)")
+        report = parse_fact_check_response(response)
+        # Graceful degrade: parse_fact_check_response emits a synthetic critical
+        # "internal" issue on empty/broken output. A reference review is advisory,
+        # so treat that as UNAVAILABLE (do not surface a scary fake issue, do not
+        # cache a failure) rather than a real finding.
+        if any(i.get("field") == "internal" for i in report.get("issues", [])):
+            print("  [reference-check] unavailable (empty/parse failure) -- advisory skipped")
+            return {
+                "status": "UNAVAILABLE",
+                "issues": [],
+                "reviewed_count": len(book_refs),
+                "summary": "reference review unavailable (empty/parse failure)",
+            }
+        _save_cache(
+            cache_path,
+            {
+                "reference_hash": ref_hash,
+                "reference_report": report,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            },
+        )
+
+    # Advisory hardening: cap any critical to warning, tag source.
+    for issue in report.get("issues", []):
+        if issue.get("severity") == "critical":
+            issue["severity"] = "warning"
+        issue.setdefault("source", "claude_reference")
+    report.setdefault("reviewed_count", len(book_refs))
+    return report
+
+
+# ---------------------------------------------------------------------------
 # Main entry
 # ---------------------------------------------------------------------------
 
@@ -658,6 +836,7 @@ def run_pre_script_fact_check(
     use_claude: bool = True,
     use_arithmetic: bool = True,
     use_wikidata: bool = True,
+    use_references: bool = True,
     debug: bool = False,
 ) -> dict:
     """Run all enabled layers and return a merged report dict."""
@@ -734,6 +913,21 @@ def run_pre_script_fact_check(
             "summary": c_report.get("summary"),
         }
 
+    # Layer F: references bibliographic review -- ADVISORY.
+    # Stored under report["reference_advisory"], deliberately NOT merged into
+    # report["issues"], so reference flags never affect the blocking severity
+    # roll-up below (the human web-verifies each flag; approach-A default).
+    if use_references:
+        print("  [pre-script fact-check] reviewing references (advisory)...")
+        ref_report = run_reference_check(episode_config, episode_dir, debug=debug)
+        report["reference_advisory"] = ref_report
+        report["layer_summary"]["references"] = {
+            "status": ref_report.get("status"),
+            "issues": len(ref_report.get("issues", [])),
+            "reviewed_count": ref_report.get("reviewed_count"),
+            "summary": ref_report.get("summary"),
+        }
+
     # Roll-up status
     sev_counts = {"critical": 0, "warning": 0, "info": 0}
     for issue in report["issues"]:
@@ -784,6 +978,27 @@ def print_pre_script_fact_check_report(report: dict) -> None:
             conf = issue.get("confidence")
             if conf is not None:
                 print(f"     confidence: {conf}")
+
+    # references advisory (separate from the blocking issues above).
+    ref_adv = report.get("reference_advisory")
+    if ref_adv:
+        ref_issues = ref_adv.get("issues", [])
+        print(f"\n  References: {ref_adv.get('status', '?')}")
+        if ref_issues:
+            print("  ** 書誌 attribution の要確認 -- 一次資料で web verify のこと (鵜呑み禁止) **")
+            for issue in ref_issues:
+                sev_tag = issue.get("severity", "info").upper()
+                print(f"  [{sev_tag}] references[{issue.get('ref_index', '?')}]")
+                print(f"     quote:   {str(issue.get('ref_quote', ''))[:120]}")
+                print(f"     finding: {str(issue.get('finding', ''))[:200]}")
+                vh = issue.get("verify_hint")
+                if vh:
+                    print(f"     verify:  {str(vh)[:200]}")
+                conf = issue.get("confidence")
+                if conf is not None:
+                    print(f"     confidence: {conf}")
+        else:
+            print(f"     {ref_adv.get('summary', '')[:160]}")
     print(f"{'=' * 60}\n")
 
 
@@ -819,6 +1034,11 @@ def _main():
         "--no-arithmetic", action="store_true", help="skip D layer (arithmetic sanity)"
     )
     parser.add_argument("--no-wikidata", action="store_true", help="skip E layer (Wikidata SPARQL)")
+    parser.add_argument(
+        "--no-references",
+        action="store_true",
+        help="skip F layer",
+    )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
@@ -833,6 +1053,7 @@ def _main():
         use_claude=not args.no_claude,
         use_arithmetic=not args.no_arithmetic,
         use_wikidata=not args.no_wikidata,
+        use_references=not args.no_references,
         debug=args.debug,
     )
     print_pre_script_fact_check_report(report)

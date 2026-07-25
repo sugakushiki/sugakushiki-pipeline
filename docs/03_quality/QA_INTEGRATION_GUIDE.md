@@ -114,7 +114,10 @@ python src/qa_checker.py episodes/<id>/scene_definition.json --gate script
 1. **narration を編集したら `narration_speech` と `narration_speech_cloud` も同期する**
    — 読み替えテキストが古いまま残ると、音声だけが旧文面で合成される
 2. **`description.intro` も確認する** — 数学的な前提条件や限定詞が narration 側
-   だけ直って intro から落ちると、概要欄が不正確になる
+   だけ直って intro から落ちると、概要欄が不正確になる。
+   `python scripts/check_intro_semantic.py <episode_dir>` で機械的にも見られる
+   (advisory。`episode_config` 側を直した場合は
+   `python scripts/check_description_staleness.py <episode_dir>`)
 3. **大量修正・事実修正・横断修正のあとは standalone で再検証する** —
    `qa_checker.py --gate script` を通してから、asset 生成を含む再ビルドに進む
 4. **読みや速度を変えたなら `--steps` に `subtitles` を含める** — narration の

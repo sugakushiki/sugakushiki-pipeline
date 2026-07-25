@@ -72,12 +72,25 @@ QA SourceManager warning が出ている各 unsourced_claim について:
 - **cloud の生成主体は gen_cloud_readings** (LLM ではない): script_generator は LLM が出力した `narration_speech_cloud` を strip し、gen_cloud が narration から native は で再生成する。手書きで既存 cloud を調整する場合のみ上記の孤立助詞ルールに従う (config に「LLM に narration_speech_cloud を用意させる」指示を書かない)。
 - 未設定なら cloud は `narration_speech`→`narration` に fallback し「読み未検証」WARN。
 - `validate_narration_speech()` は両フィールドの空要素を fail-fast、`lint_narration_markers()` は両フィールドの長さ不一致を WARN。
-- Cloud 読みの検証は `scripts/stt_qa.py` (Gemini STT)。VOICEVOX の pronunciation_check/reading_guard は cloud には走らない。
+- Cloud 読みの検証は 3 層: 合成前の静的 lint `scripts/cloud_reading_lint.py` / 合成後の `scripts/stt_qa.py` (Gemini STT) / 出荷物の `scripts/verify_shipped_audio.py` (`output_final.mp4` を STT)。VOICEVOX の pronunciation_check/reading_guard は cloud には走らない。
 
 ### 自動検証
 
 `audio_generator.py` の `lint_narration_markers()` が narration vs narration_speech の drift を WARN として検出 (speech 側の漢字欠落 + 数字列不一致を subseq 比較)。
 ただし完全 kana speech・漢字共有編集・句読点編集は構造上検出不能。
+
+## narration を編集したら `description.intro` も見る
+
+`description.intro` は公開 YouTube 概要欄の【導入】に焼かれるが、**narration とは自動同期
+されない**。特に危険なのは、本編が持っている**数学的な前提条件・限定詞**が intro から
+落ちて、要約のつもりが誤った主張になるケース (本編「無矛盾な形式体系には…」に対し
+intro が『無矛盾な』を落とすと、不完全性定理として成り立たなくなる)。
+
+- 詳細を削るのは正常。**限定詞を削ると命題が変わる**、が判定の軸
+- 機械的にも見られる: `python scripts/check_intro_semantic.py <episode_dir>` (advisory)
+- `episode_config` の導入系フィールドを直した場合は別軸のチェック:
+  `python scripts/check_description_staleness.py <episode_dir>`
+- どちらも**指摘は correction を出さない**設計。本編と照らして人間が決める
 
 ## 関連 docs
 

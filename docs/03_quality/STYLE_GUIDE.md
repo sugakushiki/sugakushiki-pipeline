@@ -48,7 +48,23 @@
 
 ---
 
-## 2. 音声（VOICEVOX）
+## 2. 音声
+
+音声合成エンジンは `episode_config.json` の `tts.engine` で選ぶ（既定 `voicevox`）。
+**どちらを使うかで読み調整の手順が変わる**ので、まず自分の回のエンジンを確認する。
+
+| | `voicevox`（既定） | `cloud` |
+|---|---|---|
+| エンジン | VOICEVOX 0.25.1（ローカル GUI が必要） | Google Cloud TTS Chirp3-HD |
+| 読みの調整先 | `narration_speech` | `narration_speech_cloud`（生成は自動）+ SSML |
+| 合成前の読み確認 | `audio_query` の kana を実測できる | できない（合成後の STT で確認する） |
+| 話速 | `speedScale` で一律・決定論的 | 文ごとに揺れるので後段で正規化する |
+| 概要欄のクレジット | **必須**（下記ライセンス参照） | 不要 |
+
+以下 §2 は **VOICEVOX 回の規約**。Cloud 回の読み・速度の扱いは
+[`cloud_tts_qa.md`](cloud_tts_qa.md) を参照する。
+
+### VOICEVOX パラメータ
 
 | 項目 | 値 |
 |---|---|
@@ -59,6 +75,9 @@
 | pitchScale | -0.02 |
 
 NHKドキュメンタリーのナレーターが参考イメージ。やや遅め、感情を込めすぎない朗読調。
+
+> Cloud 回では `pitchScale` / `pauseLengthScale` は送らない（Chirp3-HD は `pitch` 非対応）。
+> 渡すのは `speakingRate`（`tts.rate`、既定 0.90）だけ。
 
 ### narration_speech（音声読み替え）
 
@@ -147,6 +166,9 @@ query["pitchScale"] = -0.02
 - 青山龍星（VirVox Project）：個人YouTubeの広告収益は「非営利かつ有償利用」扱いで申請不要
 - **クレジット表記**：YouTube概要欄に `VOICEVOX:青山龍星` を記載
 - **注意**：法人・個人事業主・企業スポンサー契約がある場合は「Nanahapi」への事前申請が必要。個人事業主化の際は要対応
+- **Cloud TTS 回にはクレジット表記の義務が無い**ので、概要欄に音声合成の行を入れない。
+  VOICEVOX 回のテンプレートをそのまま流用して誤って記載しないこと（画像クレジットは別で、
+  エンジンに関わらず必要）
 
 ---
 
@@ -217,9 +239,19 @@ def styled_text(*parts, font_size=28):
 | スタイル | 用途 | 外観 |
 |---|---|---|
 | definition | 数学的定義 | 枠線つき |
-| quote | 引用文 | イタリック風 |
+| quote | 引用文 | イタリック風 (装飾の「」を自動描画) |
 | title_card | タイトル・セクション表示 | 大きめフォント |
 | fact | 数値・事実の強調 | アクセント色 |
+
+### テンプレート詳細仕様の参照先 (SSOT)
+
+上表は概要のみ。**各 visual type のパラメータ・レイアウト規約・既知の落とし穴は以下が権威 (SSOT)。本ガイドに詳細を重複させない**:
+
+| 参照先 | 内容 |
+|---|---|
+| [`docs/02_pipeline/SCENE_SPEC.md`](../02_pipeline/SCENE_SPEC.md) | 各 visual type のスキーマ・params (route_map の `bounds`/`city_offsets`/`legend`、formula_display の singular/plural、text_overlay の `content.main`/`sub`/`style`) |
+| [`.claude/rules/manim-development.md`](../../.claude/rules/manim-development.md) | Manim テンプレ作成チェックリスト・Y 座標規約・カラーパレット・`style.pace` 尺配分 (path-scoped、テンプレ編集時に自動ロード) |
+| [`docs/03_quality/pitfalls.md`](pitfalls.md) | カテゴリ別の落とし穴。特に text_overlay は生キャレット `x^3` → `$...$` TeX、`style:quote` に content.main のリテラル「」で二重括弧。formula_display は 1 要素 plural の auto-promote。route_map はラベル衝突回避 と見切れ検出 |
 
 ---
 

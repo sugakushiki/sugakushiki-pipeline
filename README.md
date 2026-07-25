@@ -41,7 +41,8 @@ flowchart LR
 ## 主な機能
 
 - **end-to-end 統合**: `episode_config.json` 1 枚から完成 mp4 まで 10 ステップを自動実行 (中断・再開・部分再ビルド対応)
-- **多層防御 QA**: 3 層の事前検証 (config / 事前事実 / smoke test) + 多系統 lint (自動: script QA / image QA / Manim 史実整合 / Manim 図の Vision QA と bbox 衝突検出 / route_map 衝突 / サムネイル Vision QA / cliche scanner / 白縁検出 / 肖像参照 gap、手動: 数式変数整合 / cross-ep 用語整合 / 出荷 mp4 の音声再確認) + build 後の構造 verify。**判定が決定論的なガードは中断し、非決定的な判定 (Vision・STT・実測値) は advisory** に留める
+- **多層防御 QA**: 3 層の事前検証 (config / 事前事実 / smoke test) + 多系統 lint (自動: script QA / image QA / Manim 史実整合 / Manim 図の Vision QA と bbox 衝突検出 / route_map 衝突 / サムネイル Vision QA / cliche scanner / 白縁検出 / 肖像参照 gap / 公開概要欄の導入文ドリフト、手動: 数式変数整合 / cross-ep 用語整合 / 出荷 mp4 の音声再確認) + build 後の構造 verify。**判定が決定論的なガードは中断し、非決定的な判定 (Vision・STT・実測値) は advisory** に留める
+- **QA が黙って死なないようにする**: LLM QA は認証切れ・API 不通で graceful degrade する設計なので、放っておくと「QA が 1 つも走らなかったビルド」が成功として終わる。Claude CLI の認証 ping を起動時と**ビルド中盤 (Vision QA の直前) の 2 回**打ち、失効していれば何を skip したかを最終サマリに明示する
 - **構造化ログ**: severity 3 階層 (`info` / `warning` / `critical`)、JSON line 形式、`--log-file PATH` opt-in (既定はバイト同一性維持)
 - **duration-aware Manim**: 各 Manim テンプレートが `timing.json` から実音声尺を取得し、アニメ再生時間を自動同期
 - **TTS エンジン 2 系統**: `episode_config.json` の `tts.engine` で VOICEVOX (ローカル) と Google Cloud TTS (Chirp3-HD) を切替。**両者は API の能力が違うため QA の形も変わる** — VOICEVOX は合成前に kana を実測できるので予防型の読みガード、Cloud は実測できないので合成後の STT で検証し、代わりに文単位の発話速度ゆれを実測して正規化する
@@ -167,6 +168,8 @@ sugakushiki/
 │   ├── blender_renderer.py       # Blender headless レンダリング (Eevee CPU)
 │   ├── video_assembler.py        # FFmpeg 3 段アセンブリ
 │   ├── credits_generator.py      # YouTube 概要欄 + チャプター + クレジット
+│   ├── description_meta.py       # 概要欄 導入文の staleness 署名 (config → intro)
+│   ├── intro_semantic_check.py   # 概要欄 導入文の意味一致 review (narration → intro)
 │   ├── bgm_mixer.py              # BGM ミックス + 冒頭ポーズ + 末尾フェード
 │   ├── thumbnail_generator.py    # YouTube サムネイル生成 (3 パターン)
 │   ├── qa_checker.py             # QA Gate 1 (複数エージェント)
@@ -175,7 +178,7 @@ sugakushiki/
 │   ├── qa_manim_consistency.py   # Manim 史実整合 lint
 │   ├── qa_thumbnail_vision.py    # サムネイルの Vision QA (識別性判定)
 │   ├── qa_formula_variable_consistency.py  # 数式表示と Manim 変数の整合 lint
-│   ├── pre_script_fact_check.py  # 事前事実チェック (Claude + 算術 + Wikidata)
+│   ├── pre_script_fact_check.py  # 事前事実チェック (Claude + 算術 + Wikidata + 書誌 review)
 │   ├── cliche_scanner.py         # 時代物 stereotype 予防検出
 │   ├── cliche_dictionary.json    # cliche_scanner 用辞書
 │   ├── config_validator.py       # episode_config スキーマ検証
@@ -213,6 +216,10 @@ sugakushiki/
 │   ├── lint_image_borders.py        # 焼き込まれた白縁・白帯をピクセル実測
 │   ├── manim_vision_qa.py           # Manim 図の意味・美観を Vision 判定
 │   ├── manim_text_collision_qa.py   # Manim の文字 bbox 衝突を決定論検出
+│   │
+│   │  # 概要欄 (pipeline も同じ検査を内蔵。これらは単独確認用)
+│   ├── check_description_staleness.py   # config → 導入文 の取り残し検出
+│   ├── check_intro_semantic.py          # narration → 導入文 の限定詞欠落 review
 │   │
 │   │  # 横断 lint (手動)
 │   ├── lint_cross_episode_terms.py     # エピソード横断の用語表記揺れ検出

@@ -16,12 +16,16 @@ paths:
 
 - `config_validator.py`: `verified_facts` の型を起動時に検証
 - **事前事実チェック (`pre_script_fact_check.py`)**: `verified_facts` / `key_episodes` / `theme` / `key_topics` を script step 直前に Claude Sonnet 知識ベース + 算術サニティ + Wikidata SPARQL で検証。CRITICAL/WARNING で停止。`--skip-fact-check` / `--fact-check-allow-warn` で制御
+- 同じ実行で `references` の書誌 attribution も review されるが、**こちらは advisory** で
+  ブロック判定には混ざらない (`--skip-reference-check` で無効化)。指摘は Web で裏取りしてから直す
 
 ## 編集時の注意
 
 - **年齢・年月日・職業・人物関係**は web verify してから書く（事前事実チェックで fail-fast されるが、自分で書く時点で誤認を避ける）
 - `common_errors_to_avoid` に「連続性誘導 NG（前回・次回・続編 等）」「stereotype NG」を含める
-- `references` の書誌情報は publication 前に Web 検索で著者名・書名・出版年を裏取り（`credits_generator.py` が URL 死活監視 `validate_reference_urls()` を実施するが、書誌情報自体の正確性は人間判断）
+- `references` の書誌情報は publication 前に Web 検索で著者名・書名・出版年を裏取り（`credits_generator.py` が URL 死活監視 `validate_reference_urls()`、事前事実チェックが書誌 attribution の advisory review を実施するが、**最終的な正確性の判断は人間**）
+- `birth_year` / `death_year` は**書かないと黙って挙動が変わる**: 前者が無いと実写参照ゲートが閉じて全肖像が text-only 生成になり、後者が無いと画像クレジットの参照呼称が「肖像写真」側に倒れて絵画を写真と誤記する。呼称のヒューリスティックが合わない回（参照が絵画と写真の混在など）は `portrait_reference_kind` で明示 override する
+- **導入系フィールド（`theme` / `hook` / `modern_connection` / `description.intro_guidance`）を後から編集したら `scene_definition.json` の `description.intro` も見直す**。intro は自動同期されないので、放置すると古い導入文が公開概要欄に焼かれる（`check_description_staleness.py` が検出。据え置くと決めたなら `--accept` で再刻印）
 
 ## thumbnail.source_image 選定指針
 

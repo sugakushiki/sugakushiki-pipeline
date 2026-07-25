@@ -1066,7 +1066,9 @@ def _mark_reference_photos_unused(images_dir: str) -> None:
         return
     try:
         with open(credits_path, "w", encoding="utf-8") as f:
-            json.dump(credits, f, ensure_ascii=False, indent=1)
+            # indent=2 = wikimedia_fetcher の書式。ここだけ indent=1 だとファイル全体が
+            # 再整形され、usage 1 行の変更が全行 diff に化ける。
+            json.dump(credits, f, ensure_ascii=False, indent=2)
         print(
             f"  [PHOTO] {changed} fetched reference photo(s) marked unused "
             f"(global gate off; not credited in description)"

@@ -57,6 +57,134 @@ def find_project_root(start_path: str = None) -> Path:
     return p
 
 
+# ---------------------------------------------------------------------------
+# Claude CLI auth probe (long-build OAuth-expiry early detection)
+#
+# On a long build the logged-in OAuth session can expire mid-run. Every
+# subsequent `claude -p` call then fails, but each caller degrades gracefully
+# (call_claude raises -> qa_checker / manim_vision_qa / intro_semantic return
+# None/UNAVAILABLE), so the whole QA layer fails SILENTLY and the build still
+# finishes "green". This probe pings the CLI so an expired token is caught
+# fail-fast with an actionable "re-authenticate and resume" message instead of
+# a buried cascade of per-scene "Claude returned no output" errors.
+#
+# Design: the OK/NOT-OK decision rests on a POSITIVE signal (a healthy ping
+# echoes 'pong'), NOT on matching a specific 401 string -- so it stays robust
+# even if the exact auth-failure text changes. When NOT OK, the output is
+# classified (auth / timeout / not_found / unexpected) only to sharpen the
+# message. classify_claude_ping is a pure function so it is unit-testable
+# without reproducing a real token expiry.
+# ---------------------------------------------------------------------------
+
+# Auth-failure substrings (lowercased). Presence only sharpens the message; the
+# ok decision is the positive 'pong' signal above, so a stray match here cannot
+# cause a false OK. 'credit balance' is NOT auth (out-of-credit) -> excluded.
+_AUTH_MARKERS = (
+    "401",
+    "403",
+    "authenticat",  # authentication / authenticate
+    "unauthor",  # unauthorized / unauthorised
+    "invalid api key",
+    "oauth",
+    "not logged in",
+    "please log in",
+    "please run",  # "please run `claude login`" / setup-token
+    "setup-token",
+    "token expired",
+    "token has expired",
+    "session expired",
+    "re-authenticate",
+    "reauthenticate",
+)
+
+
+def classify_claude_ping(
+    returncode,
+    stdout: str,
+    stderr: str,
+    timed_out: bool = False,
+    not_found: bool = False,
+    timeout_sec: int = 25,
+) -> tuple[bool, str, str]:
+    """Classify a `claude -p` ping outcome. Pure (no I/O) so it is unit-testable.
+
+    Returns (ok, reason, message) where reason is one of:
+      "ok"         -- healthy (ping echoed 'pong')
+      "not_found"  -- 'claude' command not in PATH
+      "timeout"    -- ping did not return within timeout_sec
+      "auth"       -- non-healthy AND output carries an auth-failure signature
+      "unexpected" -- non-healthy with no recognizable auth signature (CLI
+                      malfunction / crash / model access / unknown)
+
+    The ok decision is the POSITIVE 'pong' signal, not string-matching, so a
+    changed 401 message can never yield a false OK.
+    """
+    if not_found:
+        return False, "not_found", "Claude CLI ('claude' command) not found in PATH"
+    if timed_out:
+        return False, "timeout", f"Claude CLI ping timed out after {timeout_sec}s"
+
+    out = stdout or ""
+    combined = (out + " " + (stderr or "")).lower()
+
+    # Positive signal: a healthy ping returns 0 and echoes 'pong'.
+    if returncode == 0 and "pong" in out.lower():
+        return True, "ok", "OK"
+
+    snippet = combined.strip()[:300]
+    if any(m in combined for m in _AUTH_MARKERS):
+        return (
+            False,
+            "auth",
+            f"Claude CLI authentication failed (token likely expired / not logged in): {snippet}",
+        )
+    if returncode not in (0, None):
+        return False, "unexpected", f"Claude CLI non-zero exit ({returncode}): {snippet}"
+    return False, "unexpected", f"Claude CLI unexpected response (no 'pong'): {snippet}"
+
+
+def probe_claude_cli(
+    timeout_sec: int = 25, model: str = "claude-opus-4-6"
+) -> tuple[bool, str, str]:
+    """Ping the Claude CLI with a trivial ASCII prompt; return (ok, reason, message).
+
+    Uses subprocess (capture_output for returncode + stderr diagnostics). The
+    Windows 'subprocess 禁止' rule targets Japanese-text crashes; this ASCII-only
+    ping is unaffected. Cost ~8-20s healthy, faster on 401. Faithful to the real
+    call path in the only dimension that matters for auth: it exercises the same
+    logged-in `claude -p` session.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [
+                "claude",
+                "-p",
+                "--output-format",
+                "text",
+                "--allowedTools",
+                "Read",
+                "--model",
+                model,
+                "reply exactly with the word pong",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        return classify_claude_ping(None, "", "", timed_out=True, timeout_sec=timeout_sec)
+    except FileNotFoundError:
+        return classify_claude_ping(None, "", "", not_found=True, timeout_sec=timeout_sec)
+
+    return classify_claude_ping(
+        result.returncode, result.stdout, result.stderr, timeout_sec=timeout_sec
+    )
+
+
 def _parse_stream_json_output(raw_text: str, debug: bool = False) -> tuple:
     """
     Claude CLI の stream-json 出力を解析し、全 assistant テキストブロックを連結する。

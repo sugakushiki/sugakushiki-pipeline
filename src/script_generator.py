@@ -1098,7 +1098,7 @@ def validate_scene_definition(data: dict) -> tuple[list[str], bool]:
     # content down to a MAX. Normal over/under vs the soft target is accepted.
     # Only a *pathological* shortfall (< 50% of the intended length) triggers a
     # retry -- a backstop against a broken/truncated generation, not against
-    # content-driven length. See / feedback_topic_before_duration.
+    # content-driven length. See internal notes.
     char_mid = (CHAR_COUNT_MIN + CHAR_COUNT_MAX) / 2
     pathological_floor = int(char_mid * 0.5)
     if total_chars < pathological_floor:
@@ -1482,6 +1482,20 @@ def main():
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(scene_def, f, ensure_ascii=False, indent=2)
     print(f"\n  Output: {output_path}")
+
+    # stamp _description_meta.json (intro-config signature + intro text
+    # hash) right after writing scene_def, so the pipeline / standalone checker
+    # can flag a stale description.intro once episode_config's intro-narrative
+    # fields (theme / hook / modern_connection / intro_guidance) are edited
+    # after generation. Advisory + never fatal. See src/description_meta.py.
+    try:
+        from description_meta import write_meta as _write_desc_meta
+
+        _dmeta = _write_desc_meta(os.path.dirname(os.path.abspath(output_path)), config, scene_def)
+        if _dmeta:
+            print(f"  Description meta: {os.path.basename(_dmeta)}")
+    except Exception as _e:  # noqa: BLE001 - advisory stamp, never fatal
+        print(f"  [WARN] description meta stamp failed: {_e!r}")
 
     # Summary
     print_summary(scene_def, warnings)

@@ -1,45 +1,197 @@
-# Cloud TTS エピソード 出荷前 QA チェックリスト
+# Cloud TTS エピソード 出荷前 QA
 
-> ある回 (コワレフスカヤ) で user に読み誤り・速度・Manim 図・内容妥当性を **1 つずつ指摘させた**反省から整備した、Cloud TTS (Chirp3-HD) 専用の層別 QA。
-> 目的: 「合成後に人が耳で拾う」前に、**多読み漢字/同音誤解語/難語/不自然な間/速度の平坦化/Manim 図の意味・衝突**を自動で洗い出す。
-
-VOICEVOX は `audio_query` で kana を事前実測できる (`reading_guard.py`) が、Cloud には kana を返す口が無い。よって **予防 (合成前静的 lint) + 検出 (合成後 STT/Vision) の二段**で守る。
+> Cloud TTS (Chirp3-HD) を使う回だけに必要な、読み・速度・間の QA。
+> 目的は「合成後に人が耳で 1 つずつ拾う」前に、機械で洗えるものを洗い切ること。
 
 ---
 
-## 層別ツール (pipeline は engine=cloud で自動実行)
+## なぜ Cloud だけ別建てなのか
+
+VOICEVOX は `audio_query` が kana を返すので、**合成前に実際の読みを実測できる**
+(`reading_guard.py`)。Cloud にはその口が無い。同じ「読み間違い」という欠陥に対して、
+エンジンの API 能力の差がチェックの位置を決めてしまう:
+
+| | VOICEVOX | Cloud (Chirp3-HD) |
+|---|---|---|
+| 読みの検証 | 合成**前**に kana 実測 | 合成**後**に STT で書き起こして照合 |
+| 話速 | `speedScale` で一律・決定論的 | 文ごとに実発話速度が揺れる (API 非制御) |
+| 主な守り | 予防 | 予防 (静的 lint) + 検出 (STT) の二段 |
+
+このため Cloud 回では、合成前の静的 lint で「誤読の温床」を潰し、合成後に実 wav を
+STT して残りを拾い、さらに**出荷物 (連結・BGM 後) の音声**でもう一度確かめる。
+
+---
+
+## 読みの制御は 2 層
+
+読みを**強制する**層と、**注意喚起だけする**層を分けてある。この線引きが Cloud 回で
+最も事故りやすいところ。
+
+### 1. force — SSML `<phoneme alphabet="yomigana">` (`cloud_tts._READING_OVERRIDES`)
+
+Chirp3-HD は同期リクエストで `phoneme` を honor するので、読みを決定論的に固定できる。
+**文脈非依存の語だけ**を登録する (例: 二乗 → にじょう、対数 → たいすう)。
+上書き語を含む文だけ SSML 化し、他の文はバイト単位で不変 = 副作用ゼロ。
+
+> **文脈依存の語を入れてはいけない。** 「開けた」(あけた / ひらけた)、「数」(かず / すう)、
+> 「京」(きょう / けい) のように文脈で読みが変わる語を強制すると、一方を直した瞬間に
+> もう一方が壊れる。実際に「開けた → あけた」の強制が「道がひらけた」を破壊した。
+> 文脈依存語は **1 箇所ずつ `narration_speech_cloud` にかな書き**し、出荷 wav の STT で
+> 確かめる。
+
+### 2. detect — `cloud_speed_qa._CONTEXT_DEPENDENT_WATCH`
+
+固定はせず「この語は読みが割れるので耳か STT で確認せよ」と `WATCH-READING` を出す。
+文脈依存の多読み語 (例: 一行 = いちぎょう / いっこう) はこちら。
+
+### 生成側 (`gen_cloud_readings.py`) が構造的に潰しているもの
+
+`narration_speech_cloud` は **`gen_cloud_readings` が narration から生成する**のが
+正規ルートで、以下は生成時に片付く:
+
+- コンマで孤立した助詞 `は` / `へ` → `わ` / `え` (孤立した「は」を Chirp が
+  ハ と読む問題。ダッシュ由来の空白付き `、 は` も空白畳み込みで拾う)
+- 数字直後の「京」→ けい (10^16 の位。東京・京都は数字が前置しないので不変)
+- 括弧の除去 (`「」` `『』` `《》` 等) — Chirp3-HD は括弧を**非決定的に音声化する**
+  (同じ《》でも無音になる回と「うぇ」と発声する回がある)。字幕表示用の括弧は
+  narration 側に残し、cloud 側からだけ落とす。合成直前の `cloud_tts.strip_for_cloud`
+  にも同じ除去があり、手書きの cloud が生成を迂回しても TTS には届かない
+- 数式トークンのスペルアウト
+
+> **`episode_config.json` の `additional_instructions` に「`narration_speech_cloud` を
+> 用意させる」指示を書かない。** cloud の生成は `gen_cloud_readings` の責務。LLM に
+> 「助詞 は → わ 表記」と指示すると語中の「は」まで変換され、独立した「わ」の境目で
+> Chirp が微小な間を挿入して不自然になる (実測で「わ」文は「は」文より約 25% 長い)。
+> 現在は `script_generator` が LLM の出した `narration_speech_cloud` を**破棄**して
+> 生成側に一本化しているので旧 config も無害化されるが、新規 config には書かない。
+
+---
+
+## 層別ツール (engine=cloud で pipeline が自動実行)
 
 | 層 | タイミング | ツール | 捕えるもの |
 |---|---|---|---|
-| 予防 | script 後 / audio 前 | `scripts/cloud_reading_lint.py` | ① 多読み漢字が narration にあり narration_speech_cloud で読み未固定 ② 同音誤解語 (大数学者⇔代数学者) ③ 難語 (里程標) ④ 不自然な間の構文 (用言+とは / 長主語+は) |
-| 検出 | audio 後 | `scripts/stt_qa.py` | 合成 wav を Gemini でカタカナ書き起こし → 助詞 は=ハ + **多読み漢字の文脈依存誤読** (`_READING_CHECKS`: 入れ→イレ, 愛→メ, 友→ユウ, 私→ワタクシ, 正→ショウ, 通→カヨ) を narration×STT で照合 |
-| 検出 | audio 後 | `scripts/cloud_speed_qa.py` | 隣接文の速度段差 (>18%) + **速度プロファイル照合** (median/stdev/min を承認済み基準と比較。stdev<0.25=一本調子, median>7.7=速い, min>6.3=緩急なし) + 間・区切り異常 (run-on / over-pause / dash) |
-| 検出 | visuals 後 | `scripts/manim_vision_qa.py` | Manim/route_map/timeline フレームを Claude Sonnet vision で「概念が伝わるか/無意味な動き/判別不能な形 (独楽が独楽に見えるか)/ラベル衝突」判定 (決定論 lint が捕まえない意味・美観) |
+| 予防 | script 後 / audio 前 | `scripts/cloud_reading_lint.py` | 静的走査。下表の 14 カテゴリ |
+| 検出 | audio 後 | `scripts/stt_qa.py` | 合成 wav を Gemini STT で書き起こし、既知の誤読 corpus と照合 |
+| 検出 | audio 後 | `scripts/cloud_speed_qa.py` | 文単位の発話速度の段差・速度プロファイル・間の異常 |
+| 検出 | visuals 後 | `scripts/manim_vision_qa.py` | 図の意味・美観 (Vision) |
+| 検出 | visuals 後 | `scripts/manim_text_collision_qa.py` | ラベルの bbox 衝突 (決定論) |
+| 出荷物 | on-demand | `scripts/verify_shipped_audio.py` | **`output_final.mp4` から**各シーンを切り出して STT |
 
-すべて **advisory** (WARN、既定 exit 0、`--strict` で exit 1)。build を止めず「まず見るべき箇所」を提示する。GOOGLE_API_KEY / Claude CLI 不在は graceful skip。
+すべて **advisory** (WARN、既定 exit 0、`--strict` で exit 1)。build は止めず
+「まず見るべき箇所」を示す。`GOOGLE_API_KEY` 不在 / `google-genai` 未導入 /
+Claude CLI 不在は graceful skip。
+
+### `cloud_reading_lint` のカテゴリ
+
+| カテゴリ | 内容 |
+|---|---|
+| 多読み未固定 | 多読み漢字が narration にあり cloud で読みが未固定 (SSML で固定済みの語は抑止) |
+| 位 (京=けい) | 数字直後の「京」が けい に固定されていない |
+| 多読み (数=かず/すう) | 複合語でない裸の「数」。読みは強制せず、文脈に合わせた明示を促す |
+| 同音誤解 | 大数学者 ⇔ 代数学者 のような聞き分けできない対 |
+| 難語 | 音だけでは伝わらない語 (里程標 → 道しるべ) |
+| 間 (とは) / 間 (長主語) | Chirp が不自然に区切る構文 |
+| 一括は→わ | cloud 側の「は」が全て「わ」に変換されている (旧 config / 手書きの名残) |
+| 助詞は→わ過剰変換 | 一部だけ変換された場合。narration と difflib 整列して単置換を数える |
+| 発音リスク (言い換え推奨) | 読み固定では直らない発音問題に、安全な言い換えを提案する |
+| 生記号 | `L=T-V` / `f'(x)` 等の生の数式記号 |
+| 生分数 (N/M) | 分子か分母が 3 桁以上の生分数。Chirp が分数として読むか非決定 |
+| コンマ伸ばし / 隣接文重複 | 間と重複表現 |
+
+**「発音リスク」だけは検出ではなく予防**である点が他と違う。読み固定 (SSML) は
+prosody に対しては中立なので、**か → が のような有声化 (濁り)** は SSML では直らない。
+かといって濁りは STT では測れない (STT は清音に正規化する)。そこで、耳で見つかった
+発音問題は辞書に 1 行足し、以後は**執筆時に言い換えが促される**ようにしてある。
+言い換えは字幕と語感を変えるので、提案のみ・人間が承認して narration /
+`narration_speech` / `narration_speech_cloud` の 3 面を同期して置換する。
+
+### `stt_qa` の注意点
+
+- **Gemini がカタカナモードに入る回がある** (助詞・活用までカタカナ化する)。この
+  モードでは助詞「は」も「ハ」表記になるため、`は=ハ` の誤読検出が全ての topic の
+  「は」に誤発火する。格助詞「ヲ」や「デス/マス」の複数出現でモードを判定し、その行
+  だけ助詞判定を抑止している (正常なひらがな転写での実誤読は従来どおり検出)。
+- **thinking モデルの推論が答えに混ざる回がある**。`thinking_budget=0` + プロンプト
+  指示 + 後処理の 3 層で抑止しているが、後処理は先頭の推論ブロックやメタ見出しだけを
+  落とし、**本文は絶対に消さない**設計にしてある。
+- 書き起こし全文は `stt_qa_report.txt` に残る。**STT も取りこぼす**ので耳の
+  spot-check は併用する。
 
 ---
 
 ## 速度正規化の規律
 
-`cloud_speed_qa.py --apply` は文単位速度を median へ atempo 正規化する。**ある回 では 2 回掛けて緩急 (stdev) を 0.60→0.26→0.18 と潰し「一本調子で速い」音声にした**。承認済み ある回 は単一適用で stdev 0.40 (遅い山場が残り自然)。
+Chirp3-HD は**文ごとに実発話速度そのものを大きく揺らす** (同一合成セッション内でも
+隣接文で 24〜31% の差)。`tts.rate` は全体の基準にすぎず文単位のテンポは API から
+制御できないため、**個別の文を再合成しても収束しない**。
 
-- **多重適用ガード**: `_prenorm_backup/` が既にあれば `--apply` は**良性スキップ (exit 0)**。かけ直すには `--restore` で原本に戻してから。緊急脱出は `--force`。pipeline の `--normalize-cloud-speed` と手動 `--apply` の重ね掛け事故を防ぐ。
-- **速度が速いと感じたら**: まず正規化の多重掛けを疑う (プロファイル stdev をチェック)。基準速度そのものを下げるなら `episode_config.json` の `tts.rate` を下げる (rate 0.9≈median 7.4 / 0.85≈7.0)。**rate 変更時は音声を全再合成** (cache は config signature で無効化されるが、確実を期すなら audio/ の wav+cache+_prenorm_backup を消して cold 再合成)。
-- 「本当に rate 通りか」の確認: `cloud_tts.py` は API に `speakingRate=config.tts.rate` を渡す。ログの `speedScale override` は **VOICEVOX 専用**で cloud には無関係。
+- **検出は常時 ON**: 各文の実発話速度 (モーラ数 ÷ 無音を除いた発話時間) を実測し、
+  隣接段差 > 18% を WARN。全文一覧を `speed_qa_report.txt` に残す。
+  同時に間の異常も無音実測で拾う (文中に「。」があるのに内部無音が 0.35 秒未満 =
+  run-on / 内部無音が 1.5 秒超 = over-pause / ダッシュ・括弧の残存)。
+- **修正は opt-in**: `--normalize-cloud-speed` (pipeline) または
+  `cloud_speed_qa.py --apply`。median へ `atempo` で部分圧縮する (ピッチ保持)。
+  文 wav を in-place で上書きするのでキャッシュは無効化されず再合成は起きない。
+  原本は `_prenorm_backup/` に退避し `--restore` で戻せる。
+- **強度は自動チューニング**: 段差 (>18%) を消す**最小**の strength を探索する。
+  固定値は生の分散が小さい回を過度に平坦化して「一本調子で速い」音声にしてしまう。
+  ドラマとして意図的に遅い行 (median の 0.72 倍未満) は floor で保護する。
+  `--strength FLOAT` で固定もできる。
+
+### 3 つのガード
+
+1. **多重適用ガード**: `_prenorm_backup/` が既にあれば `--apply` は良性スキップ
+   (exit 0)。2 回掛けると緩急が潰れる (実測で stdev 0.60 → 0.26 → 0.18)。
+   かけ直すには `--restore` してから。緊急脱出は `--force`。
+2. **stale backup 検出**: ただし backup が**現在の音声のもの**であるときだけ
+   スキップする。正規化完了時に `.applied` marker を置き、`audio_dir` の
+   **全 wav** の mtime を marker と比較する。1 文だけ再合成したケースを取りこぼさない
+   ためで、backup 内の文だけを見ていた頃は「前回は帯域内で atempo されず backup に
+   無かった文」を再合成したときにスキップし、**未正規化のまま出荷**していた。
+   marker の無い古い backup は stale 扱い (安全側 = 再正規化)。
+3. **未正規化出荷ガード**: 最終ビルド完了時に `_prenorm_backup/` が無ければ
+   「Cloud 回が未正規化のまま出荷」と WARN する (正規化の掛け忘れ対策)。
+
+### 速度が速いと感じたら
+
+まず正規化の多重掛けを疑う (プロファイルの stdev を見る)。基準速度そのものを
+下げるなら `episode_config.json` の `tts.rate` を下げる (rate 0.9 ≈ median 7.4 /
+0.85 ≈ 7.0)。**rate を変えたら音声は全再合成**する。
+
+> **抑揚の自動判定は諦めてある。** 音声 LLM による自然さの絶対評価は較正で
+> 弁別不能と判明した (2 倍速もチップマンク歪みも満点を付ける)。抑揚と微妙な
+> 発音は耳の spot-check で確定する。
 
 ---
 
-## 出荷前チェックリスト (cloud ep)
+## 出荷前チェックリスト (cloud 回)
 
-1. **読み**: ビルド後 `stt_qa_report.txt` を開き、書き起こし全文を目視。cloud_reading_lint / stt_qa の WARN を潰す (多読みは narration_speech_cloud にひらがなで読み固定 or SSML phoneme、同音誤解語・難語は言い換え)。
-2. **速度**: `speed_qa_report.txt` のプロファイル (median/stdev/min) を承認済み ep と照合。平坦化・過速を確認。**耳 spot-check 併用**。
-3. **Manim/timeline**: manim_vision_qa の WARN + フレーム目視で「図が主張どおりに見えるか/無意味な動き/衝突」を確認。
-4. **内容**: 難語・冗長・**不正確な関連付け** を目視。字幕は漢字維持・読みは narration_speech_cloud のみ変更 (字幕/音声の意味乖離に注意)。
-5. 修正は原則 scene_definition.json のテキスト。**まとめて 1 回の再ビルド**で反映 (1 件ごとの再ビルドは高コスト)。
+1. **読み (合成前)**: `cloud_reading_lint` の WARN を潰す。多読みは
+   `narration_speech_cloud` にひらがなで固定するか SSML phoneme、同音誤解語・難語・
+   発音リスク語は言い換える。
+2. **読み (合成後)**: `stt_qa_report.txt` の書き起こし全文を目視。
+3. **読み (出荷物)**: `verify_shipped_audio.py` で `output_final.mp4` の実音声を STT。
+   **決定打はここ** — 合成直後の wav が正しくても、速度正規化や連結を経た出荷物が
+   同じとは限らない。
+4. **速度**: `speed_qa_report.txt` のプロファイル (median / stdev / min) を確認し、
+   平坦化・過速がないか見る。**耳 spot-check 併用**。
+5. **図**: `manim_vision_qa` / `manim_text_collision_qa` の WARN + フレーム目視。
+6. **内容**: 難語・冗長・不正確な関連付けを目視。字幕は漢字を維持し、読みは
+   `narration_speech_cloud` だけを変える (字幕と音声の意味が乖離しないよう注意)。
+7. 修正は原則 `scene_definition.json` のテキスト。**まとめて 1 回の再ビルド**で
+   反映する (1 件ごとの再ビルドは高コスト)。
+
+> **読みや速度を変えたら `--steps` に `subtitles` を含める。** narration の文面が
+> 同じでも音声尺が変われば字幕のタイムスタンプは古くなる。この取り残しは
+> assemble 直前の stale 検出が止めてくれるが、そもそも含めておくのが早い。
 
 ---
 
-## 教訓 (最重要)
+## 教訓
 
-**Cloud 音声の読み検証は、テキスト層でなく実 wav を STT で** (過去の運用知見)。ある回 では、この決定打の phonetic-katakana STT (`stt_qa` の多読み照合) を proactively 回さず、テキスト層で「確認済み」と安心して user に全読み誤りを 1 つずつ指摘させた。**出荷前に必ず上記を回す**。
+**Cloud 音声の読み検証は、テキスト層ではなく実 wav を STT で行う。** テキストを
+読み返して「確認済み」と判断するのが最も再発した失敗で、決定打は毎回
+「isolated な wav ではなく**出荷音声**を STT する」ことだった。層を 3 つ
+(合成前 lint / 合成後 STT / 出荷物 STT) に分けてあるのは、**どの層も単独では
+取りこぼす**ことが実測で分かっているため。

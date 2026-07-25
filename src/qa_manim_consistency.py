@@ -99,7 +99,7 @@ def _scene_narration_text(scene):
 # fully-empty {} is indistinguishable from the standalone self-test, so it
 # cannot raise there. This pipeline-scope check asserts the data param so an
 # empty-params reuse never reaches the assembled video (fail fast, no silent
-# failures; see feedback_pipeline_design_principles).
+# failures; see internal notes).
 _REQUIRED_TEMPLATE_PARAMS = {
     "timeline_recap": "milestones",
 }

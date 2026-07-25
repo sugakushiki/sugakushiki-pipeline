@@ -16,7 +16,7 @@ Rule:
 NOT done here (deliberately): particle は->わ / へ->え. Reliable particle detection
 needs a morphological analyzer; a naive replace corrupts word-internal は/へ. Cloud
 Chirp3-HD reads particles natively; the rare misread is caught by stt_qa + the ear
-and hand-fixed in narration_speech_cloud. See reference_audio_cache_staleness_fix.
+and hand-fixed in narration_speech_cloud. See internal notes.
 
 By default only scenes that LACK narration_speech_cloud are filled (existing,
 hand-tuned readings are preserved). Pass --force to regenerate every scene.

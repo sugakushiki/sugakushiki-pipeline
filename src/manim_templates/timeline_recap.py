@@ -106,7 +106,7 @@ class TimelineRecap(Scene):
         # script_generator.normalize_timeline_recap_scenes(); this raise is the
         # backstop. The Laplace fallback is ONLY for the no-data self-test
         # (e.g. {} or {"mode": "laplace"}).
-        # (no silent failures; see feedback_pipeline_design_principles)
+        # (no silent failures; see internal notes)
         _CONTROL_KEYS = {"duration", "mode"}
         data_keys = set(params) - _CONTROL_KEYS
         if data_keys and "milestones" not in params:

@@ -35,7 +35,7 @@ flowchart TB
 
     cfg --> preflight
     preflight --> validate[["config_validator<br/>(スキーマ + 値域)"]]:::guard
-    validate --> b17[["事前事実チェック<br/>(Claude Sonnet + 算術 + Wikidata)"]]:::guard
+    validate --> b17[["事前事実チェック<br/>(Claude Sonnet + 算術 + Wikidata<br/>+ references 書誌 review 〔advisory〕)"]]:::guard
     b17 --> step1
 
     subgraph pipeline["10 ステップ生成"]
@@ -63,11 +63,13 @@ flowchart TB
         step5b -- "thumbnails/A,B,C.png" --> b10
         b10[["Manim 史実整合 lint<br/>(多 mode の mode 未指定 / 再利用テンプレの空 params)"]]:::guard --> b11
         b11[["route_map 衝突 preflight"]]:::guard --> step6
-        step6 -- "visuals/*.mp4" --> post6[["描画後の検証<br/>manim_vision_qa / manim_text_collision_qa /<br/>白帯検出 (8% 以上は中断)"]]:::guard
+        step6 -- "visuals/*.mp4" --> reprobe[["Claude CLI 認証の再確認<br/>(失効なら Vision QA を skip して明示報告)"]]:::guard
+        reprobe --> post6[["描画後の検証<br/>manim_vision_qa / manim_text_collision_qa /<br/>白帯検出 (8% 以上は中断)"]]:::guard
         post6 --> stale[["stale 検出 (assemble 直前・fail fast)<br/>旧 timing で焼かれた映像・字幕"]]:::guard
         stale --> step7
         step7 -- "output_assembled.mp4" --> step8
-        step8 -- "description.txt" --> step9
+        step8 -- "description.txt" --> intro[["概要欄の導入文チェック<br/>config→intro staleness (決定論) /<br/>narration→intro 意味一致 (Claude・advisory)"]]:::guard
+        intro --> step9
     end
 
     step9 -- "output_assembled.mp4 →<br/>(atomic rename)" --> outFinal[("output_final.mp4")]:::outputArtifact
@@ -98,6 +100,18 @@ flowchart TB
   (`reading_guard`)、Cloud TTS は実測できないので検出型 (合成後の STT) になる。
   同じ「読み間違い」という欠陥に対し、エンジンの API 能力の差がチェックの
   位置を決めている。
+- **認証をビルド中にもう一度確かめる**: Claude CLI の OAuth セッションはビルドの
+  途中で失効しうる。失効すると `claude -p` を使う QA が**一斉に沈黙する** —
+  各呼び出し元が graceful degrade する設計なので、ビルドは "green" のまま
+  完走してしまい、QA が走らなかったことに気付けない。そこで認証 ping を起動時
+  preflight だけでなく Vision QA の直前 (ビルド開始から ~40 分) にも走らせ、
+  失効していれば「何を skip したか」を最終サマリに明示する。判定は positive
+  signal (healthy な ping は `pong` を返す) で行い、失敗文言のマッチに依存しない。
+- **概要欄の導入文は 2 方向から取り残される**: `description.intro` は script 生成時に
+  LLM が書いた文で、以後どこからも自動同期されない。入力側 (`episode_config`) を
+  直しても、本編 (narration) を直しても、intro だけが古いまま公開概要欄に焼かれる。
+  前者は決定論的な署名で、後者は意味の問題なので LLM で見る。どちらも
+  credits step = **焼く当のステップ**と完了後の検証の両方に配線してある。
 - **サブプロセス分離**: 各ステップは子プロセスとして起動する。`stdout` は
   そのままコンソールに継承され、`stderr` のみ親が捕捉してマーカー prefix の
   ある JSONL イベントを構造化ログ経路に多重分離する。
@@ -218,8 +232,9 @@ flowchart TB
         opt2["thumbnail.source_image<br/>(明示指定の妥当性検証)"]
         opt3["per-scene visual ブロック:<br/>type / params /<br/>no_human / cliche_acks"]
         opt4["tts: dict<br/>(engine=voicevox または cloud、<br/>voice / rate)"]
-        opt5["birth_year / death_year<br/>(肖像の年齢変換 + 実写参照 gate)"]
+        opt5["birth_year / death_year<br/>(肖像の年齢変換 + 実写参照 gate +<br/>画像クレジットの参照呼称)"]
         opt6["forbidden_phrases<br/>(この回で使わない表層表現)"]
+        opt7["portrait_reference_kind<br/>(参照呼称の override)"]
     end
 
     subgraph validation["検証レイヤ"]
@@ -256,12 +271,19 @@ flowchart TB
   (import エラー / テンプレートファイル欠落 / 全 episodes/ 配下の
   `episode_config.json` の不正) を捕捉する。
 
-`tts.engine` と `birth_year` は任意フィールドだが、**欠落が黙って挙動を変える**
-点で他と性質が違う。`tts.engine` 未指定は VOICEVOX として扱われ、Cloud を
-意図していた場合は読み調整の系統ごと別物になる。`birth_year` 欠落は実写参照の
+`tts.engine` / `birth_year` / `death_year` は任意フィールドだが、**欠落が黙って
+挙動を変える**点で他と性質が違う。`tts.engine` 未指定は VOICEVOX として扱われ、
+Cloud を意図していた場合は読み調整の系統ごと別物になる。`birth_year` 欠落は実写参照の
 gate を閉じ、肖像が全て text-only 生成に落ちる — エラーは出ず、出来上がった顔が
-別人になって初めて分かる。後方互換のため既定値を持つフィールドほど、
+別人になって初めて分かる。`death_year` 欠落は画像クレジットの参照呼称を
+「肖像写真」側に倒すので、写真技術以前の人物では**絵画を写真と呼ぶ**クレジットが
+公開概要欄に出る。後方互換のため既定値を持つフィールドほど、
 欠落時に何が起きるかを明示しておく必要がある。
+
+呼称は没年ヒューリスティックなので外れる場合がある — 参照が絵画と写真の混在だったり、
+そもそも肖像でない画像 (人物ではなく器具の写真) だったりするときは
+`portrait_reference_kind` で例外だけ名指しする。没年で一律に中立語へ倒す案は
+採らなかった: 参照が実際に写真である回の記述まで曖昧になり、正確さが下がるため。
 
 フィールドの意味: [`docs/02_pipeline/EPISODE_CONFIG_TEMPLATE.md`](02_pipeline/EPISODE_CONFIG_TEMPLATE.md) 参照。
 
@@ -289,7 +311,7 @@ flowchart TB
 
     subgraph layer1["層 1: 合成前の予防 — 静的・決定論・LLM コストなし"]
         direction TB
-        p1["事前事実チェック<br/>(config の誤りを script 生成前に・中断)"]:::blocking
+        p1["事前事実チェック<br/>(config の誤りを script 生成前に・中断)<br/>+ references 書誌 review は advisory 隔離"]:::blocking
         p2["cliche scanner<br/>(source_prompt のステレオタイプ、辞書 + 承認 list)"]:::preventive
         p3["reading_guard 〔VOICEVOX〕<br/>audio_query で kana を実測し既知誤読を照合"]:::preventive
         p4["gen_cloud_readings → cloud_reading_lint 〔Cloud〕<br/>読みを生成し、多読み漢字 / 同音誤解語 /<br/>難語 / 不自然な間 / 生分数を静的走査"]:::preventive
@@ -313,6 +335,7 @@ flowchart TB
         s1["stale visual / stale subtitle preflight<br/>assemble 直前に fail fast<br/>(旧 timing で焼かれた映像・字幕を検出)"]:::blocking
         s2["完了後の出力検証<br/>(必須セクション / 字幕 hash / Manim fallback / 鮮度)"]
         s3["verify_shipped_audio (on-demand)<br/>output_final.mp4 から各シーンを切り出して STT<br/>= 連結・BGM 後の実音声で読みを再確認"]
+        s4["概要欄の導入文 (credits step + 完了後)<br/>config→intro staleness (署名・決定論) /<br/>narration→intro 意味一致 〔Claude〕"]
     end
 
     subgraph crossEp["エピソード横断 lint (オフライン)"]
@@ -386,6 +409,15 @@ flowchart TB
   出荷後に発見しても動画を作り直すしかない。誤検出のコストより見逃しのコストが
   高いので既定を「止まる」にし、`--qa-allow-warn` /
   `--fact-check-allow-warn` で設計判断として受け入れられるようにしてある。
+- **LLM を使っても advisory に留める層がある**: references の書誌 review と
+  概要欄の意味一致 review は LLM 判定だが**中断しない**。上の「LLM QA Gate は止まる」
+  との違いは、**修正が動画の作り直しを要求しないか**にある。参考文献の出版年も
+  概要欄の導入文もテキストなので、指摘が正しければ動画を触らずに直せる。
+  一方で LLM は「もっともらしい誤り」を出すので、止めてしまうと**誤検出のために
+  正しい記述を書き換える**圧力がかかる。そこで両者とも `correction` を書かせず
+  「ここが疑わしい」に留め、人間が一次資料や本編と照合して決める設計にしてある。
+  でっち上げを抑えるための接地も入れてあり、意味一致 review は指摘のたびに
+  **本編の該当文の引用**を必須にする (本編に無い限定詞は報告できない)。
 - **決定論と LLM の二重化**: Manim 図は `manim_text_collision_qa` (bbox の
   決定論的衝突検出) と `manim_vision_qa` (Sonnet Vision の意味・美観判定) の
   両方で見る。前者は「重なっている」を見逃さないが「独楽が独楽に見えない」は

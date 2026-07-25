@@ -43,11 +43,51 @@ def load_json(path: str) -> dict:
         return json.load(f)
 
 
-def _reference_kind(death_year) -> str:
+# Guard-C2: credit_text / filename markers that mean the reference
+# is a painting, engraving or drawing -- i.e. NOT a photograph even for a subject
+# who outlived the invention of photography.
+_PAINTING_MARKERS = (
+    "painting",
+    "engraving",
+    "lithograph",
+    "drawing",
+    "etching",
+    # NOT "portrait of" -- 写真にも普通に付く語で、ある回 ネーター / ある回 ポアンカレ
+    # (いずれも実写) を偽陽性で叩いた (2026-07-25 の 57 ep 較正)。
+    "zeichner",
+    "stecher",
+    "絵画",
+    "肖像画",
+    "版画",
+)
+
+
+def _reference_kind(death_year, override=None) -> str:
     """Guard-C: 参照肖像の呼称。写真技術 (~1839) 以前に没した人物は肖像画/版画
-    しか存在しないので「肖像画」、以降は「肖像写真」。credit の「肖像写真」誤記を根絶
-。"""
+    しか存在しないので「肖像画」、以降は「肖像写真」。credit の「肖像写真」誤記を根絶。
+
+    override (config の `portrait_reference_kind`) は没年ヒューリスティックが外れる
+    ケースの明示指定。没年で一律に中立語へ倒すと、参照が実際に写真の回 の記述まで曖昧になるため、既定は据え置き・例外だけ config で名指しする。
+    """
+    if isinstance(override, str) and override.strip():
+        return override.strip()
     return "肖像画" if isinstance(death_year, int) and death_year < 1840 else "肖像写真"
+
+
+def _detect_painting_reference(ref_photos: list) -> list:
+    """Return credit strings whose text/filename marks them as a painting/engraving.
+
+    Advisory input for Guard-C2: if the death-year heuristic picked 「肖像写真」 but a
+    credited reference is demonstrably a painting, the shipped credit calls a
+    painting a photograph.
+    """
+    hits = []
+    for photo in ref_photos:
+        credit = (photo.get("credit_text") or "") + " " + (photo.get("title") or "")
+        low = credit.lower()
+        if any(m in low for m in _PAINTING_MARKERS):
+            hits.append(credit.strip())
+    return hits
 
 
 def _extract_urls(text: str) -> list[str]:
@@ -546,7 +586,20 @@ def generate_description(
             # Guard-C: credit the reference as 肖像画 for a pre-photography
             # subject. The pre-photo
             # WARN below is now a backstop, not the fix. See _reference_kind.
-            _ref_kind = _reference_kind(config.get("death_year"))
+            _ref_kind = _reference_kind(
+                config.get("death_year"), config.get("portrait_reference_kind")
+            )
+            # Guard-C2: 没年ヒューリスティックが「肖像写真」を選んだのに
+            # 参照が絵画/版画なら、絵画を写真と呼ぶ credit になる。config の
+            # portrait_reference_kind で明示指定するよう促す (advisory)。
+            if _ref_kind == "肖像写真":
+                _painting = _detect_painting_reference(ref_photos)
+                if _painting:
+                    print(
+                        f"  [WARN] 参照に絵画/版画が含まれます ({_painting[0][:60]}) が credit は"
+                        "「肖像写真」です -- config の portrait_reference_kind で"
+                        "「肖像」等を明示してください"
+                    )
             lines.append(
                 f"本編およびサムネイルの肖像画は、以下の{_ref_kind}を参照として、"
                 "AI（Google Gemini）で油絵風に生成しました（原著作者とライセンスは下記のとおり）。"
@@ -685,6 +738,12 @@ def main():
         action="store_true",
         help="Skip URL validation step (offline build, etc.)",
     )
+    parser.add_argument(
+        "--skip-intro-check",
+        action="store_true",
+        help=" (F): skip narration->description.intro semantic review "
+        "(advisory, Claude, cached; never blocks)",
+    )
     args = parser.parse_args()
 
     config_path = os.path.abspath(args.config_json)
@@ -719,6 +778,49 @@ def main():
         sys.stdout.buffer.write(text.encode("utf-8", errors="replace"))
         sys.stdout.buffer.write(b"\n")
     print(f"{'=' * 60}\n")
+
+    # warn if the intro just baked into description.txt is stale relative
+    # to episode_config (config's intro-narrative fields edited after script gen
+    # while scene_def.description.intro stayed the old generated text). This is
+    # THE step that ships the stale intro to the public 概要欄, so surface it here
+    # (the pipeline verify roll-up + scripts/check_description_staleness.py also
+    # carry the same check). No-op on episodes without a _description_meta.json.
+    try:
+        from description_meta import check_staleness as _intro_stale
+
+        _stale = _intro_stale(episode_dir, config, scene_def)
+        if _stale:
+            print(f"  [WARN] description.intro staleness: {_stale}")
+            print(
+                "    -> scene_definition.json の description.intro を config に合わせて更新して"
+                " credits を再実行、または意図して据え置くなら "
+                "`python scripts/check_description_staleness.py <ep> --accept` で再刻印"
+            )
+    except Exception as _e:  # noqa: BLE001 - advisory, never fatal
+        print(f"  [WARN] description.intro staleness check unavailable: {_e!r}")
+
+    # (F): narration -> description.intro semantic review (ADVISORY, Claude).
+    # above catches config->intro drift deterministically; this catches the
+    # OTHER axis -- a mathematical precondition/qualifier the narration states but
+    # description.intro drops, which the existing
+    # 6-gram surface check (qa_checker) misses under paraphrase. Cached on
+    # intro+narration hash so it only calls Claude when content changed; advisory
+    # so it never blocks (the human web/eye-verifies each flag).
+    if not args.skip_intro_check:
+        try:
+            from intro_semantic_check import format_report, run_intro_semantic_check
+
+            subject = config.get("mathematician_ja") or config.get("mathematician", "")
+            _isem = run_intro_semantic_check(scene_def, episode_dir, subject)
+            if _isem.get("issues"):
+                print(format_report(_isem))
+                print(
+                    "    -> 限定詞欠落は advisory です。人間が本編と照合し、必要なら "
+                    "scene_definition.json の description.intro に限定詞を補ってください "
+                    "(鵜呑み禁止)。"
+                )
+        except Exception as _e:  # noqa: BLE001 - advisory, never fatal
+            print(f"  [WARN] description.intro semantic check unavailable: {_e!r}")
 
     # Summary
     desc_block = scene_def.get("description", {})
