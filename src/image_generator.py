@@ -492,7 +492,7 @@ def should_use_reference_photo(
 def detect_non_subject_person(prompt: str, subject_en: str) -> str | None:
     """強化 B: Detect if a scene's source_prompt mainly depicts a NON-subject person.
 
-    ある回 で math_13 (Hermite) と closing_01 (Kovalevskaya) が Weierstrass の
+    ある回で math_13 (Hermite) と closing_01 (Kovalevskaya) が Weierstrass の
     reference 写真を渡されて顔汚染した case の構造防御。
 
     heuristic:
@@ -702,7 +702,7 @@ def should_use_reference_photo_with_subject_guard(
     Returns (use_reference_decision, warning_message_or_None).
     If the scene depicts a non-subject person (detect_non_subject_person hits),
     force use_reference=False and return a warning. This prevents the
-    ある回 case where Hermite/Kovalevskaya scenes received Weierstrass photo.
+    an earlier episode case where Hermite/Kovalevskaya scenes received Weierstrass photo.
     """
     base = should_use_reference_photo(global_use_reference, has_person, scene_use_reference)
     if not base:
@@ -932,6 +932,97 @@ def _warn_refs_present_but_unusable() -> None:
         pass
 
 
+def _mirror_credits_row(images_dir: str, src_name: str, new_name: str) -> None:
+    """Copy the wikimedia_credits.json row for src_name onto new_name.
+
+    Attribution stays on the original row (it is what was actually downloaded);
+    this adds a sibling row so filename-keyed lookups find the transcoded file.
+    """
+    credits_path = os.path.join(os.path.dirname(images_dir), "wikimedia_credits.json")
+    if not os.path.exists(credits_path):
+        return
+    try:
+        with open(credits_path, encoding="utf-8") as f:
+            credits = json.load(f)
+        photos = credits.get("photos", [])
+        if any(p.get("filename") == new_name for p in photos):
+            return
+        src = next((p for p in photos if p.get("filename") == src_name), None)
+        if src is None:
+            return
+        row = dict(src)
+        row["filename"] = new_name
+        row["transcoded_from"] = src_name
+        photos.append(row)
+        with open(credits_path, "w", encoding="utf-8") as f:
+            json.dump(credits, f, ensure_ascii=False, indent=2)
+        print(f"  [PHOTO] credits: mirrored {src_name} -> {new_name}")
+    except (OSError, json.JSONDecodeError, KeyError) as e:
+        print(f"  [PHOTO] credits mirror failed for {new_name}: {e}")
+
+
+_REF_OK_EXT = (".jpg", ".jpeg", ".png")
+# Still raster formats Commons also serves. GIF is the one that bit an earlier episode.
+_REF_TRANSCODE_EXT = (".gif", ".webp", ".bmp", ".tif", ".tiff")
+
+
+def _transcode_refs_to_png(images_dir: str) -> list[str]:
+    """Rewrite wiki_* references that are not .jpg/.jpeg/.png as PNG siblings.
+
+    Returns the basenames written. A reference in an unlisted format is worse
+    than no reference at all: it is invisible to the extension filter, so it
+    reaches neither `refs` nor `skipped` and the fail-loud backstop (which keys
+    off `not refs and skipped`) cannot see it either. The build then reports
+    "(or 実写参照なし)" and every subject portrait silently becomes text-only.
+
+    Anything still unreadable after this is announced, so the failure can no
+    longer be silent.
+    """
+    written = []
+    unreadable = []
+    for f in sorted(os.listdir(images_dir)):
+        if not f.startswith("wiki_"):
+            continue
+        stem, ext = os.path.splitext(f)
+        if ext.lower() in _REF_OK_EXT or ext.lower() not in _REF_TRANSCODE_EXT:
+            continue
+        target = os.path.join(images_dir, stem + ".png")
+        if os.path.exists(target):
+            # Already transcoded on an earlier run, but the credits row may still
+            # only know the original name -- mirror it every time, not just on the
+            # run that writes the PNG. (Without this, a rebuild skips the copy and
+            # portrait_prompt_lint keeps filtering the PNG out of solo_portrait.)
+            _mirror_credits_row(images_dir, f, os.path.basename(target))
+            continue
+        try:
+            from PIL import Image as _PILImage
+
+            with _PILImage.open(os.path.join(images_dir, f)) as im:
+                im.convert("RGB").save(target)
+            written.append(os.path.basename(target))
+            print(f"  [PHOTO] Transcoded reference {f} -> {os.path.basename(target)}")
+            # Carry the credits row over to the new name. Consumers filter by the
+            # solo_portrait set keyed on FILENAME, so a PNG that credits still
+            # only knows as ".gif" is dropped again one layer further on -- that
+            # is how portrait_prompt_lint kept reporting "no usable reference"
+            # after the transcode already fixed image_generator.
+            _mirror_credits_row(images_dir, f, os.path.basename(target))
+        except Exception as e:  # noqa: BLE001 - any decode failure must be announced
+            unreadable.append(f"{f} ({type(e).__name__})")
+    if unreadable:
+        try:
+            if hasattr(sys.stderr, "reconfigure"):
+                sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+        print(
+            "  [WARN] 参照写真が未対応の形式で、PNG へ変換できませんでした -> "
+            "主題肖像が text-only 生成になり本人と乖離します: " + ", ".join(unreadable),
+            file=sys.stderr,
+        )
+    return written
+
+
 def _find_reference_photos(images_dir: str) -> list[str]:
     """Find solo-portrait Wikimedia photos (wiki_*.jpg/png) for use as references.
 
@@ -957,6 +1048,15 @@ def _find_reference_photos(images_dir: str) -> list[str]:
             }
         except (json.JSONDecodeError, KeyError):
             solo_filenames = None
+
+    # misreading: the reference arrived from Commons as wiki_01_henri_lebesgue.GIF and
+    # this loop only matched .jpg/.jpeg/.png, so the file landed in neither `refs`
+    # nor `skipped`. The an earlier episode fail-loud backstop below fires on
+    # `not refs and skipped`, so with `skipped` also empty it stayed silent, the
+    # pipeline printed "(or 実写参照なし)" and EVERY subject portrait was generated
+    # text-only -- the closing portrait came out as a white-haired stranger. Recover
+    # by transcoding any other still raster format to PNG next to the original.
+    _transcode_refs_to_png(images_dir)
 
     refs = []
     skipped = []
@@ -1040,7 +1140,7 @@ def _mark_reference_photos_unused(images_dir: str) -> None:
     False and NO photo is passed to Gemini -> images are text-only/imaginative).
     credits_generator credits by usage label, so without this it would falsely
     credit un-used photos -- a wrong CC BY-SA festival photo mis-fetched for
-    "Euclid of Alexandria" entered ある回's public description this way. Only
+    "Euclid of Alexandria" entered an earlier episode's public description this way. Only
     touches usage=="reference" without a scene_id (scene-assigned photos, which
     ARE composited, are left intact). Idempotent.
     """
@@ -1090,7 +1190,14 @@ def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = ""
     year_matches = re.findall(r"(?<!\d)([12]\d{3})年", narration)
     if year_matches:
         age = int(year_matches[0]) - birth_year
-        if 0 < age < 200:  # 妥当な年齢範囲のみ
+        # The cap has to be a plausible HUMAN age, not merely a plausible number of
+        # years. The first year in the narration is usually the scene's year, but it
+        # can just as easily be a modern reference ("2000年に再評価され…"), and the old
+        # `< 200` let that through: an earlier episode quotes 1985 and returned 136 for a
+        # scene whose prompt says "about twenty-three". 12 scenes across 9 episodes
+        # produced ages of 122-189 this way. Out-of-range now falls through to the
+        # spelled-out age in the prompt, which is what the author actually wrote.
+        if 0 < age <= 110:
             return age
 
     # Strategy 2: Direct age mention (N歳)
@@ -1103,7 +1210,7 @@ def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = ""
     # Strategy 3: Explicit age directive in the source_prompt (e.g. "in his 50s").
     # This is scene- and subject-specific (the artist's directive for THIS portrait),
     # so it OUTRANKS the ambient narration era-keywords in Strategy 4 below. Those
-    # keywords can false-match on OTHER people in the scene: ある回 ("戦後
+    # keywords can false-match on OTHER people in the scene: an earlier episode ("戦後
     # ...一世代を育てました ... 学生寮 ...") matched 学生→age 20 for a 50s teaching
     # scene, overriding the prompt's clear "in his 50s" and producing a young solo
     # portrait under reference conditioning.
@@ -1111,12 +1218,102 @@ def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = ""
         prompt_lower = source_prompt.lower()
 
         # 4a: Digit decades — "in his/her 70s", "in his/her late 70s"
+        # The (?<!\d) guard is load-bearing: without it the DECADE OF A YEAR is read
+        # as the subject's age. "a student room in Montpellier, late 1940s France"
+        # matched "late 40s" and returned 45 for a scene whose prompt says
+        # "This MUST be a YOUNG MAN of about TWENTY-TWO". A sweep of shipped episodes found 31 reference-conditioned
+        # portraits across 19 episodes whose age came from a year's decade this way
+        # (e.g. "late 1990s" -> 95, "the 1910s" -> 15).
         en_age = re.findall(
-            r"(?:in (?:his|her|their) )?(?:early |late |mid[- ]?)?(\d{2})s", prompt_lower
+            r"(?:in (?:his|her|their) )?(?:early |late |mid[- ]?)?(?<!\d)(\d{2})s", prompt_lower
         )
         if en_age:
             decade = int(en_age[0])
             return decade + 5  # midpoint of decade
+
+        # 4a': Spelled-out ages — "a young man of about TWENTY-TWO", "is about twenty".
+        # This is how the strong age markers the image rules ask for are actually
+        # written, and nothing parsed them: an earlier episode says "of about forty" and
+        # fell through to the era keywords for 20, an earlier episode says "about
+        # twenty-three" and got 20. The leading of/is/looks is required so that a
+        # COUNT of things is not read as an age. Calibrated over every shipped prompt: 23 ages matched,
+        # that one non-age excluded.
+        word_age = re.search(
+            r"(?:of|is|are|looks?|appears?)\s+about\s+"
+            r"(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+            r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
+            r"(?:[-\s](one|two|three|four|five|six|seven|eight|nine))?\b",
+            prompt_lower,
+        )
+        if word_age:
+            _UNITS = {
+                "ten": 10,
+                "eleven": 11,
+                "twelve": 12,
+                "thirteen": 13,
+                "fourteen": 14,
+                "fifteen": 15,
+                "sixteen": 16,
+                "seventeen": 17,
+                "eighteen": 18,
+                "nineteen": 19,
+                "twenty": 20,
+                "thirty": 30,
+                "forty": 40,
+                "fifty": 50,
+                "sixty": 60,
+                "seventy": 70,
+                "eighty": 80,
+                "ninety": 90,
+            }
+            _ONES = {
+                "one": 1,
+                "two": 2,
+                "three": 3,
+                "four": 4,
+                "five": 5,
+                "six": 6,
+                "seven": 7,
+                "eight": 8,
+                "nine": 9,
+            }
+            age = _UNITS[word_age.group(1)] + _ONES.get(word_age.group(2) or "", 0)
+            if 0 < age < 120:
+                return age
+
+        # 4a'': Single-digit spelled-out ages — "a boy of about eight", "a CHILD of
+        # about nine years old". The table above starts at "ten", so childhood scenes
+        # got NO age at all. The bare of/is/looks guard is not enough here because counts
+        # of small numbers are common, so require a person word right before it or
+        # "years old" right after. Calibrated over every shipped prompt: of the 8
+        # matches for a single digit, the 7 real ages all qualify and the one count is
+        # excluded.
+        _ONES_ONLY = {
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+        }
+        single = re.search(
+            r"(child|boy|girl|infant|toddler|son|daughter|kid)\s+"
+            r"(?:of|is|looks?|appears?)\s+about\s+"
+            r"(?:\w+\s+or\s+)?"  # "seven or eight" -> take the upper bound
+            r"(one|two|three|four|five|six|seven|eight|nine)\b"
+            r"|(?:of|is|looks?|appears?)\s+about\s+"
+            r"(?:\w+\s+or\s+)?"
+            r"(one|two|three|four|five|six|seven|eight|nine)\s+years?\s+old",
+            prompt_lower,
+        )
+        if single:
+            word = single.group(2) or single.group(3)
+            age = _ONES_ONLY.get(word or "")
+            if age:
+                return age
 
         # 4b: Word decades — "in his mid-thirties", "in her early fifties"
         _WORD_DECADES = {
@@ -1430,6 +1627,12 @@ def evaluate_image_quality(
 3. 人物の体格（痩せ型/標準/太め等）がプロンプトの記述と一致しているか。thin build/slender と指定されているのに太めに描かれている場合はFAIL
 4. oil painting style / academic realism の雰囲気が出ているか
 5. 構図指示（portrait/wide shot/medium shot等）が守られているか
+6. **画家のサインが描き込まれていないか**（ある回で各13枚中6枚・14枚中9枚に混入した）。
+   隅（特に右下・左下）を必ず見ること。油絵風の指定に引きずられて、実在しない画家の
+   筆記体サインが焼き込まれることがある。雪・道・床など署名がありえない面の上に
+   書かれていることも多い。**暗い面では薄いので、拡大して確認する**。1件でもあればFAIL
+7. **画面内に意図しない文字が焼き込まれていないか**（キャプション、透かし、日付、
+   判読不能な擬似文字列）。場面の一部として自然な文字（本のページ、黒板、看板）は可
 
 注意: 「実在の人物に似ているか」は評価しないでください。人物の正確な外見はWikimedia写真で対応するため、ここではプロンプトの指示（年齢・民族・服装・体格等）との一致のみを評価します。
 
@@ -1489,6 +1692,12 @@ def _evaluate_image_quality_gemini(
 3. 人物の体格（痩せ型/標準/太め等）がプロンプトの記述と一致しているか。thin build/slender と指定されているのに太めに描かれている場合はFAIL
 4. oil painting style / academic realism の雰囲気が出ているか
 5. 構図指示（portrait/wide shot/medium shot等）が守られているか
+6. **画家のサインが描き込まれていないか**（ある回で各13枚中6枚・14枚中9枚に混入した）。
+   隅（特に右下・左下）を必ず見ること。油絵風の指定に引きずられて、実在しない画家の
+   筆記体サインが焼き込まれることがある。雪・道・床など署名がありえない面の上に
+   書かれていることも多い。**暗い面では薄いので、拡大して確認する**。1件でもあればFAIL
+7. **画面内に意図しない文字が焼き込まれていないか**（キャプション、透かし、日付、
+   判読不能な擬似文字列）。場面の一部として自然な文字（本のページ、黒板、看板）は可
 
 注意: 「実在の人物に似ているか」は評価しないでください。人物の正確な外見はWikimedia写真で対応するため、ここではプロンプトの指示（年齢・民族・服装・体格等）との一致のみを評価します。
 
@@ -1521,6 +1730,69 @@ issuesがない場合は[]。"""
         }
     except Exception as e:
         return {"passed": True, "issues": [], "feedback": "", "error": str(e)}
+
+
+_TOO_YOUNG_MARKERS_JA = (
+    "若すぎ",
+    "若く見え",
+    "幼すぎ",
+    "幼く見え",
+    "年齢が若",
+    "もっと年配",
+    "もっと高齢",
+)
+_TOO_YOUNG_MARKERS_EN = ("too young", "looks young", "younger than", "appears young")
+_TOO_OLD_MARKERS_JA = ("老けて", "老けす", "年老い", "高齢に見え", "老人に見え", "もっと若")
+_TOO_OLD_MARKERS_EN = (
+    "too old",
+    "looks old",
+    "older than",
+    "appears old",
+    "elderly man",
+    "aged man",
+)
+
+_YOUNG_PROMPT_PAT = re.compile(
+    r"young (?:man|woman|boy|girl|student)|must be a young|teenager|"
+    r"\b(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+    r"twenty|twenty[- ](?:one|two|three|four|five|six|seven|eight|nine))\b|"
+    r"\b(?:1[0-9]|2[0-9])[- ]?years?[- ]?old\b",
+    re.IGNORECASE,
+)
+_OLD_PROMPT_PAT = re.compile(
+    r"\belderly\b|\bold man\b|\bold woman\b|in (?:his|her|their) (?:sixties|seventies|eighties|nineties)|"
+    r"in (?:his|her|their) (?:6|7|8|9)0s|\b(?:6[0-9]|7[0-9]|8[0-9]|9[0-9])[- ]?years?[- ]?old\b",
+    re.IGNORECASE,
+)
+
+
+def _issue_says_too_young(issues_joined: str, issues_lower: str) -> bool:
+    """True only when QA complains the subject looks YOUNGER than intended."""
+    return any(m in issues_joined for m in _TOO_YOUNG_MARKERS_JA) or any(
+        m in issues_lower for m in _TOO_YOUNG_MARKERS_EN
+    )
+
+
+def _issue_says_too_old(issues_joined: str, issues_lower: str) -> bool:
+    """True only when QA complains the subject looks OLDER than intended."""
+    return any(m in issues_joined for m in _TOO_OLD_MARKERS_JA) or any(
+        m in issues_lower for m in _TOO_OLD_MARKERS_EN
+    )
+
+
+def _explicit_age_band(source_prompt: str) -> str | None:
+    """Return 'young' / 'old' when the source prompt pins an age band, else None.
+
+    A retry correction must never contradict this: the scene author's directive
+    outranks a QA heuristic.
+    """
+    if not source_prompt:
+        return None
+    if _OLD_PROMPT_PAT.search(source_prompt):
+        return "old"
+    if _YOUNG_PROMPT_PAT.search(source_prompt):
+        return "young"
+    return None
 
 
 def _detect_prompt_gender(source_prompt: str) -> str:
@@ -1603,8 +1875,42 @@ def strengthen_prompt(
         else:
             additions.append("the subject must be male, a man")
 
-    if "若" in issues_joined or "young" in issues_lower:
-        additions.append("the subject is elderly, aged 60-85, with white or grey hair")
+    # Age correction must follow the DIRECTION of the complaint, not the mere
+    # presence of the word "young". The old rule fired on any "若"/"young" and
+    # always pushed older, so a QA report saying "the prompt asks for a YOUNG MAN
+    # of about twenty-two but the figure looks middle-aged" appended
+    # "the subject is elderly, aged 60-85" and each retry aged the portrait
+    # further. The source prompt's own
+    # explicit age band also wins: never tell the generator to draw an old person
+    # for a scene whose prompt demands a young one.
+    # When the source prompt pins a band, ANY age complaint is corrected towards
+    # that band -- QA phrasing varies too much to parse reliably ("明らかに35〜45歳
+    # の中年男性に見える" carries no "too old" marker), but the author's directive
+    # is unambiguous. Directional markers are only the fallback for prompts that
+    # state no age.
+    band = _explicit_age_band(gender_reference)
+    too_young = _issue_says_too_young(issues_joined, issues_lower)
+    too_old = _issue_says_too_old(issues_joined, issues_lower)
+    age_flagged = (
+        too_young
+        or too_old
+        or "年齢" in issues_joined
+        or "age" in issues_lower
+        or "歳" in issues_joined
+    )
+    _OLDER = "the subject is elderly, aged 60-85, with white or grey hair"
+    _YOUNGER = (
+        "the subject must be YOUNG, with a smooth unlined face, "
+        "NO grey or white hair, NO deep wrinkles, NO aged skin"
+    )
+    if band == "young" and age_flagged:
+        additions.append(_YOUNGER)
+    elif band == "old" and age_flagged:
+        additions.append(_OLDER)
+    elif too_young:
+        additions.append(_OLDER)
+    elif too_old:
+        additions.append(_YOUNGER)
     if "アジア" in issues_joined or "asian" in issues_lower:
         additions.append("Eastern European appearance, NOT Asian features")
     if "油絵" in issues_joined or "painting style" in issues_lower:
@@ -1760,7 +2066,7 @@ def generate_all(
     # passed to Gemini (images are text-only/imaginative). Record that ACTUAL
     # usage in wikimedia_credits.json so credits_generator does not falsely
     # credit them: a wrong CC BY-SA festival photo (mis-fetched for "Euclid of
-    # Alexandria") slipped into ある回's public description this way.
+    # Alexandria") slipped into an earlier episode's public description this way.
     if ref_photos and not use_reference:
         _mark_reference_photos_unused(images_dir)
 
@@ -2155,6 +2461,20 @@ def main():
     # Load scene definition
     with open(args.scene_json, encoding="utf-8") as f:
         scene_def = json.load(f)
+
+    # --output-dir takes the EPISODE directory; images land in {output_dir}/images.
+    # Passing the images directory instead is a quiet disaster rather than an error:
+    # it creates episodes/<ep>/images/images/, and because the reference photos live
+    # one level up the subject is generated text-only (no photo conditioning) with no
+    # warning. An earlier episode was regenerated that way and looked plausible, so the
+    # only clue was the "(flash)" label instead of "(ref->age NN)".
+    if os.path.basename(os.path.normpath(args.output_dir)) == "images":
+        parser.error(
+            f"--output-dir must be the EPISODE directory, not its images/ subdirectory "
+            f"(got {args.output_dir}). Images are written to {{output_dir}}/images, so "
+            f"this would create {os.path.join(args.output_dir, 'images')} and lose the "
+            f"reference photos. Use: --output-dir {os.path.dirname(os.path.normpath(args.output_dir))}"
+        )
 
     images_dir = os.path.join(args.output_dir, "images")
 

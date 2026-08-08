@@ -230,7 +230,7 @@ _AMBIGUOUS_READING_KANJI = "表値家下物縁鍵節抱角辺"
 def write_kana_preview(entries: list, output_dir: str) -> str:
     """強化 D: VOICEVOX 予測カナを合成前レビュー用に artifact 化。
 
-    ある回 で VOICEVOX 誤読 9 件が user の最終動画視聴で初発覚し、各ラウンド
+    ある回で VOICEVOX 誤読 9 件が user の最終動画視聴で初発覚し、各ラウンド
     ~50-70 分の再ビルドを要した。pronunciation_check が既に全行のカナを
     query 済 (entries) なので、それを `kana_preview.txt` に書き出すだけで
     追加コストゼロで「合成前にテキスト scan で誤読を発見」できるようにする
@@ -584,7 +584,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
     "math_terms": [
         ("空集合", "くうしゅうごう"),  # 過去のケース: そらしゅうごう 誤読
         # 「割る」(除算の動詞) → わる。VOICEVOX は終止形「割る」を「わりる」と
-        # 誤読する (借りる/足りる 型の一段活用と誤解析)。ある回 ガウス
+        # 誤読する (借りる/足りる 型の一段活用と誤解析)。ある回ガウス
         # で既知だったが、per-ep narration_speech 個別修正 + script_generator の
         # 「数式 A/B を『A割るB』と機械挿入せず BぶんのA で読む」style prompt のみで
         # 対処され、global 辞書に未登録だったため ある回 (math_04「8割る5」を
@@ -596,7 +596,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         (
             "価値",
             "かち",
-        ),  # ある回 ハミルトンで顕在化: 価値→価あたい 誤読の集積化 (単独値→あたいルールの誤発火を先回りで防ぐ)
+        ),  # ある回ハミルトンで顕在化: 価値→価あたい 誤読の集積化 (単独値→あたいルールの誤発火を先回りで防ぐ)
         # 値打ち (= ねうち): 単独「値→あたい」ルールが 値打ち→あたい打ち と誤発火する。
         # 値打ち は「ね」読みの複合語。VOICEVOX 実測 (2026-06-27): 値打ち→ネウチ ✅ /
         # あたい打ち→アタイウチ ❌。clean 形「値打ち」と、過去ビルドで narration_speech に
@@ -773,9 +773,9 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         ("結果は七度", "結果わ七度"),
         # 三丈 (古代の長さ単位 丈=じょう) を VOICEVOX が さんたけ と誤読。
         ("三丈", "三じょう"),
-        # 里 (距離単位 li) → り。VOICEVOX が さと (村) と誤読
-        #。本題材の 里 は一律に距離単位。
-        ("里", "り"),
+        # 里 (距離単位 li) → り は文脈依存のため _MISREADING_REGEX_RULES へ移設
+        # (数詞直後のみ変換)。無条件 ("里","り") だと距離でない語中の 里 を誤爆する。
+        # 詳細は KNOWN_MISREADINGS 定義直後の _MISREADING_REGEX_RULES を参照。
         ("負の根", "ふのこん"),
         ("重根", "じゅうこん"),
         ("実根", "じっこん"),
@@ -824,7 +824,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         ("負の数", "ふのすう"),
         # NaN
         ("NaN", "なん"),
-        # ある回 ヴァイエルシュトラスで顕在化
+        # ある回ヴァイエルシュトラスで顕在化
         # 量化子 (quantifier = ε-δ 論理の ∀ ∃) を VOICEVOX が
         # りょうかこ と誤読 (子→こ、し脱落)。標準読みは りょうかし。
         # pronunciation_high_risk にあったが Claude prompt-hint が
@@ -847,7 +847,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         # 今日の解析学 / 今日の数学 等 academic 文脈の「今日」は
         # こんにち (modern times) であって きょう (today) ではない。
         # bare「今日」は きょう が default で正のため、academic
-        # follow-word のみ集積。ある回 で顕在化。
+        # follow-word のみ集積。ある回で顕在化。
         ("今日の解析学", "こんにちのかいせきがく"),
         ("今日の数学", "こんにちのすうがく"),
         # 「教科書を開け」(open a textbook) は ひらけ。
@@ -855,17 +855,17 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         # ある回「大学の数学科の教科書を開けば」で顕在化。
         ("教科書を開け", "教科書をひらけ"),
         # 等方的 — VOICEVOX misreads as ひとしかたてき (kun-on mixed reading
-        # of 等方). ある回 パスカルの原理「等方的に伝わる」で
+        # of 等方). ある回パスカルの原理「等方的に伝わる」で
         # user 動画確認で顕在化。audio_query empirical verify 済 (2026-05-25)。
         ("等方的", "とうほうてき"),
-        # 類体論 / 類体 (class field theory) — ある回 高木貞治で顕在化。
+        # 類体論 / 類体 (class field theory) — ある回高木貞治で顕在化。
         # VOICEVOX 実測 (audio_query, 2026-05-28):
         #   類体論 → ルイカラダロン ❌  /  るいたいろん → ルイタイロン ✅
         # 「体」を「カラダ」と訓読みで誤読。longest-first で類体論を先取り。
         # bare「類体」も「ヒルベルト類体」(math_10)「○○類体」で誤読のためカナ化。
         ("類体論", "るいたいろん"),
         ("類体", "るいたい"),
-        # 整数環 (ring of integers) — ある回 で顕在化。
+        # 整数環 (ring of integers) — ある回で顕在化。
         # VOICEVOX 実測: 整数環 → セイスウタマキ ❌  /  せいすうかん → セイスウカン ✅
         # 「環」を「たまき」(指輪) と訓読みで誤読。ring of integers (math)
         # は「かん」が標準。「ガウス整数環」「有理整数環」等で再発予想。
@@ -918,7 +918,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         ("偽である", "ぎである"),  # 「Pは偽である」predicate form
         ("偽となる", "ぎとなる"),
         ("偽ということ", "ぎということ"),  # 過去の formal-logic シーン: 「は偽ということ」誤読
-        # ある回 ブラフマグプタで顕在化
+        # ある回ブラフマグプタで顕在化
         ("同じ書", "おなじしょ"),  # 過去のケース: どうじしょ 誤読 (書=しょ, 著書の意)
         # 「はるか後世」(こうせい=後の時代/posterity) を、次行の「はるか後」rule が
         # 「はるかのち世」へ貪欲マッチし 後世 の複合を壊して のちせい 誤読化していた
@@ -940,7 +940,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         ("本名", "ほんみょう"),
         ("という語", "というご"),  # 過去のケース: というかたり 誤読 (語=ご, 単語の意)
         ("祖型", "そけい"),  # 過去のケース: そがた 誤読 (祖型=そけい, prototype の意)
-        # 高木貞治 (Teiji Takagi, 数学者) — ある回 で顕在化。
+        # 高木貞治 (Teiji Takagi, 数学者) — ある回で顕在化。
         # VOICEVOX 実測 (audio_query, 2026-05-28):
         #   高木貞治 → タカギ・サダハル ❌  /  たかぎていじ → タカギテイジ ✅
         # default で「貞治」を「さだはる」(王貞治等の現代日本人男性名読み) と
@@ -949,7 +949,7 @@ _MISREADING_CATEGORIES: dict[str, list[tuple[str, str]]] = {
         # 「さだはる」が正のためカナ化しない)。
         ("高木貞治", "たかぎていじ"),
         # 居を構える (set up one's residence) — 居=きょ。VOICEVOX は bare
-        # 「居を」を「いを」(居る/居間 の い) と誤読する。ある回 ラプラス
+        # 「居を」を「いを」(居る/居間 の い) と誤読する。ある回ラプラス
         # 「アルクイユに居を構えました」で user 動画確認で顕在化。
         # audio_query 実測 (2026-06-11): 居を構え → イオカマエ ❌ / きょをかまえ ✅。
         # phrase-level lock のため 居る/居間/芝居 等の everyday 読みは壊さない。
@@ -1145,6 +1145,38 @@ def _flatten_and_sort_misreadings(
 KNOWN_MISREADINGS: list[tuple[str, str]] = _flatten_and_sort_misreadings(_MISREADING_CATEGORIES)
 
 
+# Context-dependent misreading rules expressed as regex. The plain
+# (surface, reading) tuples in _MISREADING_CATEGORIES are unconditional substring
+# replacements and therefore cannot encode "convert only in context X" — a 1-char
+# surface like 里 fires inside every word that contains it. These regex rules run
+# in apply_known_misreading_fixes AFTER the literal rules (KNOWN_MISREADINGS), so
+# they see text the literal pass already normalized. Each entry is
+# (compiled pattern, replacement, label). Same global-accumulation philosophy as
+# the literal dict — prefer one context-aware rule here over per-ep
+# narration_speech rewrites.
+_MISREADING_REGEX_RULES: list[tuple[re.Pattern, str, str]] = [
+    # 里 (距離単位 li) → り、ただし直前が数詞 (算用/漢数字) のときだけ。
+    # VOICEVOX は数詞に続く文中の 里 を さと (村) と誤読する:
+    #   「四里五十五歩」→ ...ヨンサトゴジュウゴホ ❌ / 「百二里」→ ヒャクニサト ❌
+    #。数詞 + り にすると
+    #   ヨンリ / ヒャクニリ と正読される (VOICEVOX audio_query 実測 2026-06-28)。
+    # 旧実装は無条件 ("里","り") だったため、距離単位でない語中の 里 を誤爆した:
+    #   ある回岡潔「郷里」→「郷り」→ サトリ (悟り) ❌
+    #   ある回チューリング「里親家庭」→「り親」→ リオヤ ❌ (再ビルド時の潜在事故)
+    #   いずれも per-ep で narration_speech をひらがな化する暫定回避が必要だった。
+    # 直前が数詞でない 郷里 / 里親 / 里帰り / 村里 / 古里 等は本ルールで非変換となり、
+    #   VOICEVOX が キョオリ / サトオヤ / サトガエリ と正読する (実測確認済、辞書も NS も不要)。
+    # 千里 / 万里 等の慣用句は数詞 千/万 に続くため変換されるが、り 読みで元々正しい
+    #   (センリ / バンリ、実測確認済) ので実害なし。
+    # lookbehind は固定長 1 文字なので Python re で可。
+    (
+        re.compile(r"(?<=[0-9０-９一二三四五六七八九十百千万億兆零〇])里"),
+        "り",
+        "里(距離単位)=り (数詞直後のみ。郷里/里親/里帰り 等の語中 里 は非変換)",
+    ),
+]
+
+
 def detect_stale_ns_from_old_rules(scene_def: dict) -> list:
     """Detect existing narration_speech entries that may contain stale kana
     from previous _MISREADING_CATEGORIES rule versions.
@@ -1226,11 +1258,17 @@ def apply_known_misreading_fixes(scene_def: dict, dry_run: bool = False) -> list
                 else:
                     current = raw_text.replace("|", "")
 
-                # 既知パターンを適用
+                # 既知パターンを適用 (literal substring rules)
                 modified = current
                 for kanji, hiragana in KNOWN_MISREADINGS:
                     if kanji in modified:
                         modified = modified.replace(kanji, hiragana)
+
+                # 文脈依存ルール (regex)。literal pass の後に適用するので
+                # literal で正規化済みのテキストを見る (現状 literal は 里 を
+                # 触らないため順序非依存だが、将来の干渉に備え後置)。
+                for pattern, replacement, _label in _MISREADING_REGEX_RULES:
+                    modified = pattern.sub(replacement, modified)
 
                 if modified != current:
                     sid = scene.get("scene_id", "?")
@@ -1835,6 +1873,143 @@ def _audio_sentence_hash(speech_text: str, config_sig: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def resolve_scene_speech(
+    scene: dict,
+    engine: str,
+    tts_voice: str | None = None,
+    tts_rate: float | None = None,
+    quiet: bool = False,
+) -> tuple[str, list[str]]:
+    """(config_sig, 各文の合成テキスト) を返す -- キャッシュキーの材料そのもの。
+
+    `process_scene` の中に埋まっていたものを関数にした。**合成前に「何文を再合成
+    するか」を予告する** (`plan_synthesis`) には同じ導出が要るが、2 か所に書くと
+    片方だけ直したときに予告が静かに嘘をつく。1 実装にして両方から呼ぶ。
+
+    `quiet=True` は予告側から呼ぶとき用 (同じ WARN を 2 度出さない)。
+    """
+    scene_id = scene.get("scene_id", "?")
+    narration = scene["narration"]
+    narration_speech = scene.get("narration_speech")  # VOICEVOX-readable text
+    narration_speech_cloud = scene.get("narration_speech_cloud")  # Cloud-tuned text
+
+    # Validate speech-array lengths if provided (mismatch -> ignore that field)
+    if narration_speech is not None and len(narration_speech) != len(narration):
+        if not quiet:
+            print(
+                f"  [WARN] {scene_id}: narration_speech length ({len(narration_speech)}) "
+                f"!= narration length ({len(narration)}), ignoring narration_speech"
+            )
+        narration_speech = None
+    if narration_speech_cloud is not None and len(narration_speech_cloud) != len(narration):
+        if not quiet:
+            print(
+                f"  [WARN] {scene_id}: narration_speech_cloud length "
+                f"({len(narration_speech_cloud)}) != narration length ({len(narration)}), "
+                f"ignoring narration_speech_cloud"
+            )
+        narration_speech_cloud = None
+
+    # Engine-specific per-sentence param signature (folded into the cache key).
+    if engine == "cloud":
+        config_sig = cloud_tts.config_signature(tts_voice, tts_rate)
+        if narration_speech_cloud is None and not quiet:
+            _fallback = "narration_speech" if narration_speech is not None else "narration"
+            print(
+                f"  [WARN] {scene_id}: narration_speech_cloud 未設定 -> {_fallback} を "
+                f"strip して送信 (Cloud 読み未検証)"
+            )
+    else:
+        config_sig = _voicevox_config_signature()
+
+    speech_texts: list[str] = []
+    for i, raw_text in enumerate(narration):
+        if engine == "cloud":
+            if narration_speech_cloud is not None:
+                source = narration_speech_cloud[i]
+            elif narration_speech is not None:
+                source = narration_speech[i]  # fallback (WARN emitted above)
+            else:
+                source = raw_text
+            speech_texts.append(cloud_tts.strip_for_cloud(source))
+        else:
+            if narration_speech is not None:
+                speech_texts.append(strip_subtitle_markers(narration_speech[i]))
+            else:
+                speech_texts.append(strip_subtitle_markers(raw_text))
+    return config_sig, speech_texts
+
+
+def plan_synthesis(
+    scene_json_path: str,
+    output_dir: str,
+    engine: str = "voicevox",
+    tts_voice: str | None = None,
+    tts_rate: float | None = None,
+    speed_scale: float | None = None,
+) -> dict:
+    """合成を**始める前に**「何文がキャッシュに当たり、何文を再合成するか」を数える。
+
+    ある回 (2026-08-06) で、1 文だけ直したつもりの再ビルドが **94 文すべてを再合成**
+    し、Cloud TTS は非決定的なので全 23 scene の尺が動き、visual 23 本の再 render
+    (24 分) まで波及した。原因はキャッシュキーの基が過去に変わっていたこと
+    (`speech_text` -> `build_synthesis_input()` の SSML、14c24c7 / 2026-07-08) で、
+    **合成が終わるまで誰も気づけなかった**。予告は 1 秒で出せる。
+
+    副作用なし (wav も cache も書かない)。Returns::
+
+        {"total": 全文数, "hits": 再利用できる文数, "misses": 再合成する文数,
+         "cache_entries": 既存キャッシュの件数, "miss_scenes": {scene_id: 件数}}
+    """
+    with open(scene_json_path, encoding="utf-8") as f:
+        scene_def = json.load(f)
+
+    audio_dir = os.path.join(output_dir, "audio")
+    cache = _load_audio_cache(audio_dir)
+
+    # VOICEVOX の config 署名は module global (SPEED_SCALE) を読む。予告を pipeline
+    # 本体から呼ぶときは subprocess に渡す値と揃えないと、キーがずれて予告が外れる。
+    global SPEED_SCALE
+    prev_speed = SPEED_SCALE
+    if speed_scale is not None:
+        SPEED_SCALE = speed_scale
+    try:
+        total = hits = 0
+        miss_scenes: dict[str, int] = {}
+        for section in scene_def.get("sections", []):
+            for scene in section.get("scenes", []):
+                if not scene.get("narration"):
+                    continue
+                scene_id = scene["scene_id"]
+                config_sig, speech_texts = resolve_scene_speech(
+                    scene, engine, tts_voice, tts_rate, quiet=True
+                )
+                for i, speech_text in enumerate(speech_texts):
+                    total += 1
+                    sent_idx = f"{i + 1:03d}"
+                    sent_wav = os.path.join(audio_dir, f"{scene_id}_{sent_idx}.wav")
+                    if engine == "cloud":
+                        _synth_input = cloud_tts.build_synthesis_input(speech_text)
+                        hash_basis = _synth_input.get("ssml") or _synth_input.get("text")
+                    else:
+                        hash_basis = speech_text
+                    sent_hash = _audio_sentence_hash(hash_basis, config_sig)
+                    if _cache_entry_matches(cache, f"{scene_id}_{sent_idx}", sent_hash, sent_wav):
+                        hits += 1
+                    else:
+                        miss_scenes[scene_id] = miss_scenes.get(scene_id, 0) + 1
+    finally:
+        SPEED_SCALE = prev_speed
+
+    return {
+        "total": total,
+        "hits": hits,
+        "misses": total - hits,
+        "cache_entries": len(cache),
+        "miss_scenes": miss_scenes,
+    }
+
+
 def _load_audio_cache(audio_dir: str) -> dict:
     """Load the audio reuse cache. Values are {"text": hash16, "wav": fingerprint}
     for new-format entries, or a bare hash16 string for legacy entries (still
@@ -1940,36 +2115,9 @@ def process_scene(
     """
     scene_id = scene["scene_id"]
     narration = scene["narration"]
-    narration_speech = scene.get("narration_speech")  # VOICEVOX-readable text
-    narration_speech_cloud = scene.get("narration_speech_cloud")  # Cloud-tuned text
     pause_after = scene.get("pause_after", 0.5)
 
-    # Validate speech-array lengths if provided (mismatch -> ignore that field)
-    if narration_speech is not None and len(narration_speech) != len(narration):
-        print(
-            f"  [WARN] {scene_id}: narration_speech length ({len(narration_speech)}) "
-            f"!= narration length ({len(narration)}), ignoring narration_speech"
-        )
-        narration_speech = None
-    if narration_speech_cloud is not None and len(narration_speech_cloud) != len(narration):
-        print(
-            f"  [WARN] {scene_id}: narration_speech_cloud length "
-            f"({len(narration_speech_cloud)}) != narration length ({len(narration)}), "
-            f"ignoring narration_speech_cloud"
-        )
-        narration_speech_cloud = None
-
-    # Engine-specific per-sentence param signature (folded into the cache key).
-    if engine == "cloud":
-        config_sig = cloud_tts.config_signature(tts_voice, tts_rate)
-        if narration_speech_cloud is None:
-            _fallback = "narration_speech" if narration_speech is not None else "narration"
-            print(
-                f"  [WARN] {scene_id}: narration_speech_cloud 未設定 -> {_fallback} を "
-                f"strip して送信 (Cloud 読み未検証)"
-            )
-    else:
-        config_sig = _voicevox_config_signature()
+    config_sig, speech_texts = resolve_scene_speech(scene, engine, tts_voice, tts_rate)
 
     sentences_timing = []
     segment_files = []  # ordered list of WAV files for concatenation
@@ -1978,21 +2126,7 @@ def process_scene(
     for i, raw_text in enumerate(narration):
         sent_idx = f"{i + 1:03d}"
         sent_wav = os.path.join(audio_dir, f"{scene_id}_{sent_idx}.wav")
-
-        # Determine speech text per engine (see docstring).
-        if engine == "cloud":
-            if narration_speech_cloud is not None:
-                source = narration_speech_cloud[i]
-            elif narration_speech is not None:
-                source = narration_speech[i]  # fallback (WARN emitted above)
-            else:
-                source = raw_text
-            speech_text = cloud_tts.strip_for_cloud(source)
-        else:
-            if narration_speech is not None:
-                speech_text = strip_subtitle_markers(narration_speech[i])
-            else:
-                speech_text = strip_subtitle_markers(raw_text)
+        speech_text = speech_texts[i]
 
         # Generate or estimate audio
         if dry_run:
@@ -2496,7 +2630,7 @@ def rebuild_single_scene_audio(
         # Phase 0: Rule-based misreading fix.
         # The full pipeline applies this in main() but partial rebuild used to skip
         # it, so new scenes added via --rebuild-scene (or this function directly)
-        # got raw narration_speech with no dict-based corrections. The ある回 case:
+        # got raw narration_speech with no dict-based corrections. The an earlier episode case:
         # math_11b "辺" → mis-read as "あたり" because the 辺→へん rule never ran.
         # Fix applies the dict and saves the updated scene_def to disk so subsequent
         # runs see the corrected narration_speech.

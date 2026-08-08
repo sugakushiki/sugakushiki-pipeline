@@ -1,7 +1,7 @@
 """qa_formula_variable_consistency.py - Lint for cross-scene formula variable
 mismatches in an episode.
 
-Originally created after ある回 round-6 (math_16 vs math_17):
+Originally created after an earlier episode round-6 (math_16 vs math_17):
 
     math_16 (sea_island_survey double_difference)  uses: h, H, s_1, s_2, d, L
     math_17 (formula_display, same physical formulas) uses: a, h, b_1, b_2, d, s

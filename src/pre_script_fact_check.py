@@ -34,7 +34,7 @@ import urllib.request
 # caught at a higher layer with a `skipped due to error` message —
 # the pipeline then bypasses CRITICAL/WARN handling silently. Forcing
 # stdout/stderr to UTF-8 makes the lint output robust on cp932 consoles.
-# (Same pattern as .claude/hooks/qa_report_reminder.py.)
+# (Same pattern as the QA-report reminder hook.)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -614,6 +614,14 @@ def wikidata_check(episode_config: dict, timeout: int = 15) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+# プロンプトの版。**プロンプトを書き換えたらここを上げる**。cache キーは内容 hash なので、
+# 版を持たないと「古いプロンプトで出した判定」が新しいプロンプトの結果として残り続ける
+# (内容が変わるまで再実行されない)。layer C (verified_facts 等の知識ベース照合) と
+# layer F (references の書誌 review) は別プロンプトなので版も別に持つ。
+FACT_CHECK_PROMPT_VERSION = "2026-08-06.1"
+REFERENCE_PROMPT_VERSION = "2026-08-06.1"
+
+
 def _config_hash(episode_config: dict) -> str:
     """Hash the fields actually checked, ignoring transient ones (bgm etc)."""
     relevant = {
@@ -625,7 +633,11 @@ def _config_hash(episode_config: dict) -> str:
         "theme": episode_config.get("theme", ""),
         "key_topics": episode_config.get("key_topics", []),
     }
-    blob = json.dumps(relevant, sort_keys=True, ensure_ascii=False)
+    blob = (
+        FACT_CHECK_PROMPT_VERSION
+        + "\x00"
+        + json.dumps(relevant, sort_keys=True, ensure_ascii=False)
+    )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -753,7 +765,8 @@ def _references_hash(episode_config: dict) -> str:
     """Hash the references list only, so the reference cache invalidates when a
     reference is edited but not when unrelated config fields change."""
     refs = [r for r in episode_config.get("references", []) if isinstance(r, str)]
-    return hashlib.sha256(json.dumps(refs, ensure_ascii=False).encode("utf-8")).hexdigest()
+    blob = REFERENCE_PROMPT_VERSION + "\x00" + json.dumps(refs, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def run_reference_check(episode_config: dict, episode_dir: str, debug: bool = False) -> dict:

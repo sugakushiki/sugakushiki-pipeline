@@ -147,6 +147,7 @@ D (算術サニティ) + E (Wikidata 照合) + F (references の書誌 review) �
 | `--skip-portrait-lint` | off | 肖像と source_prompt の特徴矛盾 lint を skip (advisory) |
 | `--allow-video-borders` | off | レンダ動画の白帯 8% 以上でも中断しない |
 | `--skip-route-preflight` | off | route_map 衝突 preflight を skip (レンダ中の WARN は残る) |
+| `--skip-route-place-check` | off | ナレーションの地名が route_map に在るかの advisory review を skip (Claude・cache 付き・ビルドは止めない) |
 | `--allow-route-collision` | off | 衝突を検出しても中断しない (advisory 化) |
 | `--auto-fix-route-collisions` | off | 4 段の自動修復を試す (ラベル退避 → bounds 拡張 → title 縮小 → legend 再配置)。`scene_definition.json` を書き換え、`_route_map_auto_fix_log` に記録する |
 | `--allow-empty-template-params` | off | 再利用テンプレの params が空でも続行 |
@@ -217,6 +218,128 @@ python scripts/check_intro_semantic.py episodes/XXX
 `--no-keep-awake` を外した既定では、pipeline 起動時に system sleep を抑止し
 終了時に解除する。長時間ビルドが OS のスリープでプロセスごと落ちるのを防ぐ。
 
+### ビルド完了後
+
+`output_final.mp4` が存在する run の最後に、構造検査 11 件 (`scripts/post_build_verify.py`)
+が自動で走り、警告数は最終サマリの advisory roll-up に載る。あわせてレビュー用の
+`temp_videos/<ep>_output_final.mp4` へのコピーも pipeline が行う。
+
+この 2 つは ある時点 から**存在はしていた**が pipeline から呼ばれておらず、実行の強制は
+memory の「必ず実行」という記述だけだった。ある回でその穴を踏み、**修正前の動画を
+レビューしてもらってレビュー 1 周を無駄にした**ので配線した。
+
+| フラグ | 既定 | 内容 |
+|---|---|---|
+| `--skip-post-build-verify` | off | ビルド後の構造検査 11 件を skip |
+| `--no-temp-video-copy` | off | `temp_videos/` へのコピーをしない |
+| `--no-review-reel` | off | のレビューリール + 未変更区間の同一性証明を skip (ビルド前の baseline 採取も止まる) |
+| `--allow-full-resynthesis` | off | 「既存キャッシュがあるのに半数以上を再合成する」という予告が出ても止まらない |
+
+### 1 シーンだけ直す経路 (`--rebuild-scene`) の検査
+
+2026-08-06 まで、`--rebuild-scene` は full build が走らせる**検査 16 系統を 1 つも
+通っていなかった**。`pitfalls.md` には route_map preflight の 1 件だけが「将来課題」
+として載っていて、**その 1 行があることで棚卸ししたつもりになっていた**。
+
+現在は **11 の共有ヘルパー**を両経路から呼ぶ (下表の後半 4 つは、1 回目の配線で**画像と字幕の側を取りこぼしていた**ぶん):
+
+| ヘルパー | 中身 | 部分再ビルドでの絞り込み |
+|---|---|---|
+| `_run_audio_pre_checks` | reading_guard / gen_cloud_readings / cloud_reading_lint | 絞らない (静的走査で速い) |
+| `_run_audio_post_checks` | stt_qa / cloud_speed_qa | STT は `--scenes <再ビルドした scene>`。速度は episode 全体の中央値と比べる検査なので絞らない。`--apply` (正規化) は**回さない** |
+| `_run_pre_visuals_checks` | / 画面年号 / ナレーションと画面の不一致 / timeline 凡例 / route 凡例 / 地名カバレッジ | 絞らない (LLM 部分は content-hash cache が効く) |
+| `_run_route_map_preflight` | Layer 2 (STOP ゲート + auto-fix) | 絞らない |
+| `_run_post_visual_lints` | 白帯 / manim_vision_qa / manim_text_collision_qa | Vision QA は `--scenes` (Claude vision は scene 数に比例)。白帯と bbox 衝突は決定論で速い (実測 13.8 秒 / 17 scene) ので絞らない |
+| `_run_pre_assemble_guards` | / Guard-B / Guard-B2 / Guard-B3 | audio も subtitles も回すので Guard-B/B3 は自動的に skip、 だけが効く |
+| `_run_output_verification` | verify_outputs / temp_videos コピー / post_build_verify / レビューリール | 絞らない |
+| `_run_font_coverage_check` | フォントが持たない漢字 (焼き込み字幕の豆腐化) | 絞らない。**字幕は必ず全編焼き直す**ので全編見る |
+| `_run_pre_images_checks` | ある回主題肖像の use_reference gap | ken_burns のときだけ。絞らない (config 由来の決定論 lint) |
+| `_run_post_images_border_lint` | の source 側 (生成画像の白縁) | ken_burns のときだけ。絞らない (PIL の画素実測で速い) |
+| `_run_image_qa_gate2` | QA Gate 2 (画像 vs narration の整合、Claude vision) | ken_burns のときだけ。`--scenes <再ビルドした scene>` (13 枚へ vision を投げない) |
+
+**下 4 つは 1 回目の配線で落としていた。** 音声と visual の側だけを共有化して
+「塞いだ」と報告したが、同じ AST 測定をやり直すと画像と字幕の側が残っていた ──
+ken_burns の部分再ビルドは**画像を作り直す**し、字幕は**必ず全編焼き直す**のに、
+画像 QA も白縁も肖像参照 gap もフォント検査も走っていなかった。CLAUDE.md の
+「画像を再生成したら qa_image_checker を回す。勝手に QA を skip しない」という
+明文のルールを、この経路だけが破っていたことになる。
+**塞いだと言う前に、穴を見つけたときと同じ測り方でもう一度測る。**
+
+あわせて preflight の step 集合を実態に合わせた。以前は手書きの短縮版
+`["assemble", "credits", "bgm"]` で、**必ず音声を合成するのに VOICEVOX 疎通も
+Cloud API キーの存在確認も起動時に見ていなかった** (どちらも `"audio" in steps` ゲート)。
+
+### 合成の波及規模を合成前に出す (合成予告ゲート)
+
+ある回で、1 語だけ直したつもりの `--steps audio,...` が **94 文すべてを再合成**した。
+Cloud TTS (Chirp3-HD) は非決定的なので**テキストが同じでも尺が変わり**、全 23 scene の
+尺がずれて visual 23 本の再 render (24 分) まで波及し、合計 57 分になった。
+
+`audio_generator.plan_synthesis()` が合成前に**同じキー計算を素通し**して hits/misses を
+数える (副作用なし)。pipeline は毎回その数を出し、**既存キャッシュがあるのに半数以上を
+再合成する**ときだけ確認を挟む。初回ビルド (cache 空) と `--force-regen-audio` は
+意図が明示されているので対象外。
+
+較正 — 出荷 63 ep 実測で発火 1 件:
+
+| ep | 全文 | 再合成 | キャッシュ |
+|---|---|---|---|
+| 048_khayyam | 69 | **41 (59%)** | 29 件 (40 文が未登録) |
+| 050_conway | 80 | 28 | 80 |
+| 049_lucas / 047_kovalevskaya | 93 / 79 | 19 / 17 | 全登録 |
+| その他の cloud ep (044/045/051-063 ほか) | — | 0 | 全一致 |
+
+**キーの導出は 1 実装しかない** (`resolve_scene_speech`)。予告と実際の合成で別々に
+導出すると、片方だけ直したときに**予告が静かに嘘をつく**。
+
+
+### 字幕の本文が編集前のまま焼かれる (Guard-B3)
+
+**字幕の本文は `timing.json` の `sentences[].text` から作られる** (`subtitle_generator`:
+`raw_text = sentence["text"]`)。narration から直接ではない。timing.json を書くのは
+**audio ステップ**なので:
+
+    narration を直す -> `--steps subtitles,assemble,bgm` を回す
+      -> 字幕は再生成されるが、中身は**編集前のまま**
+
+しかも `_subtitles_meta.json` には**編集後の** narration hash が刻まれるため、
+**Guard-B / B2 はどちらも「問題なし」と答える**。実ビルドで確認した desync。
+
+Guard-B3 は narration と timing の本文を直接突き合わせる。**ゲートは Guard-B とは別**で、
+`audio` を steps に含まないときに見る — 同じゲート (`subtitles` を回さないとき) に乗せると、
+事故が起きる当のシナリオで一度も走らない (最初の実装はこれを踏んだ)。
+
+**本文を直したら audio から回すこと。** 較正: 出荷 63 ep で発火 1 件、それは真陽性
+(`044_oka_kiyoshi/math_05` の narration は「立ちふさがります」だが出荷字幕は
+「立ちはだかります」)。逃げ道は `--allow-stale-subtitles`。
+
+### レビューリールと「触っていない所は変わっていない」の証明
+
+在庫を 1 箇所直すたびに 17 分を通しで見直す負担が、**直せば直る欠陥を「触らない」に倒して
+いた**。増分キャッシュ が下げたのは計算コストだけで、人間のレビューコストは
+そのままだったため、ボトルネックはこちらに移っていた。
+
+pipeline は **2 箇所**でこれを扱う。
+
+1. **起動直後**: 現行 `output_final.mp4` からフレームハッシュを採り、キャッシュ・timing・
+   字幕・narration のハッシュと合わせて `_review_baseline.json` に書く。ビルドが動画を
+   上書きしてしまうので、**ここで採らないと後から証明できない**。
+2. **末尾**: 差分を取り、変更シーンだけを ±2 秒の文脈付きで繋いだ
+   `temp_videos/<ep>_review_reel.mp4` を出し、**未変更シーンについては**フレーム・字幕・
+   位置が同一であることを `review_reel_report.txt` に書く。
+
+リールだけでは足りない、というのが ある時点 の user 議論の結論だった。変更シーンだけ見せる
+ことは、見せなかった部分について暗黙に「変わっていない」と主張しているのに、その主張に
+裏付けが無かったため。**未変更のはずのシーンに差異が出たらリールには映らない**ので、
+report のその節を先に読むこと。
+
+全シーンが変わった回とリールが 7 分を超える回はリールを作らず「通しで見るほうが速い」と
+明示する (2 分で済むと誤解させない)。
+
+**check 10 (章タイムスタンプを timing.json から再計算して値で照合)** と
+**check 11 (全画像の下隅を 1 枚に並べた目視用シート)** は ある回で新設した。
+検査の最後に出る `[ACTION]` 行 (Manim フレームとシートのパス) は必ず開くこと。
+
 ### 観測性
 
 | フラグ | 既定 | 内容 |
@@ -243,14 +366,10 @@ skip する。安い script 検証を、高い asset 生成の前に挟む。
 
 ## QA 再検証 hook
 
-`qa_report_*.json` を Read した瞬間に `.claude/hooks/qa_report_reminder.py` が
-PreToolUse hook で再検証リマインダを差し込む。QA レポートは severity / citation /
+`qa_report_*.json` を Read した瞬間に QA 再検証 hook が PreToolUse で再検証リマインダを差し込む。QA レポートは severity / citation /
 confidence が構造化されているぶん一見権威的に見えるため、**指摘を伝える前に
 一次資料で裏取りする**運用を機械的に促す。
 
-- 設定: `settings.local.json` (gitignored) への登録が必要
-- worktree セッションは main repo の `settings.local.json` を見ないので、
-  worktree 側でも独立に登録する (hook 本体は repo にあるので絶対パス指定でよい)
 
 ---
 

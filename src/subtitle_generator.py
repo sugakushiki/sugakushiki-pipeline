@@ -29,6 +29,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
+import sentence_align
+
 # ---------------------------------------------------------------------------
 # Drawtext settings (confirmed in Weekend 2)
 # ---------------------------------------------------------------------------
@@ -44,6 +46,10 @@ VIDEO_HEIGHT_VAR = "h"  # FFmpeg variable for video height
 
 
 MAX_CHARS = 25  # Max characters per subtitle line
+
+# 実測アラインがどれだけ効いたかを呼び出し側が報告できるようにする。件数だけでなく
+# 「測れなかった数」を出すのが要点。
+_ALIGN_STATS = {"used": 0, "group_mismatch": 0, "unmeasured": 0}
 
 
 def build_visual_type_map(scene_def: dict) -> dict[str, str]:
@@ -80,7 +86,7 @@ def get_bottom_margin(visual_type: str) -> int:
 # Narration source stays in kanji (spoken-style); audio reads narration_speech
 # so it is unaffected. Subtitles render 年/月/日 dates in Arabic for readability
 # and consistency with on-screen Manim year labels (1609 等). user request,
-# ある回 Kepler.
+# An earlier episode Kepler.
 # ---------------------------------------------------------------------------
 _KANJI_POS = {
     "〇": "0",
@@ -111,7 +117,7 @@ def dates_to_arabic(text: str) -> str:
     """Convert kanji DATE numerals (year/month/day) to Arabic for subtitles.
 
     - Years: 3-4 positional digit-kanji + 年 (一六〇九年 -> 1609年, 四一五年 -> 415年,
-      紀元前二六二年 -> 紀元前262年). ある回 強化: {4} -> {3,4} で古代の3桁年号と
+      紀元前二六二年 -> 紀元前262年). ある回強化: {4} -> {3,4} で古代の3桁年号と
       BC 年号 (紀元前/前 接頭の3桁) も変換 (従来は4桁のみで 415年/262年 を取りこぼした)。
       Durations like 二千年/五十七年 use 千/十 and are NOT matched; 2桁以下も非対象
       (「二三年」=数年 等の口語 duration の誤変換を避ける)。
@@ -501,7 +507,7 @@ def escape_drawtext(text: str) -> str:
     but NOT inside an ffmpeg ``-filter_script`` file (which is parsed with no
     shell), where it breaks the quoting so the drawtext options (fontsize,
     enable=between(...), ...) leak into the frame as literal burnt-in text. This
-    bit ある回 ("df = f'(X)dX ...") -- the filter string was rendered
+    bit an earlier episode ("df = f'(X)dX ...") -- the filter string was rendered
     persistently over the back half of the video. Converting to U+2019 (mirrors
     the '%' -> '％' strategy below) sidesteps the escaping entirely and renders a
     correct apostrophe/prime for derivatives.
@@ -524,7 +530,7 @@ def validate_drawtext_lines(lines: list[str]) -> list[str]:
     A raw ASCII apostrophe (') left inside a text value breaks the ffmpeg
     ``-filter_script`` quoting: the value closes early and the drawtext options
     (fontsize=..., enable=between(...)) leak into the frame as persistent
-    burnt-in text (ある回 "f'(X)dX ...", visible over the whole back half
+    burnt-in text (an earlier episode "f'(X)dX ...", visible over the whole back half
     of the video). escape_drawtext converts every ASCII ' to U+2019, so any ASCII
     ' surviving inside a text value means the escaping failed. Deterministic
     backstop that guards the whole special-character class, not just the
@@ -538,8 +544,109 @@ def validate_drawtext_lines(lines: list[str]) -> list[str]:
     return bad
 
 
+def group_segments_by_sentence(segments: list[str]) -> list[list[str]]:
+    """Group | segments into sentences: a segment ending in 。 closes a group.
+
+    The subtitle segments come from `narration` (with 《》 and kanji) while the
+    audio was synthesized from `narration_speech_cloud` (brackets stripped, some
+    words in kana), so the two strings do not line up character by character and
+    a positional mapping is not safe. Grouping on the full stop uses only the
+    narration side and needs no correspondence.
+    """
+    groups: list[list[str]] = []
+    cur: list[str] = []
+    for seg in segments:
+        cur.append(seg)
+        if seg.rstrip().endswith("。"):
+            groups.append(cur)
+            cur = []
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def measured_element(
+    sentence: dict, audio_dir: str | None
+) -> tuple[list[tuple[float, float]] | None, list[tuple[float, float]]]:
+    """(sentence spans or None, silence spans) for one element, scaled onto its slot.
+
+    Anchoring subtitles on real sentence ends is what removes the drift that
+    accumulates when a multi-sentence element is spread by a mora estimate alone.
+    The silence comes back too, because placing cues inside a sentence needs the
+    same correction and the measurement is already paid for.
+
+    The sentence spans fail closed - any doubt returns None and the caller keeps
+    the previous estimate, because a wrong boundary mistimes subtitles silently.
+    The silence does not need that caution: it is measured, not inferred.
+    """
+    if not audio_dir:
+        return None, []
+    wav = sentence.get("wav_file")
+    text = sentence.get("text_clean") or ""
+    if not wav or not text:
+        return None, []
+    res = sentence_align.align(os.path.join(audio_dir, wav), text)
+    # The element's slot in timing.json can differ slightly from the wav length
+    # (trailing pause handling); scale the measurements onto the slot.
+    slot = float(sentence["end"]) - float(sentence["start"])
+    dur = res.get("duration") or 0.0
+    if slot <= 0 or dur <= 0:
+        return None, []
+    k = slot / dur
+    silence = [(a * k, b * k) for a, b in res.get("silence", [])]
+    spans = [(a * k, b * k) for a, b in res["spans"]] if res["ok"] else None
+    return spans, silence
+
+
+def measured_sentence_spans(
+    sentence: dict, audio_dir: str | None
+) -> list[tuple[float, float]] | None:
+    """Sentence spans inside one element, measured from its wav. None = unusable."""
+    return measured_element(sentence, audio_dir)[0]
+
+
+def distribute_measured(
+    start: float,
+    end: float,
+    segments: list[str],
+    weights: list[float],
+    silence: list[tuple[float, float]],
+    origin: float,
+) -> list[dict]:
+    """`distribute_time`, but spending the weights in speech time.
+
+    `silence` is measured from the element's start, so `origin` says where that
+    start sits on the same clock as `start`/`end`. With no silence measured this
+    is exactly `distribute_time`, which is what the no-audio path still gets.
+    """
+    if len(segments) < 2 or not silence:
+        return distribute_time(start, end, segments, weights)
+    off = start - origin
+    span = end - start
+    local = [
+        (max(0.0, b - off), min(span, e - off))
+        for b, e in silence
+        if e - off > 0 and b - off < span
+    ]
+    if not weights or len(weights) != len(segments):
+        weights = [float(len(s)) for s in segments]
+    cuts = sentence_align.speech_time_edges(span, local, weights)
+
+    result = []
+    current = start
+    for i, seg in enumerate(segments):
+        seg_end = end if i == len(segments) - 1 else max(start + cuts[i], current + 0.01)
+        seg_end = min(seg_end, end)
+        result.append({"text": seg, "start": round(current, 3), "end": round(seg_end, 3)})
+        current = seg_end
+    return result
+
+
 def generate_entries(
-    timing_data: dict, scene_level: bool = False, voicevox_url: str | None = None
+    timing_data: dict,
+    scene_level: bool = False,
+    voicevox_url: str | None = None,
+    audio_dir: str | None = None,
 ) -> list[dict]:
     """Generate subtitle entries from timing data.
 
@@ -597,12 +704,34 @@ def generate_entries(
                         }
                     )
             else:
-                # Multiple segments: distribute time by measured spoken duration
-                weights = segment_weights(segments, voicevox_url)
-                distributed = distribute_time(sent_start, sent_end, segments, weights)
-                for seg in distributed:
-                    seg["scene_id"] = scene_id
-                    entries.append(seg)
+                # Multiple segments: distribute time by measured spoken duration.
+                # When the element holds several sentences AND the wav lets us
+                # locate the real sentence ends, anchor on those first and spread
+                # only WITHIN each sentence; otherwise spread across the whole
+                # element as before.
+                spans, silence = measured_element(sentence, audio_dir)
+                groups = group_segments_by_sentence(segments)
+                if spans and len(groups) == len(spans):
+                    _ALIGN_STATS["used"] += 1
+                    edges = [sent_start] + [sent_start + b for _a, b in spans[:-1]] + [sent_end]
+                    for gi, grp in enumerate(groups):
+                        w = segment_weights(grp, voicevox_url)
+                        for seg in distribute_measured(
+                            edges[gi], edges[gi + 1], grp, w, silence, sent_start
+                        ):
+                            seg["scene_id"] = scene_id
+                            entries.append(seg)
+                else:
+                    if spans:
+                        _ALIGN_STATS["group_mismatch"] += 1
+                    else:
+                        _ALIGN_STATS["unmeasured"] += 1
+                    weights = segment_weights(segments, voicevox_url)
+                    for seg in distribute_measured(
+                        sent_start, sent_end, segments, weights, silence, sent_start
+                    ):
+                        seg["scene_id"] = scene_id
+                        entries.append(seg)
 
     # Assign sequential index
     for i, entry in enumerate(entries):
@@ -779,6 +908,13 @@ def main():
         "timing (exact for years/numbers/・/symbols, parallelised to ~1 min).",
     )
     parser.add_argument(
+        "--audio-dir",
+        default=None,
+        help="Directory holding the per-element wav files. Used to measure real "
+        "sentence boundaries inside multi-sentence elements so subtitles do not "
+        "drift (default: {output-dir}/audio; omit the directory to keep the estimate).",
+    )
+    parser.add_argument(
         "--voicevox-url",
         default="http://localhost:50021",
         help="VOICEVOX URL for subtitle segment timing (default: localhost:50021)",
@@ -830,7 +966,24 @@ def main():
     )
 
     # Generate subtitle entries
-    entries = generate_entries(timing_data, scene_level=args.scene_level, voicevox_url=voicevox_url)
+    # 音声が手元にあれば、要素内の文境界を実測して字幕を割り付ける。無ければ従来の
+    # 推定のまま (audio_dir=None)。--audio-dir 未指定時は output-dir/audio を既定にする。
+    audio_dir = args.audio_dir or os.path.join(args.output_dir, "audio")
+    if not os.path.isdir(audio_dir):
+        audio_dir = None
+    entries = generate_entries(
+        timing_data,
+        scene_level=args.scene_level,
+        voicevox_url=voicevox_url,
+        audio_dir=audio_dir,
+    )
+    st = _ALIGN_STATS
+    measurable = st["used"] + st["group_mismatch"] + st["unmeasured"]
+    if measurable:
+        print(
+            f"  字幕タイミング: 文境界を実測できた要素 {st['used']} / {measurable} "
+            f"(推定のまま: 未測定 {st['unmeasured']} + 区切り不一致 {st['group_mismatch']})"
+        )
 
     # Write SRT
     srt_path = os.path.join(args.output_dir, "subtitles.srt")

@@ -56,7 +56,7 @@ STYLE_GUIDE_PROMPT = """
 - 文体: ですます調で統一する（「〜です」「〜ます」「〜ました」「〜でしょう」）。である調（「〜である」「〜だった」「〜していた」「〜された」）は使わない。ただし会話の引用内は例外。堅すぎず、専門用語は文脈で理解できるように
 - 感嘆符: スクリプト全体で2〜3回まで
 - 禁止表現:「ヤバい」「すごすぎる」「衝撃」等の煽り語
-- **narration での「今日」禁止** (VOICEVOX が「きょう」(today) と「こんにち」(modern times) を文脈で区別できず誤読頻発、ある回 で繰り返し顕在化)。「現代」「今」「これから」「近代」など文脈に応じた言い換えを使う。許容: 「今日の」が「modern」の意味で必要な場合のみ「今日 (こんにち) の」のように読み補注を入れるか、narration_speech で「こんにちの」と書く
+- **narration での「今日」禁止** (VOICEVOX が「きょう」(today) と「こんにち」(modern times) を文脈で区別できず誤読頻発、ある回で繰り返し顕在化)。「現代」「今」「これから」「近代」など文脈に応じた言い換えを使う。許容: 「今日の」が「modern」の意味で必要な場合のみ「今日 (こんにち) の」のように読み補注を入れるか、narration_speech で「こんにちの」と書く
 - 許容する強調:「ここが面白いのは」「注目すべきは」等の抑制的な表現
 - 数学者の描写: 敬意はあるが神格化しない。失敗や人間的な弱さも等しく描く
 - **person section は人物の物語として厚く書く** (経歴の列挙だけにせず): 性格・苦悩・家族・教育者像・同時代人との関係・困難など、verified_facts に基づく人物的側面を必ず含める。3 scenes 600 字程度では薄い、4-5 scenes 900-1200 字を target に。視聴者は数式より人物の物語に引き込まれる
@@ -253,7 +253,7 @@ route_mapは世界地図上に都市と移動経路を描画する。数学者�
   - 場所・背景（例: cluttered office, university corridor, conference hall）
 
 **人物単独シーンの禁止表現** ★主役の単独肖像が意図のシーン（person_NN 等）で必ず守る★:
-  - "other students/scholars/mathematicians/people visible in the background" のような **他の人物の存在を匂わせる表現を入れない**（過去のケースで Gemini Flash が背景人物を別肖像として膨らませ、結果としてコラージュ風の複数人物画像を生成した、ある回 で発覚）
+  - "other students/scholars/mathematicians/people visible in the background" のような **他の人物の存在を匂わせる表現を入れない**（過去のケースで Gemini Flash が背景人物を別肖像として膨らませ、結果としてコラージュ風の複数人物画像を生成した、ある回で発覚）
   - 背景は建築・室内装飾・自然光・書類や黒板など小道具に留める
   - 群像（議論シーン、講義、家族写真等）が **意図的に複数人物** を含む場合は scene_id や source_prompt 冒頭でその意図を明示する（例: "A heated debate between three mathematicians..."）
 
@@ -595,6 +595,32 @@ def build_user_prompt(config: dict) -> str:
         for ref in config["references"]:
             parts.append(f"- {ref}")
 
+    # 企画で決めた語彙の制約を**生成時に**渡す。
+    #
+    # `forbidden_phrases` と `required_phrases` は、これまで
+    # **smoke test が事後に検出するだけ**で、src/ のどのモジュールも読んでいなかった。
+    # つまり「この語は使わない」「この語は必ず出す」と config に書いても台本生成には
+    # 一切届かず、出来上がったものを人が直す運用になっていた ── ある回は『ミニマックス』
+    # を一行入れると決めたのにどの scene にも書かれず、完成した動画を見て初めて判明した。
+    # 決めたことを生成側にも渡し、検出はその後の網として残す。
+    forbidden = [p for p in (config.get("forbidden_phrases") or []) if isinstance(p, str) and p]
+    if forbidden:
+        parts.append("\n## 使ってはいけない表現")
+        parts.append(
+            "以下は事実誤認・誇張・読み違いを招くため、narration / narration_speech / "
+            "text_overlay / description のいずれにも書かないでください "
+            "(言い換えて同じ内容を伝えること):"
+        )
+        for p in forbidden:
+            parts.append(f"- {p}")
+
+    required = [p for p in (config.get("required_phrases") or []) if isinstance(p, str) and p]
+    if required:
+        parts.append("\n## 必ず本編に出す語")
+        parts.append("以下は企画で「出す」と決めた語です。narration の中に最低 1 回入れてください:")
+        for p in required:
+            parts.append(f"- {p}")
+
     if config.get("additional_instructions"):
         parts.append("\n## 追加指示")
         parts.append(config["additional_instructions"])
@@ -690,7 +716,7 @@ def extract_json(text: str) -> dict:
     ケースに対応。最初の (壊れた) ブロックを掴むのではなく、**ALL ```json
     ブロック を列挙し、parse 成功するものを後ろから採用** する。
 
-    ある時点 で ある回 で 3 回連続 build 失敗の根本原因がこれだった。Claude が
+    ある時点 で ある回で 3 回連続 build 失敗の根本原因がこれだった。Claude が
     長文 JSON の途中でトークン制約や思考のリセットで「starting fresh」と
     再開、scene_definition_raw_attempt2.txt に 2 つの ```json ブロックが存在
     (pos 0 の壊れた 634 字 + pos 644 の正常 34502 字)。non-greedy regex は
@@ -823,7 +849,70 @@ def _milestones_in_list_form(milestones) -> bool:
     """
     if not isinstance(milestones, list) or not milestones:
         return False
-    return all(isinstance(m, (list, tuple)) for m in milestones)
+    # The row LENGTH is part of the schema, not just the row type. An earlier episode
+    # emitted 2-element rows (["1876", "生まれる"]); those are lists, so a type-only
+    # check called them "already normalized" and passed them through, and the
+    # template's len(m) >= 4 guard then raised at RENDER time -- i.e. after a 60
+    # minute build, shipping a text_overlay placeholder in place of the recap.
+    # Requiring len >= 4 here makes short rows fall through to conversion instead.
+    return all(isinstance(m, (list, tuple)) and len(m) >= 4 for m in milestones)
+
+
+# timeline_recap's legend rows are keyed by COLOUR ("gold"/"cyan"/"white"/"pink"),
+# but the LLM naturally writes a track-keyed dict ({"life": ..., "work": ...}).
+_LEGEND_TRACK_COLOUR = {"life": "white", "work": "gold"}
+
+
+def _normalize_timeline_legend(legend):
+    """Convert a dict-form legend to the template's list of [colour, label] rows.
+
+    The template does `for key, lbl in legend_data`, so a dict yields its KEYS and
+    unpacking "life" into two names raises ValueError: too many values to unpack --
+    at render time, i.e. a placeholder in the finished video.
+    Track names are mapped to their colour ("life" below the axis in white, "work"
+    above it in gold); a key the palette already knows is passed through. Returns
+    None when `legend` is not a dict (nothing to convert).
+    """
+    if not isinstance(legend, dict) or not legend:
+        return None
+    # Track names are resolved FIRST so the output is canonical: "life" is also a
+    # legacy palette key, and passing it through would leave two spellings of the
+    # same colour in circulation.
+    known = {"white", "gold", "cyan", "pink", "celestial", "probability"}
+    rows = []
+    for key, label in legend.items():
+        k = str(key).strip()
+        colour = _LEGEND_TRACK_COLOUR.get(k) or (k if k in known else "white")
+        rows.append([colour, str(label)])
+    return rows
+
+
+def _pad_short_milestone_rows(milestones) -> list | None:
+    """Pad [year, label] / [year, label, track] rows out to the template's 4 columns.
+
+    The template reads m[0]..m[3] = [year, label, track, colour] and raises when a
+    row is shorter. The LLM's most natural shape, however, is a plain
+    [year, label] pair, which no other branch of the normalizer
+    recognizes: it carries no life_events/work_events keys and no dict rows, so
+    _life_work_to_milestones() returns None and the scene would reach the renderer
+    unchanged -- placeholder in the finished video.
+
+    An explicit third element is honoured as the track ("work" above the axis,
+    "life" below); everything else defaults to the work track, matching the
+    generic fallback in _milestone_dict_to_rows(). Returns None when `milestones`
+    is not a list of short rows (so the caller falls through to the other
+    branches).
+    """
+    if not isinstance(milestones, list) or not milestones:
+        return None
+    if not all(isinstance(m, (list, tuple)) and 2 <= len(m) < 4 for m in milestones):
+        return None
+    rows = []
+    for m in milestones:
+        track = str(m[2]).strip() if len(m) >= 3 and str(m[2]).strip() else "work"
+        colour = "gold" if track == "work" else "white"
+        rows.append([_timeline_fmt_year(m[0]), str(m[1]), track, colour])
+    return rows
 
 
 def _milestone_dict_to_rows(ev: dict) -> list:
@@ -959,13 +1048,31 @@ def normalize_timeline_recap_scenes(scene_def: dict) -> int:
             params = visual.get("params")
             if not isinstance(params, dict):
                 continue
+            # The legend is normalized FIRST and independently of the milestones:
+            # a scene can carry perfectly good 4-column milestones and still crash
+            # the renderer on a dict-form legend, so this must
+            # not sit behind the "already normalized" early-continue below.
+            legend = _normalize_timeline_legend(params.get("legend"))
+            if legend is not None:
+                params["legend"] = legend
             # Already the template's list-of-rows schema? leave it. (A dict-form
             # `milestones` is NOT list form, so it falls through to conversion.)
             if _milestones_in_list_form(params.get("milestones")):
+                if legend is not None:
+                    rewritten += 1
+                continue
+            padded = _pad_short_milestone_rows(params.get("milestones"))
+            if padded is not None:
+                visual["params"] = {**params, "milestones": padded}
+                rewritten += 1
                 continue
             converted = _life_work_to_milestones(params)
             if converted is not None:
+                if legend is not None:
+                    converted["legend"] = legend
                 visual["params"] = converted
+                rewritten += 1
+            elif legend is not None:
                 rewritten += 1
     return rewritten
 

@@ -27,7 +27,9 @@ template, so Manim itself is never loaded (cheap, no side effects).
 """
 
 import ast
+import json
 import os
+import re
 import sys
 
 # Windows cp932 console: reconfigure stdout/stderr to UTF-8 so that non-ASCII
@@ -94,7 +96,7 @@ def _scene_narration_text(scene):
 # their required data param is absent -- and that default is ANOTHER episode's
 # data. timeline_recap with empty params {} silently renders Laplace's life
 # events (誕生1749 / 大不等性 / 娘を亡くす) under the current episode's title.
-# It recurred in ある回 (Germain) / ある回 (Fibonacci) / ある回 (Cauchy) / ある回
+# It recurred in an earlier episode (Germain) / an earlier episode (Fibonacci) / an earlier episode (Cauchy) / an earlier episode
 # (Daniel Bernoulli). The template's own guard only fires on PARTIAL params; a
 # fully-empty {} is indistinguishable from the standalone self-test, so it
 # cannot raise there. This pipeline-scope check asserts the data param so an
@@ -103,6 +105,118 @@ def _scene_narration_text(scene):
 _REQUIRED_TEMPLATE_PARAMS = {
     "timeline_recap": "milestones",
 }
+
+# the sibling failure of -- the data param IS populated, but the
+# scene is too SHORT to draw it. An earlier episode got a 9-milestone timeline in a
+# 2.2s scene (the script generator wrote a 17-character narration for it), so the
+# render stopped after the first milestone and the episode ended on a near-blank
+# frame. (stale-visual) cannot see this: the mp4 length matches the audio
+# exactly. Budget = max(_MIN_SCENE_SEC, _SEC_PER_ITEM * item_count).
+#
+# Calibrated on all 17 shipped episodes that use timeline_recap: the tightest is
+# An earlier episode (9 milestones / 16.5s = 1.83 s/item), so 1.2 s/item keeps a 1.5x margin and
+# yields ZERO false positives, while an earlier episode's broken 0.24 s/item is caught by ~5x.
+_TEMPLATE_ITEM_BUDGET = {
+    "timeline_recap": "milestones",
+}
+_SEC_PER_ITEM = 1.2
+_MIN_SCENE_SEC = 6.0
+
+
+def check_template_duration_budget(scene_def, timing):
+    """Return advisory violations where a data-driven scene is too short to draw.
+
+    Args:
+        scene_def: scene_definition.json dict
+        timing: timing.json dict (or its "scenes" mapping); {} disables the check.
+
+    Returns:
+        list of dicts {"scene_id", "template", "items", "duration", "required"}.
+        Empty when every such scene has enough time (or timing is unavailable).
+    """
+    scenes_timing = timing.get("scenes", timing) if isinstance(timing, dict) else {}
+    if not scenes_timing:
+        return []
+    violations = []
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual", {})
+            if visual.get("type") != "manim":
+                continue
+            key = _TEMPLATE_ITEM_BUDGET.get(visual.get("template"))
+            if not key:
+                continue
+            items = (visual.get("params") or {}).get(key) or []
+            if not items:
+                continue  # owns the empty case
+            sid = scene.get("scene_id", "?")
+            duration = (scenes_timing.get(sid) or {}).get("duration")
+            if not isinstance(duration, (int, float)) or duration <= 0:
+                continue
+            required = max(_MIN_SCENE_SEC, _SEC_PER_ITEM * len(items))
+            if duration < required:
+                violations.append(
+                    {
+                        "scene_id": sid,
+                        "template": visual.get("template"),
+                        "items": len(items),
+                        "duration": round(float(duration), 2),
+                        "required": round(required, 1),
+                    }
+                )
+    return violations
+
+
+def check_timeline_legend_coherence(scene_def):
+    """Return advisory violations where a timeline colour is on screen but unnamed.
+
+    The legend is the key that decodes the picture, and until now nothing checked
+    that it decodes anything. The template itself now drops legend entries for
+    unused colours and suppresses a legend too small to distinguish anything, but
+    it cannot invent the LABEL for a colour that IS used and has no entry -- that
+    is an editorial decision, so it is reported here.
+
+    The rule is what makes colour meaningful: colour only carries information when
+    it splits a track. A timeline where every `work` dot is gold and every `life`
+    dot is white needs no legend at all, because POSITION already says which is
+    which (the note under the title states it). But when one track uses two or more
+    colours, the colour is making a distinction that nothing on screen explains.
+
+    Calibrated against all 19 episodes using the template: it flags an earlier episode, an earlier episode,
+    an earlier episode, an earlier episode and an earlier episode
+    under a legend that names only gold, and an earlier episode splits its life track white/pink
+    (転機) with no legend at all -- and passes the 6 coherent ones plus every single-colour-per-track timeline.
+
+    Returns:
+        list of dicts {"scene_id", "track", "unnamed"}; empty when coherent.
+    """
+    violations = []
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual", {})
+            if visual.get("type") != "manim" or visual.get("template") != "timeline_recap":
+                continue
+            params = visual.get("params") or {}
+            milestones = [m for m in (params.get("milestones") or []) if len(m) >= 4]
+            if not milestones:
+                continue  # owns the empty case
+            named = {str(c[0]) for c in (params.get("legend") or []) if len(c) >= 2}
+            by_track = {}
+            for m in milestones:
+                by_track.setdefault(str(m[2]), set()).add(str(m[3]))
+            for track, colours in sorted(by_track.items()):
+                if len(colours) < 2:
+                    continue  # position alone explains a single-colour track
+                unnamed = sorted(colours - named)
+                if unnamed:
+                    violations.append(
+                        {
+                            "scene_id": scene.get("scene_id", "?"),
+                            "track": track,
+                            "unnamed": unnamed,
+                        }
+                    )
+    return violations
 
 
 def check_reused_template_params(scene_def):
@@ -140,6 +254,207 @@ def check_reused_template_params(scene_def):
                     }
                 )
     return violations
+
+
+_YEAR_RE = re.compile(r"(?<!\d)(1[0-9]{3}|20[0-2][0-9])(?!\d)")
+
+# Config fields whose text counts as "this episode's verified record": everything
+# here has been through the pre-script fact check.
+_VERIFIED_CONFIG_FIELDS = (
+    "theme",
+    "hook",
+    "key_topics",
+    "key_episodes",
+    "verified_facts",
+    "modern_connection",
+)
+
+
+def _years_in(text):
+    return set(_YEAR_RE.findall(text or ""))
+
+
+def _verified_claim_text(config):
+    """The config text that states CLAIMS, excluding citation metadata.
+
+    verified_facts entries are {"fact": ..., "source": ...}, and the source strings
+    are dense with unrelated years (journal volumes, publication dates, "Biometrika 6
+    (1908)"). Counting those as backing produced coincidental matches: an earlier episode's route
+    map showed 1895 for the Oxford matriculation and the check stayed silent only
+    because an editorial note elsewhere happened to contain "1895年" while discussing
+    Pearson's type IV paper. Only claim text counts.
+    """
+    out = []
+    for field in _VERIFIED_CONFIG_FIELDS:
+        value = config.get(field)
+        if field == "verified_facts" and isinstance(value, dict):
+            for v in value.values():
+                if isinstance(v, dict):
+                    out.append(v.get("fact", ""))
+                elif isinstance(v, str):
+                    out.append(v)
+        else:
+            out.append(value)
+    return out
+
+
+def check_onscreen_years_traceable(scene_def, config):
+    """Warn about on-screen years that appear nowhere else in the episode.
+
+    lint_manim_factual_claims() reads LINT_FACTUAL_CLAIMS out of the TEMPLATE, so it
+    can only police years a template hardcodes. Data-driven visuals put their years in
+    the SCENE instead -- route_map's route[].year and timeline_recap's
+    milestones[][0] -- and nothing checked those. An earlier episode's route map therefore showed
+    "1890 カレッジへ", a year the LLM had inferred and that was simply wrong (Gosset
+    entered Winchester in 1889); it was on screen, in no narration, and in no
+    verified_fact.
+
+    A year is "traceable" when it occurs in the narration OR in the config's claim
+    text. Everything else is reported so the author either sources it or removes it.
+    Advisory: legitimately-unspoken years exist (calibrated on the 59 shipped episodes
+    -> 8 of them carry one, i.e. roughly one advisory line per seven episodes).
+
+    KNOWN LIMIT -- this compares bare year strings, so an unrelated mention of the same
+    year silently vouches for a claim it has nothing to do with. An earlier episode's map showed
+    1895 for the Oxford matriculation and stayed unflagged because a note elsewhere
+    discussed Pearson's 1895 paper. Missing a real problem is the safe direction for an
+    advisory check (it never invents an alarm), but do not read silence as proof: the
+    years a visual asserts still belong in verified_facts.
+
+    Args:
+        scene_def: scene_definition.json dict
+        config: episode_config.json dict (may be None -> narration only)
+
+    Returns:
+        list of dicts {"scene_id", "kind", "years"} (empty if all traceable).
+    """
+    narration = " ".join(
+        n
+        for section in scene_def.get("sections", [])
+        for scene in section.get("scenes", [])
+        for n in scene.get("narration", [])
+    )
+    known = _years_in(narration)
+    if config:
+        known |= _years_in(json.dumps(_verified_claim_text(config), ensure_ascii=False))
+
+    findings = []
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual") or {}
+            onscreen = set()
+            kind = None
+            if visual.get("type") == "route_map":
+                kind = "route_map"
+                for step in visual.get("route") or []:
+                    onscreen |= _years_in(str(step.get("year", "")))
+            elif visual.get("template") == "timeline_recap":
+                kind = "timeline_recap"
+                for m in (visual.get("params") or {}).get("milestones") or []:
+                    if isinstance(m, (list, tuple)) and m:
+                        onscreen |= _years_in(str(m[0]))
+            if not onscreen:
+                continue
+            missing = sorted(onscreen - known)
+            if missing:
+                findings.append(
+                    {"scene_id": scene.get("scene_id", "?"), "kind": kind, "years": missing}
+                )
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# misreading: the narration points at something the assigned mode does not draw.
+# ---------------------------------------------------------------------------
+# The user watching ある回 wrote: "矢印の説明で矢印が画面上になく理解が難しい".
+# math_02 said "二つの状態と、そのあいだの四本の矢印があります" while its mode
+# (converge) draws a line chart -- the arrows live in a DIFFERENT mode of the same
+# template. Manim Vision QA later found the same shape in math_04 ("縦横10のますに
+# 書き写します" over a plain stream of letters), so this is a class, not a one-off.
+#
+# Nothing deterministic could see it: the params were valid, the mode existed, the
+# coordinates were legal. What was missing is that only the TEMPLATE knows what each
+# mode puts on screen. So templates may declare it, and this checks the narration
+# against the declaration:
+#
+#     LINT_VISUAL_ELEMENTS = {"two_state": ["矢印", "状態"], "converge": ["軸", "線"]}
+#
+# Deliberately narrow. Only words that PROMISE A PICTURE are looked for, and only
+# templates that opt in are checked (absent key -> skipped, so the other 170
+# templates are unaffected). advisory.
+_VISUAL_NOUNS = (
+    "矢印",
+    "等高線",
+    "折れ線",
+    "棒グラフ",
+    "縦軸",
+    "横軸",
+    "年表",
+    "ます目",
+    "格子",
+    "座標",
+)
+
+
+def _extract_visual_elements(template_name, manim_dir):
+    """Read the optional LINT_VISUAL_ELEMENTS dict from a template via AST."""
+    path = os.path.join(manim_dir, f"{template_name}.py")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except Exception:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "LINT_VISUAL_ELEMENTS":
+                try:
+                    return ast.literal_eval(node.value)
+                except Exception:
+                    return None
+    return None
+
+
+def check_narration_names_absent_visual(scene_def, manim_dir):
+    """Narration naming a visual element the assigned mode does not draw.
+
+    Returns a list of {scene_id, template, mode, words}. Templates without
+    LINT_VISUAL_ELEMENTS are skipped entirely (opt-in).
+    """
+    findings = []
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual") or {}
+            if visual.get("type") != "manim":
+                continue
+            template = visual.get("template")
+            if not template:
+                continue
+            declared_all = _extract_visual_elements(template, manim_dir)
+            if not isinstance(declared_all, dict):
+                continue
+            mode = (visual.get("params") or {}).get("mode")
+            declared = declared_all.get(mode)
+            if declared is None:
+                declared = declared_all.get("default")
+            if declared is None:
+                continue
+            drawn = "".join(declared)
+            text = " ".join(scene.get("narration") or [])
+            missing = [w for w in _VISUAL_NOUNS if w in text and w not in drawn]
+            if missing:
+                findings.append(
+                    {
+                        "scene_id": scene.get("scene_id", "?"),
+                        "template": template,
+                        "mode": mode or "(default)",
+                        "words": missing,
+                    }
+                )
+    return findings
 
 
 def lint_manim_factual_claims(scene_def, manim_dir):
@@ -186,7 +501,7 @@ def lint_manim_factual_claims(scene_def, manim_dir):
 
             # multi-mode template selected without an explicit mode. The
             # render then falls back to the template's DEFAULT mode, which may
-            # not match the narration. ある回 failure mode: math_06
+            # not match the narration. An earlier episode failure mode: math_06
             # 'mandelbrot_julia' had no mode -> defaulted to 'iteration' and
             # never drew the Mandelbrot set the narration describes (the
             # showpiece scene showed a single diverging orbit instead). math_02

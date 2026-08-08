@@ -4,7 +4,7 @@ hardcode episode-specific person/year data.
 
 Background (timeline_recap / Laplace class): a template named generically but
 holding ONE episode's data (Laplace's chronology + title "ラプラスの歩んだ時間")
-silently rendered Laplace's timeline when reused for ある回 (Germain). The
+silently rendered Laplace's timeline when reused for an earlier episode (Germain). The
 lint (qa_manim_consistency.py) only cross-checks claims that a template *declares*
 in LINT_FACTUAL_CLAIMS; undeclared, non-parameterized on-screen data is invisible
 to it. This audit surfaces that blind spot.

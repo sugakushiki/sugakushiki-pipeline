@@ -46,8 +46,8 @@ episode_config.json の各フィールドの説明とルール。
 | フィールド | 型 | 説明 |
 |---|---|---|
 | `birth_year` | number | 生年（Wikimedia写真の年代マッチングに使用）。**実写参照ゲートの必須条件**でもある — 未設定だと `use_reference` が常に False になり、写真を取得済みでも一切 Gemini に渡らず全肖像が text-only 生成になる（silent。`lint_portrait_reference` が WARN） |
-| `death_year` | number | 没年。**画像クレジットの参照呼称**に使う（<1840 = 写真技術以前 → 「肖像画」、以降 → 「肖像写真」。Guard-C）。未設定は「肖像写真」に倒れるので、写真以前の人物では絵画を「写真」と誤記する（ある回 ラプラスで発生） |
-| `portrait_reference_kind` | string | 上記の没年ヒューリスティックの **override**（例 `"肖像"` / `"画像"`）。参照が絵画と写真の混在（ある回 ハミルトン）や、そもそも肖像でない画像（ある回 オイラー＝望遠鏡写真）で使う。未設定なら従来動作 |
+| `death_year` | number | 没年。**画像クレジットの参照呼称**に使う（<1840 = 写真技術以前 → 「肖像画」、以降 → 「肖像写真」。Guard-C）。未設定は「肖像写真」に倒れるので、写真以前の人物では絵画を「写真」と誤記する（ある回ラプラスで発生） |
+| `portrait_reference_kind` | string | 上記の没年ヒューリスティックの **override**（例 `"肖像"` / `"画像"`）。参照が絵画と写真の混在（ある回ハミルトン）や、そもそも肖像でない画像（ある回オイラー＝望遠鏡写真）で使う。未設定なら従来動作 |
 | `math_content` | string[] | 数学パートの構成指示 |
 | `chronology` | object[] | 年表 `[{year, event}]`。存在する場合、各要素に `year` と `event` キーが必須 |
 | `image_strategy` | object | 画像生成戦略 |

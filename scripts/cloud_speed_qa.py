@@ -31,6 +31,17 @@
   - concat/silence/duration は audio_generator の一次関数を再利用し合成パスと byte 整合。
 """
 
+# Windows console は cp932。警告メッセージに含まれる em dash / 矢印などは cp932 で
+# encode できず、**警告を出そうとした瞬間に** UnicodeEncodeError で死ぬ (正常系では
+# 踏まれないので気づきにくい)。出力の入口で utf-8 に寄せる (smoke_test section 20)。
+import sys as _sys
+
+if _sys.stdout.encoding and _sys.stdout.encoding.lower() != "utf-8":
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import argparse
 import json
 import os
@@ -62,8 +73,8 @@ ADJACENT_WARN_PCT = 18.0  # detect: WARN when a non-drama adjacent jump exceeds 
 SIL_NOISE, SIL_MIN = "-35dB", "0.18"  # ffmpeg silencedetect params
 BACKUP_DIR = "_prenorm_backup"
 # Episode-level speed PROFILE baselines (detect advisory). Calibrated on shipped
-# ある回 (single --apply, natural pacing: stdev~0.40, median~7.4 @rate0.9, min~4.5).
-# ある回 regression that motivated this: --apply run TWICE flattened stdev 0.60->0.26
+# An earlier episode (single --apply, natural pacing: stdev~0.40, median~7.4 @rate0.9, min~4.5).
+# An earlier episode regression that motivated this: --apply run TWICE flattened stdev 0.60->0.26
 # ->0.18 ("one-note and fast"). A too-low stdev / too-high median or floor now WARN.
 PROFILE_MIN_STDEV = 0.25  # stdev below this -> over-flattened (norm applied too hard/twice)
 PROFILE_MAX_MEDIAN = 7.7  # median mora/s above this -> too fast overall (lower tts.rate)
@@ -241,7 +252,7 @@ def _autotune(rows: list) -> tuple[float, float]:
     the drama FLOOR to protect the single slowest emphasis line the default floor
     would otherwise speed up. Sets globals STRENGTH/FLOOR_FRAC and returns them.
 
-    Rationale: the fixed STRENGTH=0.60 is calibrated for ある回's raw stdev
+    Rationale: the fixed STRENGTH=0.60 is calibrated for an earlier episode's raw stdev
     ~0.60; on a lower-variance episode it over-flattens to stdev
     0.23 ("一本調子"). Searching for the minimal jump-killing strength kept stdev at
     0.35 while still fixing the +25% jumps, and raising FLOOR 0.72->
@@ -291,6 +302,39 @@ def _adjacent_jumps(rows: list, floor: float, effective: bool = False):
                 continue
             pct = (a1 - a0) / a0 * 100
             out.append((sid, lst[j - 1][0], lst[j][0], a0, a1, pct, lst[j][3]))
+    return out
+
+
+def _boundary_jumps(rows: list, floor: float, effective: bool = False):
+    """Articulation jumps ACROSS scene boundaries.
+
+    `_adjacent_jumps` groups by scene, so the last sentence of one scene and the
+    first of the next are never compared -- yet that seam is audible: an earlier episode
+    shipped closing_02 -> closing_03 at -25% while every within-scene jump passed.
+
+    Calibrated on 21 shipped cloud episodes / 461 boundaries: |change| is 4.8% at
+    the median, 13.0% at the 90th percentile and 16.4% at the 95th. Reusing the
+    within-scene threshold (18%) therefore flags ~0.7 boundaries per episode, and
+    the ones it flags are the 25-31% steps. A protected drama line on either side
+    is skipped, same as within a scene.
+
+    Returns (prev_sid, next_sid, a0, a1, pct, text_of_next).
+    """
+    # `rows` is already in document order (_measure walks _iter_scenes and then
+    # sentence index). Do NOT sort by sid: alphabetically closing_* would come
+    # first and every "boundary" would be fictional.
+    out = []
+    for j in range(1, len(rows)):
+        prev, cur = rows[j - 1], rows[j]
+        if prev["sid"] == cur["sid"]:
+            continue
+        if prev["artic"] < floor or cur["artic"] < floor:
+            continue
+        a0 = prev["artic"] * (prev["F"] if effective else 1.0)
+        a1 = cur["artic"] * (cur["F"] if effective else 1.0)
+        if a0 <= 0:
+            continue
+        out.append((prev["sid"], cur["sid"], a0, a1, (a1 - a0) / a0 * 100, cur["text"]))
     return out
 
 
@@ -369,7 +413,7 @@ def _profile_checks(median: float, stdev: float, amin: float) -> list:
 
     Returns (ok, label, detail) tuples. ok=True is an [OK], False is a [WARN].
     Complements the per-sentence adjacent-jump WARN with a whole-episode view: the
-    ある回 double --apply flattened stdev without tripping any single adjacent jump.
+    an earlier episode double --apply flattened stdev without tripping any single adjacent jump.
     """
     out = []
     out.append(
@@ -491,8 +535,10 @@ def cmd_detect(scene_def, audio_dir, report_path, strict) -> int:
         return 0
     target, floor = _plan(rows)
     jumps = _adjacent_jumps(rows, floor)
+    bjumps = _boundary_jumps(rows, floor)
     arts = [r["artic"] for r in rows]
     warn = [j for j in jumps if abs(j[5]) > ADJACENT_WARN_PCT]
+    bwarn = [j for j in bjumps if abs(j[4]) > ADJACENT_WARN_PCT]
     pauses = _pause_anomalies(rows)
     stdev = statistics.pstdev(arts)
     amin, amax = min(arts), max(arts)
@@ -548,6 +594,17 @@ def cmd_detect(scene_def, audio_dir, report_path, strict) -> int:
             f"  Fix: re-run the build with --normalize-cloud-speed "
             f"(would atempo {n_fix} sentence(s))."
         )
+    if bwarn:
+        print(
+            f"\n  [WARN] {len(bwarn)} abrupt speed change(s) ACROSS scene boundaries "
+            f"> {ADJACENT_WARN_PCT:.0f}%:"
+        )
+        for s0, s1, _a0, _a1, pct, txt in sorted(bwarn, key=lambda j: -abs(j[4])):
+            print(f'      {s0} -> {s1} {pct:+.0f}%  "{txt[:34]}"')
+        print(
+            "  シーンの切れ目は速度がリセットされて自然な場所ですが、この幅は聞こえます。"
+            "--normalize-cloud-speed で均すか、境界の文を録り直してください。"
+        )
     else:
         print("  [OK] no abrupt non-drama speed changes.")
 
@@ -559,13 +616,39 @@ def cmd_detect(scene_def, audio_dir, report_path, strict) -> int:
         print("  [OK] no pause/phrasing anomalies.")
 
     if profile_warn:
-        print(f"\n  [WARN] {len(profile_warn)} speed-profile deviation(s) vs ある回 baseline:")
+        print(f"\n  [WARN] {len(profile_warn)} speed-profile deviation(s) vs an earlier episode baseline:")
         for _ok, label, detail in profile_warn:
             print(f"      {label}: {detail}")
     else:
-        print("  [OK] speed profile within ある回 baseline (stdev/median/min).")
+        print("  [OK] speed profile within an earlier episode baseline (stdev/median/min).")
     print("  NOTE: measurement is heuristic -- spot-check by ear before publishing.")
-    _n_adv = len(warn) + len(pauses) + len(profile_warn)
+    # leave a machine-readable verdict beside the report so
+    # pipeline.verify_outputs can tell "never normalized" from "normalization not
+    # needed". The bare `_prenorm_backup/` existence test warned on every cloud
+    # episode, including ones this detector had just measured as step-free, so the
+    # operator had to re-run the detector by hand each build to dismiss it.
+    try:
+        with open(
+            os.path.join(os.path.dirname(report_path), "_speed_qa_verdict.json"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                {
+                    "adjacent_jumps": len(warn),
+                    "boundary_jumps": len(bwarn),
+                    "threshold_pct": ADJACENT_WARN_PCT,
+                    "median": round(target, 2),
+                    "stdev": round(stdev, 2),
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+    except Exception:
+        pass
+
+    _n_adv = len(warn) + len(bwarn) + len(pauses) + len(profile_warn)
     if _n_adv > 0:
         try:
             import pipeline_log
@@ -573,7 +656,7 @@ def cmd_detect(scene_def, audio_dir, report_path, strict) -> int:
             pipeline_log.emit_stderr_warn_summary("cloud_speed_qa", _n_adv)
         except Exception:
             pass
-    return 1 if ((warn or pauses or profile_warn) and strict) else 0
+    return 1 if ((warn or bwarn or pauses or profile_warn) and strict) else 0
 
 
 def _backup_is_stale(audio_dir: str, backup: str) -> bool:
@@ -582,7 +665,7 @@ def _backup_is_stale(audio_dir: str, backup: str) -> bool:
     left an orphan backup while a LATER build re-synthesized the wavs. cmd_apply touches
     a '.applied' marker when a normalization completes; if ANY wav in audio_dir is newer
     than that marker, the current audio is fresh (un-normalized) and MUST be re-normalized
-    rather than skipped. We scan ALL wavs, not only backed-up ones: ある回 surgically re-synth'd a
+    rather than skipped. We scan ALL wavs, not only backed-up ones: an earlier episode surgically re-synth'd a
     sentence that had been WITHIN band at the prior apply (so it was never atempo'd/backed
     up); checking only the backup missed it and SKIPped, shipping it un-normalized. A
     backup with no marker predates this guard -> treat as stale (safe: re-normalize)."""
@@ -605,6 +688,38 @@ def _backup_is_stale(audio_dir: str, backup: str) -> bool:
     return False
 
 
+def _revert_untouched_from_backup(audio_dir: str, backup: str) -> int:
+    """Put back the pre-normalization originals of sentences NOT re-synthesized since.
+
+    A stale backup means "some audio changed after the last normalization". The old
+    behaviour simply dropped the backup and normalized whatever was on disk -- but the
+    sentences that did NOT change still hold the PREVIOUS atempo, so they get
+    compressed toward the median a second time.
+
+    A blanket restore is not the answer either: a sentence re-synthesized from edited
+    text must keep its NEW audio, and copying the backup over it would resurrect the
+    old wording (earlier operational experience). So revert exactly the
+    sentences whose live wav is older than the marker -- those are the ones still
+    carrying the previous normalization -- and leave anything newer alone.
+    """
+    marker = os.path.join(backup, ".applied")
+    if not os.path.exists(marker):
+        return 0  # legacy backup: cannot tell what is what, leave the audio as-is
+    m = os.path.getmtime(marker)
+    n = 0
+    for base in os.listdir(backup):
+        if not base.endswith(".wav"):
+            continue
+        live = os.path.join(audio_dir, base)
+        if not os.path.isfile(live):
+            continue
+        if os.path.getmtime(live) > m + 1.0:
+            continue  # re-synthesized after the last apply: already an original
+        shutil.copy2(os.path.join(backup, base), live)
+        n += 1
+    return n
+
+
 def cmd_apply(scene_def, audio_dir, timing_path, force=False, strength=None) -> int:
     # Double-normalization guard: an existing _prenorm_backup/ means a previous
     # --apply already normalized these wavs. Re-normalizing atempo-compresses toward
@@ -618,10 +733,16 @@ def cmd_apply(scene_def, audio_dir, timing_path, force=False, strength=None) -> 
     backup = os.path.join(audio_dir, BACKUP_DIR)
     if os.path.isdir(backup) and not force:
         if _backup_is_stale(audio_dir, backup):
+            reverted = _revert_untouched_from_backup(audio_dir, backup)
             print(
                 "[SPEED-NORM] stale backup を検出 (前回正規化後に音声が再合成された、"
                 "または marker 無しの旧 backup)。作り直して現在の音声を正規化する。"
             )
+            if reverted:
+                print(
+                    f"  再合成されていない {reverted} 文を正規化前の原本に戻してから掛け直す "
+                    "(二重の atempo で緩急が潰れるのを防ぐ)。再合成済みの文は新しい音声のまま。"
+                )
             shutil.rmtree(backup, ignore_errors=True)
         else:
             print(

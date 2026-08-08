@@ -212,7 +212,7 @@ issuesがない場合は [] とすること。"""
 def evaluate_consistency(scenes_with_images: list[dict]) -> dict:
     """Check cross-scene consistency of the main subject across person/intro scenes.
 
-    ある回 強化: visual.is_subject=false のシーン (脇役・別人物、例 テオン/シネシオス) は
+    ある回強化: visual.is_subject=false のシーン (脇役・別人物、例 テオン/シネシオス) は
     除外する。従来は intro+person 全シーンを「主人公」前提で比較したため、脇役を別人物
     として「不統一」と誤検出していた。無印は is_subject=true 扱い (後方互換)。主題者シーンが2枚未満なら
     比較対象なしとして skip する。
@@ -293,6 +293,13 @@ def main():
     parser.add_argument("scene_json", help="Path to scene_definition.json")
     parser.add_argument("--output", default=None, help="Output path for QA report JSON")
     parser.add_argument("--images-dir", default=None, help="Override images directory")
+    parser.add_argument(
+        "--scenes",
+        default=None,
+        help="検査する scene_id をカンマ区切りで指定 (既定: 全 ken_burns)。"
+        "1 シーンだけ画像を作り直したときに、そのシーンだけ Vision 検査するために使う "
+        "(--rebuild-scene からはこの形で呼ばれる)",
+    )
     args = parser.parse_args()
 
     scene_json_path = os.path.abspath(args.scene_json)
@@ -322,6 +329,20 @@ def main():
             all_scenes.append(scene)
 
     ken_burns_scenes = [s for s in all_scenes if s.get("visual", {}).get("type") == "ken_burns"]
+
+    # --scenes: 1 枚だけ作り直したときに全 13 枚へ Claude vision を投げると、部分再
+    # ビルドの速さが失われる。指定があればそこだけに絞る。存在しない scene_id を黙って
+    # 0 件にすると「検査した」と読めてしまうので名指しで警告する。
+    if args.scenes:
+        wanted = [s.strip() for s in args.scenes.split(",") if s.strip()]
+        available = {s.get("scene_id") for s in ken_burns_scenes}
+        unknown = [w for w in wanted if w not in available]
+        ken_burns_scenes = [s for s in ken_burns_scenes if s.get("scene_id") in wanted]
+        if unknown:
+            print(
+                f"[WARN] --scenes に ken_burns でない scene_id: {', '.join(unknown)} "
+                "(画像 QA の対象外)"
+            )
 
     print(f"\n{'=' * 60}")
     print("  Gate 2: Image Quality Check")
@@ -359,6 +380,14 @@ def main():
         t0 = time.time()
 
         eval_result = evaluate_single_scene(scene, item["image_path"])
+        # misreading: the CLI intermittently returns truncated JSON or nothing at all, and
+        # a single failure silently dropped that scene from the gate -- 3-5 of 13
+        # scenes went unevaluated on every run, including an image that had just been
+        # regenerated to fix a critical finding. The call is non-deterministic, so one
+        # retry recovers most of them; whatever still fails is counted and surfaced.
+        if eval_result.get("status") != "ok":
+            print("(retry) ", end="", flush=True)
+            eval_result = evaluate_single_scene(scene, item["image_path"])
         elapsed = time.time() - t0
 
         if eval_result["status"] == "ok":
@@ -455,6 +484,10 @@ def main():
             "info": info_count,
         },
         "scenes_checked": len(scenes_with_images),
+        # misreading: "checked" counted scenes we ATTEMPTED, so a report saying "13 scenes"
+        # could hide that 5 of them never produced a verdict. Record both.
+        "scenes_evaluated": len(scenes_with_images) - scenes_errored,
+        "scenes_unevaluated": scenes_errored,
         "scenes_missing": len(missing_images),
         "issues": all_issues,
         "scene_details": scene_results,
@@ -485,6 +518,16 @@ def main():
     print(f"  QA Report: {episode_id} / images")
     print(f"  Status: {status_icon}")
     print(f"  Issues: {critical_count} critical, {warning_count} warning, {info_count} info")
+    # Partial coverage is not "no findings": say so, loudly, next to the verdict.
+    if 0 < scenes_errored < total_scenes:
+        unchecked = [
+            sid for sid, r in scene_results.items() if isinstance(r, dict) and "error" in r
+        ]
+        print(
+            f"  [!] {scenes_errored}/{total_scenes} scene(s) NOT evaluated "
+            f"(retry も失敗): {', '.join(unchecked)}"
+        )
+        print("      これらの画像は未検査です。単独で再実行するか目視で確認してください。")
     print(f"  Time: {total_elapsed:.0f}s ({total_elapsed / 60:.1f} min)")
     print(f"{'=' * 60}")
 

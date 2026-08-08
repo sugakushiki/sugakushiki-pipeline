@@ -28,6 +28,19 @@ paths:
    }
    ```
 
+8. **`LINT_VISUAL_ELEMENTS` metadata**: mode 別に「その mode が画面に出すもの」を宣言する。`qa_manim_consistency.check_narration_names_absent_visual()` が pipeline visuals step で読み、**ナレーションが画面にないものを名指ししていたら WARN** する。
+
+   ```python
+   LINT_VISUAL_ELEMENTS = {
+       "two_state": ["矢印", "状態", "確率"],
+       "converge":  ["縦軸", "横軸", "折れ線", "点", "破線"],
+   }
+   ```
+
+   ある回は `converge` (折れ線) を出しながらナレーションが「二つの状態と、そのあいだの四本の矢印があります」と語り、**user が完成動画を見て「矢印が画面上になく理解が難しい」と指摘した**。矢印は同じテンプレの別 mode にある。params も座標も正しいので既存の決定論チェックは全部素通りし、Manim Vision QA も当該 scene は「0 issues」で通した (同 QA は別 scene の同型ミスは拾ったので、非決定的)。
+
+   **画面に何があるかを知っているのはテンプレートだけ**なので、テンプレートに宣言させて narration と突き合わせる。宣言の無いテンプレは skip されるので既存 170 本は無影響。照合語は「絵を約束する語」だけ (矢印/等高線/折れ線/棒グラフ/縦軸/横軸/年表/ます目/格子/座標)。
+
 ## カラーパレット
 
 ```python
@@ -74,6 +87,39 @@ self.play(Write(label), run_time=rt[1])
 - **余韻 (coda) は 2〜3秒に固定**。末尾の真の静止はこの範囲まで。`self.wait(coda)` のみ
 - 検証: render 後に `ffprobe` で尺一致を確認し、**中間 (t=duration*0.5) と終盤 (t=duration*0.9) のフレームを抽出**して「全編モーションがあるか」を必ず目視 (最終フレームだけ見ると静止に気付けない)
 
+### 段階リビールで「同じ位置のラベルを世代交代」させるときの 2 つの罠
+
+同じ座標のラベルを何度も差し替える mode (自由度 3→9→29 のように**値だけが変わる**表示) は、フレームを見ないと壊れていることに気付けない失敗を 2 つ持つ。どちらも `smoke_test` の lint は通る。
+
+**罠 1: `ReplacementTransform` のターゲットを取り違える。** ヘルパー関数でラベルを作っていると、次のように書いてしまう:
+
+```python
+self.play(ReplacementTransform(lab, make_label(v)))   # 画面に出るのは *この* 新オブジェクト
+lab = make_label(v)                                    # NG: 別インスタンスを作り直している
+```
+
+`lab` が画面上のオブジェクトを指さなくなるので、次の transform は**画面外のオブジェクトを変形**し、前の世代が消えずに残る。全世代が同じ座標に積み上がって判読不能になる。ターゲットを名前に束ねて**それを持ち回す**:
+
+```python
+nxt = make_label(v)
+self.play(ReplacementTransform(lab, nxt))
+lab = nxt
+```
+
+**罠 2: 日本語テキストに長い `run_time` を与える。** `pace()` が返す 1 ステップは 3〜4 秒になることが多い。その run_time でテキストを `ReplacementTransform` すると**半端に崩れたグリフが数秒間表示**され、`FadeIn` でも数秒間ほぼ透明のままになる。`self.play(..., run_time=X)` は**子アニメ全部を X に引き伸ばす**ので、曲線の変形とラベルの出現を同じ play に混ぜると必ずこうなる。`AnimationGroup` で**アニメごとに run_time を持たせる** (テキストは 0.5 秒前後で入れて保持、長い時間は図形の変形だけに使う):
+
+```python
+self.play(
+    AnimationGroup(
+        ReplacementTransform(curve, nxt_curve, run_time=rt[i]),  # 図形は長く
+        FadeIn(nxt_label, run_time=0.5),                          # 文字は即座に
+        lag_ratio=0.0,
+    )
+)   # self.play() に run_time を渡さない (渡すと子の run_time が再スケールされる)
+```
+
+検証は **中間フレームを複数点**で抽出する (t=0.3/0.5/0.7/0.9 相当)。最終フレームだけ見ると罠 1 は「最終世代だけ正しく見える」ことがあり、罠 2 は最終フレームでは完全に不透明なので**どちらも最終フレームでは無症状に見える**。
+
 ### 幾何構成の向き・不等号は実フレームで検証
 
 数式的に意味を持つ図 (測地線の弧・曲率・角度和・不等号) は、**コードが意図どおりの向きに描けているとは限らない**。ラベルや narration の主張 (「内角の和 < 180°」等) と実際の描画が一致しているか、**レンダ後のフレームを抽出して幾何的に確認する** (コードの目視だけで OK としない)。
@@ -106,7 +152,7 @@ Manim render は 1 scene あたり **240s timeout** (`visual_generator._MANIM_TI
 
 理由: smoke_test の Manim Y-clearance lint + MathTex Japanese lint は AST/regex で deterministic に検出する layered defense だが、`MathTex(r"\text{弧長}")` のような nested Japanese 混入は render するまで気付きにくい (LaTeX `\text{}` の中に CJK が入って render で LaTeX error)。
 
-ある回 で earth_arc の `\text{弧長}` 混入 → preview render が LaTeX error で停止し render 時間を浪費した事例で確立。テンプレ編集の直後に smoke_test を打てば、render より前にこの種のミスを潰せる。
+ある回で earth_arc の `\text{弧長}` 混入 → preview render が LaTeX error で停止し render 時間を浪費した事例で確立。テンプレ編集の直後に smoke_test を打てば、render より前にこの種のミスを潰せる。
 
 ## 関連 pitfalls
 

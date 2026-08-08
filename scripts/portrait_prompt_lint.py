@@ -276,7 +276,7 @@ def main() -> int:
         # Only a benign SKIP if the episode genuinely uses no subject portrait.
         # If subject portraits DO exist, "no usable reference" is a DEFECT: the lint
         # can't run and those portraits were likely generated text-only (drift from
-        # the real person) -- the exact ある回 regression. Fail loud (WARN), still
+        # the real person) -- the exact an earlier episode regression. Fail loud (WARN), still
         # return without hard-failing.
         if has_subject_portrait_scenes(scene_def):
             banner = (

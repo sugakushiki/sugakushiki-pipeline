@@ -15,15 +15,10 @@
 
 ---
 
-## 前提：SymPy導入
+## 前提：SymPy
 
-```bash
-venv\Scripts\activate
-pip install sympy
-```
-
-`requirements.txt` があれば `sympy>=1.12` を追加。
-なければ `pip freeze` で確認。
+導入済み。`requirements.txt` / `requirements.in` に `sympy==1.14.0` で固定されているので、
+`pip install -r requirements.txt` で入る。個別に入れる必要はない。
 
 ---
 
@@ -298,7 +293,7 @@ def test_sarrus_sign():
 | `expand_polynomial_latex` | ~10行 |
 | `matrix_to_latex`, `fraction_to_latex` | ~30行 |
 | docstring + コメント | ~30行 |
-| **合計** | **約160行** |
+| **合計** | 見積 約160行 / 実装 214 行 |
 
 ---
 
@@ -312,9 +307,13 @@ def test_sarrus_sign():
 
 ---
 
-## 導入手順（実装セッションで）
+## 現状
 
-1. `pip install sympy` （venv内）
-2. `src/sympy_helper.py` 作成
-3. テスト作成 (オプション)
-4. Manim 実装時に `from sympy_helper import ...` で呼び出し
+本書は設計時の文書だが、以下はすでに実装済みなので手順としては読まないこと。
+
+- `src/sympy_helper.py` は存在し、上記 9 関数をすべて備える (214 行)
+- `sympy` は `requirements.txt` に固定済み
+- **どの Manim テンプレートもこのモジュールを import していない**。用途は
+  パイプライン内の呼び出しではなく、**段階 D (企画時の事前計算)** — 台本に書く数値を
+  手で確かめるために対話的に呼ぶ使い方に落ち着いている。パイプラインから呼ぶ想定で
+  読むと、配線が抜けていると誤解する

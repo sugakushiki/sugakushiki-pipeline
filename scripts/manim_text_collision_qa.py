@@ -12,7 +12,7 @@ text-vs-text crowding slip through. This is the missing DETERMINISTIC net:
   share a column, not merely different labels on one row) AND overlap / near-touch
   VERTICALLY (stacked labels crammed together).
 
-Every ある回 crowding case was an actual bbox overlap (gap < 0): math_02/07/closing_01
+Every an earlier episode crowding case was an actual bbox overlap (gap < 0): math_02/07/closing_01
 (caught late by vision) and gp_ap/curve (missed by vision). Flagging gap < Y_GAP_MAX
 catches them all while never firing on side-by-side labels (no x-overlap) or a single
 multi-line Text (one bbox). Advisory; complements (does not replace) manim_vision_qa.
@@ -32,7 +32,7 @@ import sys
 X_OVERLAP_MIN = 0.12
 # Flag when the vertical gap between the two bboxes is below this. <=0 is a real
 # overlap; a small positive buffer catches near-touching stacks. Calibrated so shipped
-# templates stay clean (0 FP) while ある回's ~0.05-overlap gp_ap/curve fire.
+# templates stay clean (0 FP) while an earlier episode's ~0.05-overlap gp_ap/curve fire.
 Y_GAP_MAX = 0.03
 
 _TEMPLATES_DIR = os.path.join(
@@ -62,6 +62,16 @@ def _capture_text_bboxes(template: str, params: dict, duration: float = 20.0) ->
     # the first key -- data-driven templates (timeline_recap) omit `mode` and key SCENES
     # under a self-test name.
     mode = params.get("mode") or ""
+    # An ABSENT mode legitimately falls back: data-driven templates (timeline_recap)
+    # omit it and key SCENES under a self-test name. A mode that is PRESENT but not
+    # a SCENES key is a different animal -- it means the scene will render some
+    # other picture -- and silently substituting the first key hid exactly that in
+    # An earlier episode (mode='lebesgue' checked out fine while the render showed 'vertical').
+    if mode and mode not in scenes:
+        raise ValueError(
+            f"{template}: mode={mode!r} is not a SCENES key "
+            f"({'/'.join(sorted(scenes))}). The render would silently use another mode."
+        )
     key = mode if mode in scenes else next(iter(scenes))
     raw = scenes[key]
     if isinstance(raw, type):

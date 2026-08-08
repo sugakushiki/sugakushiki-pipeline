@@ -8,7 +8,7 @@
     見えるか / 無意味な動き / 判別不能な形 / ラベル衝突」を判定して WARN する。
 
     既存の決定論 lint (Y座標範囲 / MathTex 日本語混入 / 末尾静止) では捕まらない
-    **意味・美観**の欠陥を Vision で補う。ある回 で user に指摘された症状:
+    **意味・美観**の欠陥を Vision で補う。ある回で user に指摘された症状:
       - 「独楽が独楽に見えない」   → (c) 図形が意図した対象に見えるか
       - 「謎に動く点」             → (b) 無意味な動き (静止画1枚では判定困難なら判定不可)
       - 「タイムラインの文字衝突」 → (d) ラベル同士 / ラベルと図形の重なり
@@ -296,6 +296,13 @@ def main() -> int:
         help="warn 検出時に exit 1 (既定は advisory で exit 0)",
     )
     parser.add_argument("--debug", action="store_true", help="Claude CLI stderr を表示")
+    parser.add_argument(
+        "--scenes",
+        default=None,
+        help="検査する scene_id をカンマ区切りで指定 (既定: 全 scene)。"
+        "1 シーンだけ再レンダしたときに、そのシーンだけ Vision 検査するために使う "
+        "(--rebuild-scene からはこの形で呼ばれる)",
+    )
     args = parser.parse_args()
 
     scene_json_path = os.path.abspath(args.scene_json)
@@ -311,6 +318,20 @@ def main() -> int:
     episode_id = scene_def.get("episode_id", "unknown")
 
     target_scenes = _collect_target_scenes(scene_def)
+
+    # --scenes: 1 シーンだけ再レンダしたときに全 scene へ Claude vision を投げると
+    # 部分再ビルドの速さが失われる。指定があればそこだけに絞る。存在しない
+    # scene_id を黙って 0 件にすると「検査した」と読めてしまうので名指しで警告する。
+    if args.scenes:
+        wanted = [s.strip() for s in args.scenes.split(",") if s.strip()]
+        available = {s.get("scene_id") for s in target_scenes}
+        unknown = [w for w in wanted if w not in available]
+        target_scenes = [s for s in target_scenes if s.get("scene_id") in wanted]
+        if unknown:
+            print(
+                f"[WARN] --scenes に Vision 対象でない scene_id: {', '.join(unknown)} "
+                "(ken_burns 等は Vision QA の対象外)"
+            )
 
     print(f"\n{'=' * 60}")
     print("  Manim Vision QA (advisory)")

@@ -29,8 +29,8 @@ intro が落とし、記述が不正確になる** drift が起こりうる。
 
 Signal/noise (2026-07-25 に実 Opus で 27 shipped ep + planted 1 を calibrate):
   - 明白な FP = 0/27。25 ep はクリーン PASS。
-  - recall: ある回 ゲーデルで本編にある『無矛盾な』欠落 (conf 0.95) を実発見。planted を検出しつつ同 ep の正版 ある回 は PASS = 1語違いのクリーン分離。
-  - 加えて ある回 アーベルで『5次方程式の不可能性証明』の限定詞『代数的に(べき根で)/
+  - recall: ある回ゲーデルで本編にある『無矛盾な』欠落 (conf 0.95) を実発見。planted を検出しつつ同 ep の正版 ある回は PASS = 1語違いのクリーン分離。
+  - 加えて ある回アーベルで『5次方程式の不可能性証明』の限定詞『代数的に(べき根で)/
     一般』欠落を borderline (conf 0.85) で surface。本編は正確形を述べつつ短縮ラベルも
     自ら使うので judgment call だが、 が名指しする『可解性の代数的に』クラスの正当な
     advisory (人間が最終判断)。 と同様、shipped の latent 精度問題を実発見した。
@@ -68,9 +68,15 @@ def intro_text(scene_def: dict) -> str:
     return (scene_def.get("description", {}) or {}).get("intro", "") or ""
 
 
+# プロンプトの版。**プロンプトを書き換えたらここを上げる**。cache キーは内容 hash なので、
+# 版を持たないと「古いプロンプトで出した判定」が新しいプロンプトの結果として残り続ける
+# (内容が変わるまで再実行されない)。上げると次のビルドで再レビューが走る。
+PROMPT_VERSION = "2026-08-06.1"
+
+
 def content_hash(scene_def: dict) -> str:
-    """intro + narration の決定論 hash。どちらかが変われば cache 無効化。"""
-    blob = intro_text(scene_def) + "\x1f" + extract_narration(scene_def)
+    """intro + narration + プロンプト版の決定論 hash。どれかが変われば cache 無効化。"""
+    blob = PROMPT_VERSION + "\x1f" + intro_text(scene_def) + "\x1f" + extract_narration(scene_def)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 

@@ -42,11 +42,11 @@ flowchart TB
         direction TB
         step1["1. script_generator<br/>(Claude Opus を CLI 経由)"]:::step
         step2["2. audio_generator<br/>〔voicevox〕辞書 + kana 実測 + 発音チェック<br/>〔cloud〕Chirp3-HD + SSML phoneme 読み固定"]:::step
-        step3["3. subtitle_generator<br/>(SRT + drawtext + timing 署名)"]:::step
+        step3["3. subtitle_generator<br/>(SRT + drawtext + timing 署名)<br/>文境界は sentence_align が実測<br/>(モーラ比を発話時間に配分し無音を歩く)"]:::step
         step4["4. wikimedia_fetcher<br/>(ライセンス + EXCLUDE_KEYWORDS)"]:::step
         step5["5. image_generator<br/>(Gemini Flash + Vision QA + no_human フラグ)"]:::step
         step5b["6. thumbnail_generator<br/>(3 パターン + source_image 妥当性検証 + Vision QA)"]:::step
-        step6["7. visual_generator<br/>(Ken Burns + Manim + route_map + Blender)"]:::step
+        step6["7. visual_generator<br/>(Ken Burns + Manim + Blender)<br/>+ route_map_render (地図)"]:::step
         step7["8. video_assembler<br/>(FFmpeg 3 段アセンブリ)"]:::step
         step8["9. credits_generator<br/>(YouTube 概要欄 + チャプター)"]:::step
         step9["10. bgm_mixer<br/>(冒頭ポーズ + BGM + 末尾フェード)"]:::step
@@ -74,6 +74,7 @@ flowchart TB
 
     step9 -- "output_assembled.mp4 →<br/>(atomic rename)" --> outFinal[("output_final.mp4")]:::outputArtifact
     outFinal --> verify[["完了後の出力検証<br/>(ファイル存在 + 必須セクション +<br/>Manim fallback / 字幕 hash / 鮮度)"]]:::guard
+    verify --> postbuild[["post_build_verify (構造検査 11 件)<br/>+ レビューリールと未変更区間の同一性証明"]]:::guard
 
     classDef inputArtifact fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef outputArtifact fill:#d4edda,stroke:#198754,color:#000
@@ -235,6 +236,7 @@ flowchart TB
         opt5["birth_year / death_year<br/>(肖像の年齢変換 + 実写参照 gate +<br/>画像クレジットの参照呼称)"]
         opt6["forbidden_phrases<br/>(この回で使わない表層表現)"]
         opt7["portrait_reference_kind<br/>(参照呼称の override)"]
+        opt8["required_phrases<br/>(企画で出すと決めた語。<br/>narration に無ければ WARN)"]
     end
 
     subgraph validation["検証レイヤ"]
@@ -317,6 +319,8 @@ flowchart TB
         p4["gen_cloud_readings → cloud_reading_lint 〔Cloud〕<br/>読みを生成し、多読み漢字 / 同音誤解語 /<br/>難語 / 不自然な間 / 生分数を静的走査"]:::preventive
         p5["lint_portrait_reference<br/>(主題肖像が参照写真を使えるか = gate 欠落検出)"]:::preventive
         p6["Manim 史実整合 lint / route_map 衝突 preflight /<br/>再利用テンプレの空 params (決定論・中断)"]:::blocking
+        p7["route_legend_check / route_place_check 〔Claude〕<br/>凡例ラベルがそのカテゴリの全経路で真か /<br/>ナレーションが語る土地が地図に在るか (advisory)"]:::preventive
+        p8["ナレーション ↔ 画面の不一致 lint / 画面に出る年号の追跡<br/>(テンプレの宣言と照合、決定論)"]:::preventive
     end
 
     subgraph layer2["層 2: 合成後の検出 — 生成物を実測"]
@@ -336,6 +340,8 @@ flowchart TB
         s2["完了後の出力検証<br/>(必須セクション / 字幕 hash / Manim fallback / 鮮度)"]
         s3["verify_shipped_audio (on-demand)<br/>output_final.mp4 から各シーンを切り出して STT<br/>= 連結・BGM 後の実音声で読みを再確認"]
         s4["概要欄の導入文 (credits step + 完了後)<br/>config→intro staleness (署名・決定論) /<br/>narration→intro 意味一致 〔Claude〕"]
+        s5["post_build_verify (pipeline 末尾で自動)<br/>ビルド後の構造検査 11 件<br/>(章タイムスタンプ vs timing.json / レビュー用コピーの同期 ほか)"]
+        s6["レビューリール + 未変更区間の同一性証明<br/>変更シーンだけを ±2 秒の文脈付きで繋ぎ、<br/>触っていないシーンはフレーム hash / timing / 字幕で不変を示す"]
     end
 
     subgraph crossEp["エピソード横断 lint (オフライン)"]

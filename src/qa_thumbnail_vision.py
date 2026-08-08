@@ -7,7 +7,7 @@ Validates generated thumbnail PNG files using Claude Sonnet Vision to detect:
 
 ## 背景
 
-ある回 で `thumbnail.source_image = person_02.png` (メルセンヌ・サークル
+ある回で `thumbnail.source_image = person_02.png` (メルセンヌ・サークル
 集会、複数人物 + 楽器類) を選定して完成 → 視聴者識別性 ✗ で user 指摘で発覚。
 修正は `intro_01.png` (パスカル単独 portrait) に変更 + thumbnail rebuild。
 

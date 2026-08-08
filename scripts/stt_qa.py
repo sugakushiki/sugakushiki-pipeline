@@ -20,6 +20,18 @@ Usage:
         --audio-dir examples/moriarty/audio --scenes math_03,math_04 --strict
 """
 
+# Windows console は cp932。cp932 に無い文字 (em dash 等) を print すると
+# UnicodeEncodeError でプロセスが死ぬ。ある回の再検証中に、追加した警告行の em dash で
+# 実際にここが落ちた (しかも落ちるのは「検証できていない scene がある」という
+# 警告経路だけ = 肝心なときだけ死ぬ)。出力の入口で一度だけ utf-8 に寄せておく。
+import sys as _sys
+
+if _sys.stdout.encoding and _sys.stdout.encoding.lower() != "utf-8":
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import argparse
 import json
 import os
@@ -132,12 +144,112 @@ _READING_CHECKS = [
         ["トヒトツ"],
         "何ひとつ=なにひとつ の 何 が脱落し『とひとつ』化した恐れ。『なにひとつ』に固定",
     ),
+    # -
+    #     user が耳で見つけた**。同じ穴を次で開けないための backstop。---
+    (
+        "黒板",
+        "コクバン",
+        ["クロイタ"],
+        "黒板=こくばん が『くろいた』化した恐れ。『こくばん』に固定",
+    ),
+    (
+        "道路工夫",
+        "コウフ",
+        ["クフウ"],
+        "工夫=こうふ(労働者) が『くふう』化した恐れ。『こうふ』に固定",
+    ),
+    (
+        "へ行って",
+        "イッテ",
+        ["オコナッテ"],
+        "行=いく が『おこなう』化した恐れ。『いって』に固定",
+    ),
+    (
+        "に行って",
+        "イッテ",
+        ["オコナッテ"],
+        "行=いく が『おこなう』化した恐れ。『いって』に固定",
+    ),
+    (
+        "に通った",
+        "カヨッタ",
+        ["トオッタ"],
+        "通=かよう が『とおる』化した恐れ。『かよった』に固定"
+        " ※『筋の通った』は とおった が正しいので混同しないこと",
+    ),
+    (
+        "塩水",
+        "シオミズ",
+        ["エンスイ"],
+        "塩水=しおみず が『えんすい』化した恐れ。『しおみず』に固定",
+    ),
 ]
 
 
 def _norm_kana(s: str) -> str:
     """空白・句読点を除いたカタカナ列 (誤読照合用)。"""
     return re.sub(r"[\s　・、。!?！？]", "", s)
+
+
+# 読みを検証できるのは、Gemini がそのシーンを *カタカナで* 書き起こしたときだけ。
+# 漢字で書き起こされた行は「黒板」が コクバン なのか クロイタ なのか区別がつかない
+# ので、その scene の読みは検証されていない。ある回では 23 scene 中 17 scene が
+# 漢字書き起こしで、それでも stt_qa は「0 WARN」と表示していた (user が耳で 5 件検出)。
+# 「指摘ゼロ」と「検査していない」を区別する。
+_COVERAGE_FULL_MAX_KANJI = 0.05  # これ以下なら実質カタカナ書き起こし = 読み検証可
+_COVERAGE_PARTIAL_MAX_KANJI = 0.20  # ここまでは混在 = 一部だけ検証可
+
+
+def _reading_coverage(transcript: str) -> tuple[str, float]:
+    """(判定ラベル, 漢字率) を返す。漢字率が高いほど読みは検証できていない。
+
+    ある回実測で band はきれいに分離した (カタカナ書き起こし 0-8%、漢字書き起こし
+    14-51%)。閾値はその谷に置いている。
+    """
+    body = re.sub(r"\s", "", transcript or "")
+    if not body:
+        return "empty", 0.0
+    kanji = len(re.findall(r"[一-鿿]", body)) / len(body)
+    if kanji <= _COVERAGE_FULL_MAX_KANJI:
+        return "full", kanji
+    if kanji <= _COVERAGE_PARTIAL_MAX_KANJI:
+        return "partial", kanji
+    return "none", kanji
+
+
+def summarize_reading_coverage(coverage, reading_seen) -> list[str]:
+    """報告行を組み立てて返す (print はしない)。
+
+    「0 WARN」は「読みが正しい」ではなく「照合できた範囲で既知の誤読が出なかった」に
+    すぎない。漢字で書き起こされた scene は読みを原理的に判定できないので、どれだけ
+    検証できたのかを必ず一緒に出す。
+
+    出力を関数に切り出してあるのは、**この経路自体をテストするため**。埋め込んだままだと
+    分類関数だけ通しても出力が例外で落ちるか分からない (実際 em dash で落ちた)。
+    """
+    lines: list[str] = []
+    if coverage:
+        full = [s for s, lab, _ in coverage if lab == "full"]
+        partial = [s for s, lab, _ in coverage if lab == "partial"]
+        none = [s for s, lab, _ in coverage if lab in ("none", "empty")]
+        lines.append(
+            f"  読み検証カバレッジ: 検証可 {len(full)} / 一部 {len(partial)} / "
+            f"検証不可 {len(none)}  (全 {len(coverage)} scene)"
+        )
+        if none:
+            lines.append(
+                "    [!] 次の scene は書き起こしが漢字のため読みを検証できていません"
+                " -- 耳で確認してください:"
+            )
+            lines.append("        " + ", ".join(none))
+
+    # 同じ語なのに scene によって読みが割れている型。片方だけ直っていると「1 件だけ WARN」に見えて全体の問題に気づけない。
+    split = {s: v for s, v in (reading_seen or {}).items() if v["ok"] and v["ng"]}
+    if split:
+        lines.append("    [!] 同じ語の読みが scene 間で割れています (Chirp の非決定性):")
+        for surface, v in split.items():
+            lines.append(f"        {surface}: 正 {','.join(v['ok'])} / 誤 {','.join(v['ng'])}")
+    return lines
 
 
 def _is_katakana_mode(text: str) -> bool:
@@ -333,6 +445,9 @@ def main() -> int:
     report_lines = []
     n_checked = 0
     n_missing = 0
+    coverage = []  # (sid, label, kanji_ratio) — 読みを検証できた scene の割合を出すため
+    # surface -> {"ok": [sid...], "ng": [sid...]}。同じ語が scene 間で読みが割れる型を拾う。
+    reading_seen = {}
 
     for scene in _iter_scenes(scene_def):
         sid = scene.get("scene_id", "?")
@@ -377,15 +492,24 @@ def main() -> int:
                 scene_hits.append(
                     (f"misread:{surface}", f"STT={','.join(hit)} (expect {correct})", note)
                 )
+                reading_seen.setdefault(surface, {"ok": [], "ng": []})["ng"].append(sid)
+            elif correct in t_norm:
+                reading_seen.setdefault(surface, {"ok": [], "ng": []})["ok"].append(sid)
+
+        label, kanji_ratio = _reading_coverage(transcript)
+        coverage.append((sid, label, kanji_ratio))
+        mark = {"full": "", "partial": "  [読み一部のみ検証可]", "none": "  [読み検証不可]"}.get(
+            label, "  [書き起こし空]"
+        )
 
         if scene_hits:
-            print(f"  [WARN] {sid}: {len(scene_hits)} suspicious reading(s)")
+            print(f"  [WARN] {sid}: {len(scene_hits)} suspicious reading(s){mark}")
             for name, ctx, note in scene_hits:
                 print(f"      - {name}: ...{ctx}...")
                 print(f"        {note}")
                 warnings.append((sid, name, ctx))
         else:
-            print(f"  [OK]   {sid}")
+            print(f"  [OK]   {sid}{mark}")
 
     # 書き起こし全文を report に保存 (人手レビュー用)
     try:
@@ -396,6 +520,13 @@ def main() -> int:
         print(f"\n  [WARN] could not write report: {e}")
 
     print(f"\n  Checked {n_checked} scene(s), {len(warnings)} WARN, {n_missing} missing wav.")
+
+    # 「0 WARN」は「読みが正しい」ではなく「照合できた範囲で既知の誤読が出なかった」に
+    # すぎない。Gemini が漢字で書き起こした scene では読みが原理的に判定できないので、
+    # どれだけ検証できたのかを必ず一緒に出す。
+    for line in summarize_reading_coverage(coverage, reading_seen):
+        print(line)
+
     print("  NOTE: STT can miss too -- always spot-check Cloud audio by ear before publishing.")
 
     if warnings:

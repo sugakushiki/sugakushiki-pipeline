@@ -164,7 +164,8 @@ sugakushiki/
 │   ├── wikimedia_fetcher.py      # Wikimedia Commons 画像取得 + ライセンス検証
 │   ├── image_generator.py        # Gemini Flash + Vision QA + リファレンス生成
 │   ├── image_watermark_trim.py   # ChatGPT/Sora 透かし除去 + 1920x1080 リサイズ
-│   ├── visual_generator.py       # Ken Burns + Manim + route_map + Blender
+│   ├── visual_generator.py       # Ken Burns + text_overlay + Manim + Blender + ディスパッチ
+│   ├── route_map_render.py       # route_map の描画・レイアウト検査・preflight
 │   ├── blender_renderer.py       # Blender headless レンダリング (Eevee CPU)
 │   ├── video_assembler.py        # FFmpeg 3 段アセンブリ
 │   ├── credits_generator.py      # YouTube 概要欄 + チャプター + クレジット

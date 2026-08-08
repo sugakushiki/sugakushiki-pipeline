@@ -84,7 +84,7 @@ def _effective_uses_reference(v: dict, gate_on: bool) -> bool:
     Mirrors image_generator exactly: use_reference DEFAULTS TO TRUE when unset
     (`v.get("use_reference", True)`), and the reference is applied only when the
     global gate is ON. So an UNSET (None) use_reference is reference-based when the
-    gate is on -- treating None as "text-only" was the ある回 bug that false-flagged
+    gate is on -- treating None as "text-only" was an earlier episode bug that false-flagged
     reference-based portraits (intro_03/person_05/closing_01). A person is assumed
     (callers gate on a portrait / young-person prompt, so has_person holds)."""
     if v.get("use_reference") is False:
@@ -118,15 +118,15 @@ def run_lint(scene_path: str, config_path: str) -> list:
         # flagged young/childhood scenes conditioned on an adult reference photo
         # (fear: the child renders with grown features) was added and then removed.
         # Empirically the image_generator's age handling renders children age-
-        # appropriately even when conditioned on a much older reference: ある回
-        # person_02 (explicit use_reference:true, "boy of about ten") AND ある回
+        # appropriately even when conditioned on a much older reference: an earlier episode
+        # person_02 (explicit use_reference:true, "boy of about ten") AND an earlier episode
         # Conway person_01 (unset, 11yo boy conditioned on a 68yo photo) both
         # shipped as proper children. So young+reference is NOT a reliable over-
         # aging signal -- the check had zero confirmed true positives and false-
         # flagged well-specified young scenes (Ramanujan/Turing/Lagrange/Conway).
-        # ある回's first-cut over-aging was a WEAK-age-marker failure; the real fix
+        # An earlier episode's first-cut over-aging was a WEAK-age-marker failure; the real fix
         # was emphatic age wording in the prompt ("MUST be a small CHILD of about
-        # nine"), not use_reference:false. Same discipline as the ある回 天文
+        # nine"), not use_reference:false. Same discipline as the an earlier episode天文
         # polyphone rejection: re-verify -> FPs on shipped -> do not ship.
 
         if not _is_portrait_prompt(source_prompt):

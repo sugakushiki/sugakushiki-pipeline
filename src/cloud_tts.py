@@ -31,7 +31,7 @@ import wave
 # ---------------------------------------------------------------------------
 LANGUAGE_CODE = "ja-JP"
 DEFAULT_VOICE = "ja-JP-Chirp3-HD-Enceladus"
-DEFAULT_RATE = 0.90  # speakingRate; matches the shipped ある回 build
+DEFAULT_RATE = 0.90  # speakingRate; matches the shipped an earlier episode build
 
 # Must match audio_generator.SAMPLE_RATE so Cloud WAVs concatenate with silence
 # gaps generated there. LINEAR16 -> 16-bit mono.

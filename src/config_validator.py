@@ -328,7 +328,7 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
     # verified_facts["birth"]. If a real subject reference photo was supplied
     # (wikimedia_photo_urls non-empty) but NO birth_year is resolvable, the gate
     # is silently OFF and every subject portrait is generated TEXT-ONLY (the photo
-    # is fetched but never passed to Gemini -- less faithful). ある回 shipped this
+    # is fetched but never passed to Gemini -- less faithful). An earlier episode shipped this
     # way until a user spotted it; the only signal was one buried log line. Cheap
     # early WARN so the whole reason for fetching a reference photo is not defeated.
     photo_urls = config.get("wikimedia_photo_urls")

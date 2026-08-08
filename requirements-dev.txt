@@ -14,6 +14,6 @@
 # Lint + format (replaces black/isort/flake8 — single tool, fast, Rust-based)
 ruff==0.15.12
 
-# Path matching (gitignore-compatible glob, used by scripts/sync_to_public.py)
+# Path matching (gitignore-compatible glob, used by)
 # (2026-05-04, T1) added: handles WHITELIST/EXCLUDE with !-exception patterns
 pathspec==0.12.1

@@ -218,7 +218,7 @@ class PascalsTheorem(Scene):
         self.play(*[FadeIn(d) for d in L_dots], *[FadeIn(lab) for lab in L_labels], run_time=0.8)
 
         # Draw the Pascal line covering all 3 intersection points (L1, L2, L3).
-        # ある回 fix: previously drew line from L1 to L3 only, which left
+        # An earlier episode fix: previously drew line from L1 to L3 only, which left
         # L2 (mathematically collinear but geometrically outside L1-L3 segment)
         # appearing off-line on screen. Now compute parameter range covering all
         # 3 points + pad, so the drawn line passes visibly through all of them.
@@ -301,7 +301,7 @@ class PascalsTheorem(Scene):
             self.play(Create(e34), Create(e61), FadeIn(d3), FadeIn(l3_lbl), run_time=0.9)
 
         # Draw Pascal line covering all 3 intersection points (L1, L2, L3).
-        # ある回 fix (same as mystic_hexagram mode): project L1, L2, L3
+        # An earlier episode fix (same as mystic_hexagram mode): project L1, L2, L3
         # onto line direction, draw segment covering min..max + pad so all
         # 3 points appear visibly on the line.
         if L1 is not None and L2 is not None and L3 is not None:

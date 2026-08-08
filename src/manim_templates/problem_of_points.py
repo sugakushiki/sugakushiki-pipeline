@@ -698,11 +698,11 @@ SCENES = {
     "tree_with_expectation": {
         "class": "ProblemOfPoints",
         "params": {"mode": "tree_with_expectation"},
-        "description": "Decision tree + expected value (E[A]=48, E[B]=16) for ある回 Pascal math_14",
+        "description": "Decision tree + expected value (E[A]=48, E[B]=16) for an earlier episode Pascal math_14",
     },
     "expectation_comparison": {
         "class": "ProblemOfPoints",
         "params": {"mode": "expectation_comparison"},
-        "description": "Fermat vs Pascal methods + birth of expectation concept (E[X]=Σp_i x_i) for ある回 Pascal math_15",
+        "description": "Fermat vs Pascal methods + birth of expectation concept (E[X]=Σp_i x_i) for an earlier episode Pascal math_15",
     },
 }

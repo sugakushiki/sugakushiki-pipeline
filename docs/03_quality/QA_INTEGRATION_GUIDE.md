@@ -20,8 +20,7 @@ QA レポートは severity / confidence / citation が構造化されている�
 - FactChecker / SourceManager / ContentReviewer は Claude なので、**読む側と
   同じバイアスを持ちうる**。「もっともらしいから正しい」は成立しない
 
-`qa_report_*.json` を読むと `.claude/hooks/qa_report_reminder.py` が
-再検証リマインダを差し込む。これはこの原則を機械的に思い出させるためのもの。
+`qa_report_*.json` を読むと QA 再検証 hook が再検証リマインダを差し込む。これはこの原則を機械的に思い出させるためのもの。
 
 ---
 

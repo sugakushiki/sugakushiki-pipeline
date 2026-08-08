@@ -35,7 +35,7 @@ FONT_FILE = "_font.ttc"  # Local copy of BIZ UDMincho (Windows path workaround)
 
 
 # ─── FFmpeg subprocess timeouts ──────────────────────────────────────────────
-# ある回: a stuck ffmpeg in the assemble step hung a background run >1h
+# An earlier episode: a stuck ffmpeg in the assemble step hung a background run >1h
 # before a manual kill. Every ffmpeg/ffprobe call below is bounded so a stuck
 # encode fails fast instead of hanging. Tiered by workload, env-overridable:
 #   - ffprobe: metadata read (sub-second normally)

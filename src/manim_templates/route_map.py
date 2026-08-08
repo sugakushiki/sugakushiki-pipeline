@@ -52,7 +52,10 @@ CITY_POSITIONS = {
 
 PERIOD_COLORS = {
     "origin": ACCENT_GOLD,  # 生誕地・出発点
-    "education": "#7bc8f6",  # 留学・進学（ライトブルー）
+    # ACCENT_CYAN (career) との RGB 距離が 47 しかない #7bc8f6 から変更。細い線では
+    # 同色に見え凡例が区別を説明できない (visual_generator の同名パレットと同じ修正)。
+    # 現在この template を使う live scene は無いが、復活時に同じ欠陥を持ち込まないため。
+    "education": "#52b788",  # 留学・進学（グリーン）
     "career": ACCENT_CYAN,  # 職務・研究赴任
     "wandering": ACCENT_PINK,  # 放浪・旅
     "exile": "#c792ea",  # 亡命・追放（ライトパープル）
@@ -230,7 +233,7 @@ class RouteMap(Scene):
                 if year:
                     mid = arrow.point_from_proportion(0.5)
                     yr_label = Text(f"{year}", font=FONT, font_size=16, color=TEXT_DIM)
-                    # route_label_offsets override (year_str key) — ある回 添加
+                    # route_label_offsets override (year_str key) — an earlier episode添加
                     if route_label_offsets and str(year) in route_label_offsets:
                         dx, dy = route_label_offsets[str(year)]
                         yr_label.move_to([mid[0] + dx, mid[1] + dy, 0])

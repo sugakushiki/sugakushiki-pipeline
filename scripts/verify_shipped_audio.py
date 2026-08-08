@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stt_qa import (
     _READING_CHECKS,
     _STT_RULES,
+    _is_katakana_mode,
     _load_gemini_key,
     _norm_kana,
     _transcribe,
@@ -62,7 +63,15 @@ def _extract(video: str, start: float, dur: float, out_wav: str) -> bool:
 def _check_transcript(transcript: str, narr_text: str) -> list:
     """Run the stt_qa corpus on one transcript. Returns (name, ctx, note) hits."""
     hits = []
+    # An earlier episode FP guard, same as stt_qa: when Gemini transcribes in katakana-particle
+    # mode it spells every topic は as ハ regardless of what was actually spoken, so
+    # the particle rules cannot discriminate there. This checker imported the corpus
+    # but not the guard, which made the SHIPPED-audio check - the one CLAUDE.md calls
+    # decisive - noisier than the scene-wav check it is meant to backstop.
+    km = _is_katakana_mode(transcript)
     for rule in _STT_RULES:
+        if rule.get("katakana_unreliable") and km:
+            continue
         for m in rule["regex"].finditer(transcript):
             ctx = transcript[max(0, m.start() - 6) : m.end() + 6]
             hits.append((rule["name"], ctx, rule["note"]))

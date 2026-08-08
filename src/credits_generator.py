@@ -52,7 +52,7 @@ _PAINTING_MARKERS = (
     "lithograph",
     "drawing",
     "etching",
-    # NOT "portrait of" -- 写真にも普通に付く語で、ある回 ネーター / ある回 ポアンカレ
+    # NOT "portrait of" -- 写真にも普通に付く語で、ある回ネーター / ある回ポアンカレ
     # (いずれも実写) を偽陽性で叩いた (2026-07-25 の 57 ep 較正)。
     "zeichner",
     "stecher",
@@ -91,10 +91,23 @@ def _detect_painting_reference(ref_photos: list) -> list:
 
 
 def _extract_urls(text: str) -> list[str]:
-    """Extract http/https URLs from text, balancing parentheses."""
+    """Extract http/https URLs from text, balancing parentheses.
+
+    The character class is ASCII printable, not `\\S`. `\\S` matches Japanese too,
+    so a URL written INLINE in an annotation swallowed the prose that followed it:
+    an earlier episode produced `https://en.wikisource.org/wiki/The_Probable_Error_of_a_Mean。
+    正規性の仮定、証明の欠落を認めた一文、3000枚の厚紙と750組の実測` as one "URL",
+    which then died with UnicodeEncodeError and was reported as a broken link. The
+    trailing-punctuation strip below cannot help, because the junk is not trailing.
+
+    A raw non-ASCII URL gets truncated here, but the checker could not have
+    requested one anyway (that is the same UnicodeEncodeError), so truncating
+    beats crashing. Percent-encoded URLs are ASCII and are unaffected. Across the
+    61 shipped descriptions this changes exactly one extraction: an earlier episode case.
+    """
     import re
 
-    pattern = re.compile(r"https?://\S+")
+    pattern = re.compile(r"https?://[!-~]+")
     urls = set()
     for m in pattern.finditer(text):
         # Strip trailing punctuation EXCEPT ) — balance logic below handles parens
@@ -156,7 +169,7 @@ def validate_reference_urls(text: str, timeout: float = 5.0) -> list:
 # ---------------------------------------------------------------------------
 # 強化 H1: reference URL root-domain 検出 lint
 #
-# ある回 で発覚した failure mode:
+# ある回で発覚した failure mode:
 #   `https://www.iwanami.co.jp/` `https://www.japan-acad.go.jp/`
 #   `https://www.city.motosu.lg.jp/` の 3 件 root URL が `validate_reference_urls()`
 #   の HTTP 200 check を通って silent PASS。実際は Takagi 個別ページではなく
@@ -480,6 +493,19 @@ def generate_description(
             lines.append(f"{ch['timestamp']} {ch['label']}")
         lines.append("")
 
+    # ── 注 (episode_config.description.notes) ─────────────
+    # A place for the qualification a narration cannot carry. An earlier episode says "the best
+    # answer is always at a corner", which holds when a feasible point exists and
+    # the region is bounded; saying that aloud would bury the sentence, and leaving
+    # it unsaid overstates the theorem. Optional and per-episode: no `notes` key
+    # emits nothing, so every existing episode's description is unchanged.
+    _cfg_desc = config.get("description") or {}
+    notes = [n for n in (desc_block.get("notes") or _cfg_desc.get("notes") or []) if n]
+    if notes:
+        lines.append("【注】")
+        lines.extend(notes)
+        lines.append("")
+
     # ── 音声合成クレジット (engine-aware) ─────────────────
     # VOICEVOX REQUIRES crediting the voice library/character per its terms of use,
     # so a VOICEVOX build must show it. Google Cloud TTS is a paid API with NO
@@ -535,7 +561,7 @@ def generate_description(
     # were downloaded but not assigned during assign_photos_to_scenes(), and
     # downstream image_generator never uses such photos as references.
     # Previously credits_generator output ALL entries unconditionally, which
-    # produced misleading credits in ある回 (no scene assigned, but the 3
+    # produced misleading credits in an earlier episode (no scene assigned, but the 3
     # name-collision photos like 柳惠千 still credited).
     #
     # 強化 H3: scene_id=null AND usage=="reference" のケース
@@ -558,6 +584,12 @@ def generate_description(
         scene_id = photo.get("scene_id")
         scene_assigned = scene_id not in (None, "", "null")
         is_reference = usage == "reference"
+        # A transcoded sibling is the SAME work, carried under a
+        # second filename for bookkeeping. Crediting it again printed the identical
+        # attribution line twice in the published description.
+        if photo.get("transcoded_from"):
+            skipped += 1
+            continue
         if usage in ("unused", "skipped"):
             skipped += 1
             continue

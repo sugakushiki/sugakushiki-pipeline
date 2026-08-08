@@ -8,7 +8,7 @@ paths:
 
 ## QA レポート読み込み時
 
-`qa_report_*.json` を Read した瞬間、`.claude/hooks/qa_report_reminder.py` が PreToolUse hook で再検証リマインダを system に差し込む（`settings.local.json` 登録時）。
+`qa_report_*.json` を Read した瞬間、QA 再検証 hook が PreToolUse で再検証リマインダを system に差し込む。
 
 QA 指摘を反映する前に、以下のフェーズを実施する:
 

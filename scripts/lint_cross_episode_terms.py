@@ -16,6 +16,17 @@ X-1 (例: ニルス vs ニールスの表記揺れ) のような表記揺れを�
 
 from __future__ import annotations
 
+# Windows console は cp932。警告メッセージに含まれる em dash / 矢印などは cp932 で
+# encode できず、**警告を出そうとした瞬間に** UnicodeEncodeError で死ぬ (正常系では
+# 踏まれないので気づきにくい)。出力の入口で utf-8 に寄せる (smoke_test section 20)。
+import sys as _sys
+
+if _sys.stdout.encoding and _sys.stdout.encoding.lower() != "utf-8":
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import argparse
 import datetime
 import glob

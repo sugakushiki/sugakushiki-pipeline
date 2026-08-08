@@ -53,7 +53,7 @@ from pathlib import Path
 
 # Windows cp932 console: reconfigure stdout/stderr to UTF-8 so em-dash and
 # similar Unicode in rationale text don't crash the CLI. Pattern from
-# R-1 follow-up (qa_report_reminder.py).
+# R-1 follow-up (the QA-report reminder hook).
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     try:
         sys.stdout.reconfigure(encoding="utf-8")

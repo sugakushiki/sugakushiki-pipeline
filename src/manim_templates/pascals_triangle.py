@@ -103,7 +103,7 @@ class PascalsTriangle(Scene):
     def _cell(self, value, n, k, color=ACCENT_CYAN, font_size=22):
         # Text(font=FONT) is rendered via cairo (no LaTeX subprocess), making
         # 28 cells × FadeIn complete in seconds instead of timing out at 240s.
-        # ある回 fix: math_11/12 (binomial_highlight, probability_link)
+        # An earlier episode fix: math_11/12 (binomial_highlight, probability_link)
         # previously hit 240s timeout with MathTex(str(value)) × 28 cells.
         cell = Text(str(value), font=FONT, font_size=font_size, color=color)
         cell.move_to(_cell_position(n, k))
@@ -196,7 +196,7 @@ class PascalsTriangle(Scene):
         # don't overlap with rows 5, 6.
         cells = self._full_triangle(color=TEXT_DIM, max_rows=5)
         # Use VGroup for one-shot FadeIn instead of 28 individual FadeIns
-        # (reduces Manim animation overhead). ある回 fix.
+        # (reduces Manim animation overhead). An earlier episode fix.
         self.play(FadeIn(VGroup(*cells.values())), run_time=0.9)
 
         # Highlight row n = 4: cells (4,0)..(4,4) values 1, 4, 6, 4, 1.

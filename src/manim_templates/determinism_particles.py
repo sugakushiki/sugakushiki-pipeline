@@ -15,7 +15,7 @@ Modes:
                  y = 0.55 + ay sin(fy t + py); ~2 s static coda.
     demon_view - The same five paths fully lit in gold; dots then ride along
                  the whole curves continuously (the "intelligence" sweeps over
-                 past and future at once). [not used by ある回.]
+                 past and future at once). [not used by an earlier episode.]
                  Fixed params: same 5 paths; ~2 s static coda.
     human_fog  - Only one particle is tracked: a short observed past segment
                  (cyan), then three dashed hypothetical futures revealed one

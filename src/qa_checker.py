@@ -690,7 +690,7 @@ def _detect_description_drift(scene_definition: dict) -> list:
     """description.intro vs narration の 6-gram coverage 検査.
 
     description.intro は script step で config.description.intro_guidance から
-    生成され、その後 narration を編集しても自動同期されない。ある回 で
+    生成され、その後 narration を編集しても自動同期されない。ある回で
     「古代の三大難問」が narration では「古代ギリシャの三大難問」に統一
     されたが description.intro が古いまま残った事例で発覚 (description.txt
     にもそのまま反映され YouTube 概要欄に出てしまう)。
@@ -752,7 +752,7 @@ def _detect_description_drift(scene_definition: dict) -> list:
 def run_dearu_lint(scene_definition: dict) -> dict:
     """Deterministic である調 detector.
 
-    LLM StyleChecker は run 間で揺れ、ある回 で である調 5 件中 2 件を見逃した
+    LLM StyleChecker は run 間で揺れ、ある回で である調 5 件中 2 件を見逃した
     (`した。`/`ない。` pattern が盲点)。は hard rule なので、非決定的 LLM の補完として正規表現で確実に候補を列挙する
     (layered defense)。`『...』` 引用内 は
     info、本文の である調終止は warning。最終判断は人間 (鵜呑み禁止)。
@@ -775,7 +775,7 @@ def run_dearu_lint(scene_definition: dict) -> dict:
         _re.compile(r"(?<![まで])した。"),
         _re.compile(r"(?<![ま])った。"),
         _re.compile(r"(?<![ま])ない。"),
-        # ある回 強化: LLM StyleChecker が拾い決定論版が見逃した平叙終止を追加。
+        # ある回強化: LLM StyleChecker が拾い決定論版が見逃した平叙終止を追加。
         # 〜ている。/ていた。(進行形の plain。ています/でした は末尾が異なり不一致)
         _re.compile(r"ている。"),
         _re.compile(r"ていた。"),
@@ -834,7 +834,7 @@ def run_dearu_lint(scene_definition: dict) -> dict:
                         }
                     )
 
-    # 強化: description.intro も である調走査。ある回 で概要欄 intro が
+    # 強化: description.intro も である調走査。ある回で概要欄 intro が
     # である調 (「訪ねた。」「答えたと伝えられている。」「技術』にあった。」) のまま
     # build を通過した。narration は全 ですます だったが、description.intro は
     # script_generator が narration と別に生成するため、narration だけ見る本 lint を
@@ -1223,7 +1223,7 @@ def aggregate_report(
         overall = "PASS"
 
     # 実行 agent の manifest と fact 検証層の有無を記録。
-    # ある回 で最終 QA が content/consistency のみ (fact 不在) のまま事実誤りが
+    # ある回で最終 QA が content/consistency のみ (fact 不在) のまま事実誤りが
     # 素通りし、「どの agent が走ったか」「fact が走っていない」の記録も警告も
     # 無かった。manifest を残し、fact 層が無ければ silent に通さず WARN にする。
     agents_run = list(agent_results.keys())
