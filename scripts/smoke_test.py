@@ -1673,20 +1673,61 @@ def _current_state_docs() -> list:
 _PBV_COUNT_RE = re.compile(r"(?:構造検査|structural verif\w*)[^|\n]{0,24}?(\d+)\s*(?:件|checks?)")
 _PBV_COUNT_RE2 = re.compile(r"(\d+)\s*(?:件|checks?)[^|\n]{0,24}?(?:構造検査|structural verif\w*)")
 
+# Counts a doc states that can be recomputed from the code. Each entry is
+# (何の数か, doc 側で数字を探す手がかり, 数える正規表現, 実体を返す関数).
+#
+# Keep this list growing rather than fixing a number in place: every count in
+# prose is a copy that stops tracking its source the moment it is written, and
+# the post_build_verify one had reached three different values in four places
+# before anyone noticed.
+_COUNTED_CLAIMS: list = [
+    (
+        "cloud_reading_lint の系統数",
+        "cloud_reading_lint",
+        re.compile(r"(\d+)\s*系統"),
+        lambda: _module_collection_size("cloud_reading_lint", "_CATEGORY_TAG"),
+    ),
+]
 
-def check_post_build_check_count() -> list:
-    """Docs that state how many post_build_verify checks there are must be right.
 
-    The count was hand-typed in four places and had drifted to three different
-    values at once (8 in the README, 10 in the script's docstring and --help,
-    "nine" in run_all's). An earlier episode learned this lesson, fixed the one occurrence in
-    the printed output, and left the other three -- a number written down beside a
-    list goes stale the moment the list grows.
+def _module_collection_size(module: str, name: str) -> int:
+    """len() of a module-level dict/list/tuple, read without importing the module.
 
-    The code side is now derived (post_build_verify.CHECKS), so this only has to
-    watch prose. Scoped to docs that describe the current system; see
-    _current_state_docs.
+    Parsed rather than imported so a heavy or side-effecting module cannot make a
+    doc check expensive -- and so this still works in a tree where the module's
+    own dependencies are not installed.
     """
+    path = SCRIPTS / f"{module}.py"
+    if not path.is_file():
+        path = SRC / f"{module}.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(getattr(t, "id", None) == name for t in node.targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Dict):
+            return len(value.keys)
+        if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            return len(value.elts)
+    raise LookupError(f"{module}.{name} が見つかりません")
+
+
+def check_stated_counts() -> list:
+    """Counts written into prose must equal what the code actually holds.
+
+    post_build_verify was the case that started this: the count was hand-typed in
+    four places and had drifted to three different values at once (8 in the
+    README, 10 in the script's docstring and --help, "nine" in run_all's). An earlier episode
+    learned the lesson, fixed the one occurrence in the printed output, and left
+    the other three -- a number written beside a list goes stale the moment the
+    list grows. cloud_reading_lint's "20 系統" was the same shape, against 17.
+
+    Scoped to docs that describe the current system; see _current_state_docs.
+    """
+    problems = []
+
     try:
         sys.path.insert(0, str(SCRIPTS))
         import post_build_verify  # type: ignore
@@ -1695,13 +1736,31 @@ def check_post_build_check_count() -> list:
     except Exception as e:
         return [f"post_build_verify を読み込めず件数を照合できません: {e}"]
 
-    problems = []
+    docs = []
     for doc in _current_state_docs():
         try:
-            text = doc.read_text(encoding="utf-8")
+            docs.append((doc.relative_to(ROOT).as_posix(), doc.read_text(encoding="utf-8")))
         except (OSError, UnicodeDecodeError):
             continue
-        rel = doc.relative_to(ROOT).as_posix()
+
+    for label, hint, pattern, resolver in _COUNTED_CLAIMS:
+        try:
+            actual = resolver()
+        except Exception as e:
+            problems.append(f"{label} の実体を数えられません: {e}")
+            continue
+        for rel, text in docs:
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if hint not in line:
+                    continue
+                for m in pattern.finditer(line):
+                    if int(m.group(1)) != actual:
+                        problems.append(
+                            f"{rel}:{lineno}: {label} を {m.group(1)} と書いていますが実体は "
+                            f"{actual} です"
+                        )
+
+    for rel, text in docs:
         for lineno, line in enumerate(text.splitlines(), 1):
             if "post_build_verify" not in line and "post-build verify" not in line.lower():
                 continue
@@ -2274,8 +2333,8 @@ def main() -> int:
     else:
         print("  OK: 参照される args 属性は全て add_argument に在る")
 
-    _section("28. post_build_verify の検査数と doc の一致 (2026-08-13)")
-    pbv_v = check_post_build_check_count()
+    _section("28. doc が書いた件数と実体の一致 (2026-08-13)")
+    pbv_v = check_stated_counts()
     if pbv_v:
         print(f"  FAIL: {len(pbv_v)} 件の doc が実体と違う数を名乗っています")
         for m in pbv_v:

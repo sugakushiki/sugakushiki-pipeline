@@ -36,11 +36,11 @@
 
 | ツール | 用途 | コマンド |
 |---|---|---|
-| **smoke test** | pre-pipeline 静的健全性 (import / config_validator / Manim discovery)。section 13-26 で禁止表現・重複参考文献・二重括弧・Y-clearance・コンソール encoding・**実在しない Manim mode**・再利用テンプレの必須 params・references のマークアップ 等を検査。**実測 約 219 秒** (2026-08-05。長く「数秒」と書かれていたが、その記述を根拠に検査の追加可否を判断すると誤る) | `python scripts/smoke_test.py` |
+| **smoke test** | pre-pipeline 静的健全性 (import / config_validator / Manim discovery)。section 13-30 で禁止表現・重複参考文献・二重括弧・Y-clearance・コンソール encoding・**実在しない Manim mode**・再利用テンプレの必須 params・references のマークアップ・**argparse の登録漏れ**・**doc が書いた件数**・**README の構造ツリー**・**フォント候補リスト** 等を検査。**実測 135 秒** (2026-08-13、30 セクション。長く「数秒」と書かれていたが、その記述を根拠に検査の追加可否を判断すると誤る。**この数字は環境と episode 数で動くので、判断に使う前に測り直す** — 直前の記述 219 秒も測り直したら合わなかった) | `python scripts/smoke_test.py` |
 | **reading guard** | VOICEVOX 誤読の pre-build 検出。global 辞書適用後の実測 kana を既知誤読辞書と照合。**narration_speech 編集後に実行** | `python scripts/reading_guard.py episodes/XXX/scene_definition.json` |
 | **STT QA (Cloud)** | engine=cloud の各 scene wav を Gemini STT で書き起こし既知誤読と照合。audio step 後に自動、advisory | `python scripts/stt_qa.py episodes/XXX/scene_definition.json` |
 | **shipped-audio QA** | **出荷物** (`output_final.mp4`) から切り出して STT。読み検証の決定打。on-demand・advisory | `python scripts/verify_shipped_audio.py episodes/XXX/scene_definition.json [--scenes id1,id2]` |
-| **cloud reading lint** | engine=cloud の**合成前**静的読み lint。多読み漢字・同音誤解・難語・間・助詞わ過剰変換・生分数・全文かな行・**config が名指しした読みの未固定**など 20 系統。script 後/audio 前に自動 | `python scripts/cloud_reading_lint.py episodes/XXX/scene_definition.json` |
+| **cloud reading lint** | engine=cloud の**合成前**静的読み lint。多読み漢字・同音誤解・難語・間・助詞わ過剰変換・生分数・全文かな行・**config が名指しした読みの未固定**など **17 系統** (`_CATEGORY_TAG` の種別数。scanner 関数は 18 本だが 2 本は同じ `polyphone` を出す)。script 後/audio 前に自動 | `python scripts/cloud_reading_lint.py episodes/XXX/scene_definition.json` |
 | **主題肖像 use_reference gap** | 実写参照があるのに主題の肖像が text-only 生成される場合に WARN (真因は config の birth_year 欠落)。images step 前に自動 | `python scripts/lint_portrait_reference.py episodes/XXX` |
 | **Manim Vision QA** | 各フレームを Claude Sonnet vision で「概念が伝わるか/判別できる形か/ラベル衝突」判定。visuals step 後に自動、advisory | `python scripts/manim_vision_qa.py episodes/XXX/scene_definition.json` |
 | **Manim 文字衝突 QA** | no-render mock で bbox 衝突を決定論検出。**出荷済み在庫への遡及監査には使えない** (静的 mock はアニメの位置変化を評価できない) | `python scripts/manim_text_collision_qa.py episodes/XXX/scene_definition.json` |
