@@ -35,7 +35,7 @@ class PolynomialRootsQuadratic(Scene):
         self.wait(0.8)
 
         # Step 2: Factored form (parts indexed for individual manipulation)
-        # Parts: 0( 1:x 2:- 3:√2 4:) 5:( 6:x 7:+ 8:√2 9:) 10:=0
+        # Parts: 0(1:x 2:- 3:√2 4:) 5:(6:x 7:+ 8:√2 9:) 10:=0
         eq2 = MathTex(
             r"(",
             r"x",

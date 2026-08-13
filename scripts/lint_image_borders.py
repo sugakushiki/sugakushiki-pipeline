@@ -2,7 +2,8 @@
 
 Gemini Flash は油絵スタイル画像にキャンバス/額縁状の白い縁を稀に描き込む。
 ken_burns は 15% ズームで cover scale するが、その余白幅を超える白縁は
-クロップしきれず、最終動画で「両サイド/上下が白帯」として出る。本 lint は各画像の四辺に一様な near-white strip が
+クロップしきれず、最終動画で「両サイド/上下が白帯」として出る (ある回、
+Ledge=254/255・幅約100px)。本 lint は各画像の四辺に一様な near-white strip が
 あるか実測し、閾値超を WARN する。`--trim` で content bounding box に自動クロップ。
 
 Usage:
@@ -71,7 +72,8 @@ def run(images_dir: str) -> list:
 def run_video(video_dir: str, frac: float = 0.3, min_pct: float = 0.04) -> list:
     """visuals/*.mp4 の 1 フレームを抽出し外周の白帯を % で実測。
 
-    source 画像の白縁は ken_burns の COVER 拡大でむしろ広がる。source lint (run) だけでは「納品物に白帯が出ない」を
+    source 画像の白縁は ken_burns の COVER 拡大でむしろ広がる (ある回: source 左240px
+    -> 動画 左343px = 幅18%)。source lint (run) だけでは「納品物に白帯が出ない」を
     保証できないため、レンダ後の動画フレームを直接測る。band を幅/高さに対する比で返す。
     WARN dict: {video, bands_pct{edge:比}, max_pct}。PIL/ffmpeg 不在や読込失敗はスキップ。
     """

@@ -52,14 +52,14 @@ class ProblemOfPoints(Scene):
 
     Modes:
         tree (default)        - decision tree of all possible game continuations
-
+                                (ある回 Fermat 回でも使用)
         calculation           - fair division: A gets 3/4, B gets 1/4
-
+                                (ある回 Fermat 回でも使用)
         tree_with_expectation - 決定木 + 期待値計算 (E[A]=48, E[B]=16) 明示。
                                 ある回 Pascal 回 math_14 用、Fermat 列挙ブロック削除。
         expectation_comparison - フェルマー方式 vs パスカル方式の対比 + 期待値の
                                  一般式 E[X] = Σ p_i x_i + 「期待値の概念誕生」。
-                                 ある回 Pascal 回 math_15 用、新規 mode。
+                                 ある回 Pascal 回 math_15 用、新規 mode (ある回影響なし)。
     """
 
     def construct(self):

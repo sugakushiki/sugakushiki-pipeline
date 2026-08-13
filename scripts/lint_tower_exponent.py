@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """lint_tower_exponent.py - flag ambiguous power-tower prose in narration.
 
-Background: a Fermat number
+Background (an earlier episode Gauss, viewer report 2026-06-19): a Fermat number
 F_k = 2^(2^k) + 1 was narrated/subtitled as "2の2のk乗" -- a power tower
 rendered with only ONE 乗 and no parentheses. A listener parses that as 2^(2k),
 not 2^(2^k). The source data (episode_config verified_facts) was correct; the

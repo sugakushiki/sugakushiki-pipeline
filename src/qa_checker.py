@@ -687,7 +687,7 @@ def extract_narration_text(scene_definition: dict) -> str:
 
 
 def _detect_description_drift(scene_definition: dict) -> list:
-    """description.intro vs narration の 6-gram coverage 検査.
+    """description.intro vs narration の 6-gram coverage 検査 (強化 D).
 
     description.intro は script step で config.description.intro_guidance から
     生成され、その後 narration を編集しても自動同期されない。ある回で
@@ -750,11 +750,11 @@ def _detect_description_drift(scene_definition: dict) -> list:
 
 
 def run_dearu_lint(scene_definition: dict) -> dict:
-    """Deterministic である調 detector.
+    """Deterministic である調 detector (強化 B).
 
     LLM StyleChecker は run 間で揺れ、ある回で である調 5 件中 2 件を見逃した
     (`した。`/`ない。` pattern が盲点)。は hard rule なので、非決定的 LLM の補完として正規表現で確実に候補を列挙する
-    (layered defense)。`『...』` 引用内 は
+    (layered defense)。`『...』` 引用内 (古代視点の修辞的提示、ある回等) は
     info、本文の である調終止は warning。最終判断は人間 (鵜呑み禁止)。
 
     Returns: agent-result 互換 dict (status / issues / summary / _agent)。
@@ -864,7 +864,7 @@ def run_dearu_lint(scene_definition: dict) -> dict:
                             if in_quote
                             else "概要欄 intro が である調終止。narration が ですます調でも "
                             "description.intro は別生成のため独立に ですます化が必要 "
-                            ""
+                            "(ある回で「訪ねた。」「あった。」が build 通過)"
                         ),
                         "suggestion": "intro 文末を「〜ました／〜います／〜です」等に統一",
                     }

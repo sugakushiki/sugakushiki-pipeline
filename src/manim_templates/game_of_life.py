@@ -185,7 +185,7 @@ class GameOfLife(Scene):
 
         The number of generations is chosen so the stepping animation itself
         fills (duration - intro - coda); the tail is a fixed short coda, so
-        there is no long static tail.
+        there is no long static tail (an earlier episode anti-pattern).
 
         loop_gens: if set, simulate only that many coherent generations and tile
         them to fill the scene (a clean walk that restarts). Used by glider so it

@@ -1,4 +1,4 @@
-"""Thumbnail Vision QA for 数学史記.
+"""Thumbnail Vision QA for 数学史記 (, ある回で確立).
 
 Validates generated thumbnail PNG files using Claude Sonnet Vision to detect:
 - Image type (portrait / group_scene / landscape / abstract)

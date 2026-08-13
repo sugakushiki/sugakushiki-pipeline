@@ -18,7 +18,7 @@ Checks (all read-only, no FFmpeg / VOICEVOX / Claude CLI calls, target <30s):
 3. Manim discovery: discover_manim_templates() returns >= MIN_TEMPLATES,
    each template parseable (class found via AST). Reports SCENES dict and
    LINT_FACTUAL_CLAIMS metadata coverage as info (not failure).
-4. MathTex Japanese lint: scan all manim_templates/*.py for
+4. MathTex Japanese lint (learning): scan all manim_templates/*.py for
    `MathTex(...)` calls containing Japanese characters (U+3040..U+9FFF). LaTeX
    cannot render these without explicit usepackage CJK setup, so they cause
    "Unicode character not set up for use with LaTeX" errors at render time.
@@ -39,6 +39,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
+SCRIPTS = ROOT / "scripts"
 EPISODES = ROOT / "episodes"
 MANIM_TEMPLATES = SRC / "manim_templates"
 
@@ -212,9 +213,9 @@ def check_mathtex_japanese() -> tuple[int, int, list[str]]:
     """
     import re
 
-    # Pattern: MathTex( opening through matching close paren on same line OR
+    # Pattern: MathTex(opening through matching close paren on same line OR
     # across up to ~10 lines (covers most multi-line MathTex calls).
-    # Captures content between MathTex( and ).
+    # Captures content between MathTex(and ).
     JP_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿＀-￯]")
     MATHTEX_RE = re.compile(r"MathTex\s*\(", re.MULTILINE)
 
@@ -247,7 +248,7 @@ def check_mathtex_japanese() -> tuple[int, int, list[str]]:
                 if depth == 0:
                     break
             block = "\n".join(collected)
-            # Extract content between first MathTex( and matching )
+            # Extract content between first MathTex(and matching )
             start = block.find("MathTex")
             if start < 0:
                 continue
@@ -386,7 +387,7 @@ def check_static_tail() -> tuple[int, int, list[str]]:
 
     manim-development.md 規約: `used = 固定アニメ秒; self.wait(duration - used)` で
     残り全 slack を末尾の 1 回の静止 wait に流す設計は禁止。ナレーションが長い scene
-    (40〜65秒) では 30〜60 秒の完全静止になる。
+    (40〜65秒) では 30〜60 秒の完全静止になる (ある回で 65秒中 61秒静止)。
     連続モーション (周期運動) / トレーサー / 段階リビール + 小さな coda に分配する。
 
     Detects (regex, `used` 変数を末尾 wait に直接流す形のみ — 分配済みの
@@ -445,10 +446,19 @@ _MULTICLASS_LEGACY = {
 
 
 def _non_cp932_in_output_calls(text: str) -> set:
-    """Characters a print()/append() call would emit that cp932 cannot encode.
+    """Characters the file would emit that cp932 cannot encode.
 
     Parses the source so a call spanning several lines is treated as one unit.
     Falls back to the old line-based scan if the file will not parse.
+
+    argparse counts as an output call. It writes the parser's description and
+    every flag's help to stdout on --help, so an em dash in one help string is
+    enough to kill the tool -- and because `description=__doc__` is the usual
+    spelling, the module docstring is on that path too. Scanning only
+    print()/append() missed three published entry points whose --help died on a
+    Windows console: the same "it only breaks on the path that matters" shape as
+    the warning-path crashes this check was built for, except here the path is
+    "the user did not know how to use the tool".
     """
     bad: set = set()
 
@@ -463,9 +473,12 @@ def _non_cp932_in_output_calls(text: str) -> set:
         tree = ast.parse(text)
     except SyntaxError:
         for line in text.splitlines():
-            if "print(" in line or "append(" in line:
+            if "print(" in line or "append(" in line or "add_argument(" in line:
                 _scan(line)
         return bad
+
+    argparse_calls = ("ArgumentParser", "add_argument", "add_argument_group", "add_parser")
+    module_doc = ast.get_docstring(tree) or ""
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -476,11 +489,15 @@ def _non_cp932_in_output_calls(text: str) -> set:
             if isinstance(fn, ast.Name)
             else (fn.attr if isinstance(fn, ast.Attribute) else "")
         )
-        if name not in ("print", "append"):
+        if name not in ("print", "append", *argparse_calls):
             continue
         for sub in ast.walk(node):
             if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
                 _scan(sub.value)
+            # description=__doc__ / epilog=__doc__ puts the module docstring on
+            # the --help path, where the AST sees only a Name.
+            elif isinstance(sub, ast.Name) and sub.id == "__doc__" and name in argparse_calls:
+                _scan(module_doc)
     return bad
 
 
@@ -519,7 +536,7 @@ def check_console_encoding_guard() -> tuple[int, list[str]]:
             if 'reconfigure(encoding="utf-8"' in text:
                 continue
             # Walk the CALL, not the line. The line-based scan missed anything
-            # split across lines -- a print( on one line and its message on the
+            # split across lines -- a print(on one line and its message on the
             # next was invisible, which is exactly how an em dash got into
             # stt_qa.py during an earlier episode work and crashed the warning path.
             bad = _non_cp932_in_output_calls(text)
@@ -531,7 +548,7 @@ def check_console_encoding_guard() -> tuple[int, list[str]]:
 
 
 def check_manim_single_class() -> tuple[int, list[str], list[str]]:
-    """Enforce CLAUDE.md '1 file 1 Scene class'.
+    """Enforce CLAUDE.md '1 file 1 Scene class' (an earlier episode regression).
 
     visual_generator.discover_manim_templates() maps each template FILE to its
     FIRST Scene subclass and renders that class for EVERY mode (mode is only read
@@ -600,7 +617,7 @@ def check_reusable_template_hardcode() -> tuple[int, int, list[str]]:
 
         findings = _run_b52(str(EPISODES), str(MANIM_TEMPLATES))
     except Exception as e:
-        return 0, 0, [f""]
+        return 0, 0, [f"(audit skipped: {e})"]
     warns = [f for f in findings if f["severity"] == "WARN"]
     infos = [f for f in findings if f["severity"] == "INFO"]
     msgs = [
@@ -612,7 +629,7 @@ def check_reusable_template_hardcode() -> tuple[int, int, list[str]]:
 
 
 def check_tower_exponent_prose() -> tuple[int, int, list[str]]:
-    """Ambiguous power-tower prose in narration.
+    """Ambiguous power-tower prose in narration (an earlier episode Gauss class).
 
     "2の2のk乗" represents the Fermat number F_k = 2^(2^k)+1 but reads as 2^(2k):
     a power tower written with ONE 乗 and no parentheses. The source data
@@ -732,7 +749,7 @@ def check_bgm_part_format() -> tuple[int, int, list[str]]:
         return (
             1,
             1,
-            ["bgm_mixer: write_target を出力に使う ffmpeg cmd が見つからない"],
+            ["bgm_mixer: write_target を出力に使う ffmpeg cmd が見つからない (構造変更?)"],
         )
     cmd_start = text.rfind("cmd = [", 0, idx)
     block = text[cmd_start:idx] if cmd_start != -1 else ""
@@ -820,7 +837,7 @@ def check_pipeline_step_selftest() -> tuple[int, int, list[str]]:
     except Exception as e:  # noqa: BLE001 — smoke は全例外を可視化する
         errors.append(
             f"audio_generator.pronunciation_check: {type(e).__name__}: {e} "
-            f""
+            f"(type regression の再発)"
         )
 
     # --- audio_generator: 純粋ヘルパ (外部 I/O 無し) ---
@@ -885,7 +902,7 @@ def check_text_overlay_caret() -> tuple[int, int, list[str]]:
 
     text_overlay は `$...$` で囲めば matplotlib mathtext で正しい上付きが出る
     (generate_text_overlay の TeX 分岐)。生の `^` は字面どおり表示され不格好かつ
-    数学的に不完全。`^` を含み `$` で
+    数学的に不完全 (ある回 'x^3' は三次方程式の一般形でない)。`^` を含み `$` で
     囲まれていない main/sub を検出する。Returns (scanned, warn, warnings)。
 
     **助言は 2 通りに分ける (2026-08-06)。** 以前はどの行にも「`$...$` で囲め」と
@@ -938,7 +955,7 @@ def check_quote_overlay_brackets() -> tuple[int, int, list[str]]:
     generate_text_overlay の quote スタイルは装飾用の「(左上)と」(本文末尾) を
     自分で描画する (visual_generator の quote ブロック)。なので content.main に
     リテラルの「」を入れると画面が二重「「…」」になり、さらに折り返しで閉じ「」が
-    単独 2 行目に孤立する。content.main
+    単独 2 行目に孤立する (ある回で顕在化、user が画面で発見)。content.main
     は括弧なしの本文だけにする。sub は出典で書名『』が正当に入るので対象外。
     Returns (scanned, warn, warnings)。
     """
@@ -1009,7 +1026,7 @@ def check_reference_duplicates() -> tuple[int, int, list[str]]:
     'The Golden Ratio: A Contrary Viewpoint' (完全) が二重登録され、ダッシュ/コロンの
     表記差で exact 一致検出を逃れていた。著者 (引用符前のテキスト) + タイトル
     (引用符内) を [a-z0-9] に正規化したペアで照合する。著者を含めるのは、同名タイトルの
-    別著作
+    別著作 (例 ある回 Weyl 'Emmy Noether' と Kimberling 'Emmy Noether' は別の追悼/紹介)
     を誤検出しないため。引用タイトルを持たない website 系 (Wikipedia/MacTutor) は対象外。
     episode_config と scene_def.credits の両 references を走査 (どちらが description.txt
     に使われても捕捉)。Returns (scanned, warn, warnings)。
@@ -1146,7 +1163,8 @@ def check_forbidden_phrases() -> tuple[int, int, list[str]]:
     error-debt (「割らずに」「割り算せず」等) は config の common_errors_to_avoid に
     散文で書かれるが、それが script 生成や chapter_subtitles / description.intro に
     表層として漏れても、既存 QA (narration 中心) は description ブロックを見ない
-。config に `forbidden_phrases: [表層文字列]` を opt-in で列挙すると、
+    (ある回: chapter「割らずに素数を見抜く」/ intro「見つけることなく」を user 指摘で
+    手修正した反省)。config に `forbidden_phrases: [表層文字列]` を opt-in で列挙すると、
     narration / narration_speech / narration_speech_cloud / text_overlay content /
     description.intro / description.title / chapter_subtitles を横断走査して検出する。
     未設定 ep は no-op。advisory。"""
@@ -1296,7 +1314,9 @@ def check_required_phrases() -> tuple[int, int, list[str]]:
     """episode_config.json の required_phrases が narration に一つも出てこなければ WARN。
 
     forbidden_phrases の裏返し。企画で「この語は出す」と決めたのに書かれないまま完成する
-    型を捕まえる。
+    型を捕まえる (ある回: 双対性の説明で『ミニマックス』を一行だけ入れると決めたのに、
+    どの scene にも書かれず、完成した動画を見た user の指摘で判明した。決めたことは
+    計画メモにしか無く、それを照合する仕組みが無かった)。
 
     照合先は **narration のみ**。読み (narration_speech*) は表記が変わるし、概要欄や
     overlay に出ていても「本編で触れた」ことにはならない。未設定 ep は no-op。advisory。
@@ -1527,6 +1547,296 @@ def check_reuse_template_required_params() -> list:
     return problems
 
 
+def _argparse_gaps(text: str) -> list[str]:
+    """`args.<attr>` reads that no add_argument/set_defaults ever registers.
+
+    Only the variable actually bound to a parse_args() result is followed, so a
+    parameter that merely happens to be named `args` is not mistaken for a
+    Namespace.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+
+    ns_names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        call = node.value
+        if not (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr in ("parse_args", "parse_known_args")
+        ):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                ns_names.add(target.id)
+            elif isinstance(target, ast.Tuple) and target.elts:
+                # args, unknown = parser.parse_known_args()
+                if isinstance(target.elts[0], ast.Name):
+                    ns_names.add(target.elts[0].id)
+    if not ns_names:
+        return []
+
+    registered: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr == "add_argument":
+            explicit = next((kw.value.value for kw in node.keywords if kw.arg == "dest"), None)
+            if isinstance(explicit, str):
+                registered.add(explicit)
+                continue
+            longest = ""
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    if not arg.value.startswith("-"):
+                        registered.add(arg.value.replace("-", "_"))
+                    elif len(arg.value) > len(longest):
+                        longest = arg.value
+            if longest:
+                registered.add(longest.lstrip("-").replace("-", "_"))
+        elif node.func.attr == "set_defaults":
+            registered.update(kw.arg for kw in node.keywords if kw.arg)
+
+    gaps: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in ns_names
+            and node.attr not in registered
+        ):
+            gaps.setdefault(node.attr, node.lineno)
+    return [
+        f"args.{attr} (line {lineno}) は add_argument に無い"
+        for attr, lineno in sorted(gaps.items(), key=lambda kv: kv[1])
+    ]
+
+
+def check_argparse_registration() -> list:
+    """CLI attributes read from a Namespace that was never given the flag.
+
+    argparse raises AttributeError the first time such a read executes, and the
+    read is usually near the top of main(), so the tool dies before it does
+    anything -- but nothing static complains, because the source parses fine.
+
+    The class is not hypothetical. The published copy of this pipeline lost three
+    add_argument() calls to a sanitize rule, kept the args.<attr> reads that went
+    with them, and crashed on every invocation for three weeks while every gate
+    in the publish path reported PASS. This check runs from whichever tree it
+    sits in, so it guards the published copy as well as this one.
+    """
+    problems = []
+    for root in (ROOT / "src", ROOT / "scripts"):
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            rel = path.relative_to(ROOT).as_posix()
+            problems.extend(f"{rel}: {gap}" for gap in _argparse_gaps(text))
+    return problems
+
+
+def _current_state_docs() -> list:
+    """Docs that describe how the pipeline works NOW.
+
+    Deliberately excludes the historical record -- the development log, session
+    prompts, backlog archives and release checklists. Those legitimately name an
+    older count, because that is what shipped at the time; rewriting them would be
+    falsifying a log, and flagging them would train the reader to ignore this
+    check.
+
+    (The exclusion is expressed as an inclusion list of directories rather than by
+    naming those files: a published script must not spell an internal file's name,
+    because the sanitizer rewrites such a name to a placeholder and the published
+    copy then points at something that does not exist.)
+    """
+    docs = [ROOT / "README.md", ROOT / "CLAUDE.md"]
+    for sub in ("01_concept", "02_pipeline", "03_quality", "04_assets"):
+        docs.extend(sorted((ROOT / "docs" / sub).glob("*.md")))
+    arch = ROOT / "docs" / "architecture.md"
+    if arch.exists():
+        docs.append(arch)
+    docs.extend(sorted((ROOT / ".claude" / "rules").glob("*.md")))
+    skill = ROOT / ".claude" / "skills" / "qa-tools" / "SKILL.md"
+    if skill.exists():
+        docs.append(skill)
+    return [d for d in docs if d.is_file()]
+
+
+_PBV_COUNT_RE = re.compile(r"(?:構造検査|structural verif\w*)[^|\n]{0,24}?(\d+)\s*(?:件|checks?)")
+_PBV_COUNT_RE2 = re.compile(r"(\d+)\s*(?:件|checks?)[^|\n]{0,24}?(?:構造検査|structural verif\w*)")
+
+
+def check_post_build_check_count() -> list:
+    """Docs that state how many post_build_verify checks there are must be right.
+
+    The count was hand-typed in four places and had drifted to three different
+    values at once (8 in the README, 10 in the script's docstring and --help,
+    "nine" in run_all's). An earlier episode learned this lesson, fixed the one occurrence in
+    the printed output, and left the other three -- a number written down beside a
+    list goes stale the moment the list grows.
+
+    The code side is now derived (post_build_verify.CHECKS), so this only has to
+    watch prose. Scoped to docs that describe the current system; see
+    _current_state_docs.
+    """
+    try:
+        sys.path.insert(0, str(SCRIPTS))
+        import post_build_verify  # type: ignore
+
+        expected = post_build_verify.check_count()
+    except Exception as e:
+        return [f"post_build_verify を読み込めず件数を照合できません: {e}"]
+
+    problems = []
+    for doc in _current_state_docs():
+        try:
+            text = doc.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        rel = doc.relative_to(ROOT).as_posix()
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if "post_build_verify" not in line and "post-build verify" not in line.lower():
+                continue
+            for pattern in (_PBV_COUNT_RE, _PBV_COUNT_RE2):
+                for m in pattern.finditer(line):
+                    if int(m.group(1)) != expected:
+                        problems.append(
+                            f"{rel}:{lineno}: 検査数を {m.group(1)} と書いていますが実体は "
+                            f"{expected} 件です ({m.group(0).strip()[:40]})"
+                        )
+    return problems
+
+
+def _readme_tree_entries() -> set:
+    """Filenames listed in README's repository-structure fence."""
+    readme = ROOT / "README.md"
+    if not readme.is_file():
+        return set()
+    text = readme.read_text(encoding="utf-8")
+    # The language tag has to be part of the opener. Matching a bare "```\n"
+    # pairs a ```mermaid block's CLOSING fence with the next opening one, and the
+    # tree then falls in the gap between two matches instead of inside one.
+    fences = re.findall(r"```[A-Za-z]*\n(.*?)```", text, re.S)
+    tree = next((f for f in fences if "sugakushiki/" in f and "src/" in f), "")
+    return set(re.findall(r"[\w.]+\.(?:py|json)", tree))
+
+
+def _published_script_names() -> set:
+    """Scripts the public repo gets, derived rather than listed.
+
+    From WHITELIST_PATHS when the sync tool is present (this repo), and from the
+    directory itself when it is not (the published tree, where everything present
+    is by definition published). Parsed with ast rather than imported: reading a
+    literal must not run the module.
+    """
+    sync = SCRIPTS / "sync_to_public.py"
+    if not sync.is_file():
+        return {p.name for p in SCRIPTS.glob("*.py")}
+    try:
+        tree = ast.parse(sync.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return set()
+    for node in ast.walk(tree):
+        target = getattr(node, "target", None)
+        name = getattr(target, "id", None) if target is not None else None
+        if name == "WHITELIST_PATHS" and isinstance(getattr(node, "value", None), ast.List):
+            paths = [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+            return {
+                p.split("/")[-1] for p in paths if p.startswith("scripts/") and p.endswith(".py")
+            }
+    return set()
+
+
+def check_readme_structure() -> list:
+    """README's repository tree vs what actually ships.
+
+    The tree had fallen eight files behind: four src/ modules and four scripts/,
+    all of them the newest work (the review reel, the route_map legend and place
+    reviews, the subtitle sentence aligner, the repo-health check). review_reel.py
+    was not named anywhere in the README at all -- the same file that had already
+    been missed once, by the WHITELIST.
+
+    src/ is checked both ways because "src/**/*.py" publishes all of it. scripts/
+    is an explicit allowlist, so the expected set comes from there.
+    """
+    listed = _readme_tree_entries()
+    if not listed:
+        return ["README のリポジトリ構造ブロックを読めません"]
+
+    problems = []
+    src_dir = ROOT / "src"
+    if src_dir.is_dir():
+        actual = {p.name for p in src_dir.glob("*.py")} | {p.name for p in src_dir.glob("*.json")}
+        for name in sorted(actual - listed):
+            problems.append(f"src/{name} が README の構造ツリーにありません")
+
+    for name in sorted(_published_script_names() - listed):
+        problems.append(f"scripts/{name} は公開されるのに README の構造ツリーにありません")
+
+    for name in sorted(listed):
+        if (src_dir / name).is_file() or (SCRIPTS / name).is_file():
+            continue
+        if any((ROOT / d).joinpath(name).is_file() for d in (".", "examples")):
+            continue
+        problems.append(f"README が {name} を挙げていますが src/ にも scripts/ にもありません")
+    return problems
+
+
+_INSTALLED_FONT_NAME = "BIZ-UDMinchoM.ttc"
+
+
+def check_font_candidate_lists() -> list:
+    """Every hand-written font-candidate list must name the installed font.
+
+    Four modules each keep their own list of where BIZ UDMincho might be, and
+    only three of them carried the name it actually installs under. The fourth,
+    check_font_coverage, listed two spellings that exist nowhere plus the bundled
+    _font.ttc -- so once that bundle was removed from the published copy for
+    licensing, the published font_check step failed for every user, while the
+    private checkout kept passing because the file was still sitting there.
+
+    Deliberately not a "these lists must be identical" check: they legitimately
+    differ (the thumbnail generator wants a Bold face; the visual generator
+    prefers the episode-local copy first). What they cannot do is omit the one
+    name the font is known to install under.
+    """
+    problems = []
+    for path in sorted(SRC.glob("*.py")) + sorted(SCRIPTS.glob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.List, ast.Tuple)):
+                continue
+            items = [
+                e.value
+                for e in node.elts
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            ]
+            # Path literals only. A list of glob patterns ("BIZ*Mincho*.ttc") is
+            # a fallback search, not a candidate list, and demanding an exact
+            # filename of it makes the check fire on its own fix.
+            items = [s for s in items if ("/" in s or "\\" in s)]
+            if not any("Mincho" in s for s in items):
+                continue
+            if not any(_INSTALLED_FONT_NAME in s for s in items):
+                problems.append(
+                    f"{rel}:{node.lineno}: フォント候補に {_INSTALLED_FONT_NAME} が無い "
+                    f"(実在しない名前だけを並べると、そのモジュールはフォントを見つけられません)"
+                )
+    return problems
+
+
 def check_reference_markup() -> list:
     """Editing markup inside `references`, which is baked into the description.
 
@@ -1727,7 +2037,7 @@ def main() -> int:
     else:
         print(f"  OK: bgm_mixer forces -f for *.part write ({checks} check)")
 
-    _section("12. Ambiguous power-tower prose")
+    _section("12. Ambiguous power-tower prose (an earlier episode Gauss)")
     _, warn, warnings = check_tower_exponent_prose()
     if warn:
         print(f"  WARN: {warn} ambiguous power-tower prose finding(s) (advisory)")
@@ -1747,7 +2057,7 @@ def main() -> int:
         print(f"  WARN: {warn} 生キャレット ({scanned} text_overlay フィールド走査)")
         for w in warnings:
             print(f"    {w}")
-        print("    -> main/sub を $...$ で囲み matplotlib mathtext で上付き表示")
+        print("    -> main/sub を $...$ で囲み matplotlib mathtext で上付き表示 (ある回 x^3)")
     else:
         print(f"  OK: text_overlay に生キャレットなし ({scanned} フィールド)")
 
@@ -1757,7 +2067,7 @@ def main() -> int:
         print(f"  WARN: {warn} 文献に刊行年なし ({scanned} 走査)")
         for w in warnings:
             print(f"    {w}")
-        print("    -> 書籍/論文の参考文献に刊行年を補う")
+        print("    -> 書籍/論文の参考文献に刊行年を補う (ある回 Hald。advisory)")
     else:
         print(f"  OK: 書籍/論文型の参考文献は刊行年あり ({scanned} 走査)")
 
@@ -1769,7 +2079,7 @@ def main() -> int:
             print(f"    {fdg}")
         print(
             "    -> 人類初/世界初 は『遭遇の初出』(Heron 型) を取りこぼしやすい。"
-            "『実際に〜した最初』等の精密化を検討"
+            "『実際に〜した最初』等の精密化を検討 (ある回複素数)"
         )
     else:
         print("  OK: 人類初/世界初 系の primacy 主張なし")
@@ -1780,7 +2090,7 @@ def main() -> int:
         print(f"  WARN: {warn} 件の重複タイトル ({scanned} 走査)")
         for w in warnings:
             print(f"    {w}")
-        print("    -> 表記差 (ダッシュ/コロン/巻号) で同一文献が二重登録。1 件に統合")
+        print("    -> 表記差 (ダッシュ/コロン/巻号) で同一文献が二重登録。1 件に統合 (ある回 Falbo)")
     else:
         print(f"  OK: 引用タイトルの重複なし ({scanned} 走査)")
 
@@ -1834,7 +2144,7 @@ def main() -> int:
     else:
         print(f"  OK: 概要欄に編集用マークアップなし ({scanned} 本)")
 
-    _section("19. Manim 1ファイル1クラス")
+    _section("19. Manim 1ファイル1クラス (ある回 regression)")
     scanned, new_v, legacy_v = check_manim_single_class()
     if new_v:
         print(f"  FAIL: {len(new_v)} 新規 multi-class template(s) ({scanned} 走査)")
@@ -1899,7 +2209,7 @@ def main() -> int:
     # Advisory, never counted into overall_fail: a session that is still running
     # legitimately has uncommitted work. The point is that the state is VISIBLE
     # before someone declares parallel work merged.
-    _section("22. 取り残された作業 / 行末の反転")
+    _section("22. 取り残された作業 / 行末の反転 (ある回 merge)")
     health_v = check_repo_health()
     if health_v:
         for block in health_v:
@@ -1953,6 +2263,46 @@ def main() -> int:
         overall_fail += len(refmk_v)
     else:
         print("  OK: references に編集用マークアップなし")
+
+    _section("27. argparse の登録漏れ (2026-08-13)")
+    argp_v = check_argparse_registration()
+    if argp_v:
+        print(f"  FAIL: {len(argp_v)} 件が実行時に AttributeError になります")
+        for m in argp_v:
+            print(f"    {m}")
+        overall_fail += len(argp_v)
+    else:
+        print("  OK: 参照される args 属性は全て add_argument に在る")
+
+    _section("28. post_build_verify の検査数と doc の一致 (2026-08-13)")
+    pbv_v = check_post_build_check_count()
+    if pbv_v:
+        print(f"  FAIL: {len(pbv_v)} 件の doc が実体と違う数を名乗っています")
+        for m in pbv_v:
+            print(f"    {m}")
+        overall_fail += len(pbv_v)
+    else:
+        print("  OK: 検査数を名乗る doc は全て実体と一致")
+
+    _section("29. README のリポジトリ構造 (2026-08-13)")
+    tree_v = check_readme_structure()
+    if tree_v:
+        print(f"  FAIL: {len(tree_v)} 件が README の構造ツリーと実態で食い違います")
+        for m in tree_v:
+            print(f"    {m}")
+        overall_fail += len(tree_v)
+    else:
+        print("  OK: README の構造ツリーは実態と一致")
+
+    _section("30. フォント候補リストの乖離 (2026-08-13)")
+    font_v = check_font_candidate_lists()
+    if font_v:
+        print(f"  FAIL: {len(font_v)} 件のリストが実在するフォント名を持っていません")
+        for m in font_v:
+            print(f"    {m}")
+        overall_fail += len(font_v)
+    else:
+        print("  OK: 全てのフォント候補リストが実在名を含む")
 
     print("\n" + "=" * 60)
     if overall_fail:

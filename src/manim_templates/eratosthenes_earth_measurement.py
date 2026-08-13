@@ -14,7 +14,7 @@ the scholarly standard stadion of 157.5 m this is ~39,375 km, about 1.4% off
 the modern polar circumference (39,941 km) or ~1.7% off the equatorial value
 (40,075 km).
 
-Layout note:
+Layout note (user feedback round 1):
 - Title at y = +3.0 must not collide with diagram elements below it.
 - Sun disc kept compact and centered horizontally; sun text label removed.
 - For earth_arc, the central computation formula is in a separate

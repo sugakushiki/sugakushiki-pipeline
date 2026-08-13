@@ -100,7 +100,8 @@ def _formula_mobject(tex: str, font_size: int, color):
 
     script_generator occasionally emits Japanese/Chinese inside the `latex`
     field (e.g. ``\\text{冪勢既同、則積不容異}``), which crashes the
-    LaTeX->dvi compile and breaks the whole scene。CJK を含む式は Text(font=FONT) で
+    LaTeX->dvi compile and breaks the whole scene (ある回で顕在化、
+    ログ上は OK の silent/loud breakage)。CJK を含む式は Text(font=FONT) で
     描画して落とさない (layered defense / no scene-wide failure)。
     """
     if _looks_cjk(tex):

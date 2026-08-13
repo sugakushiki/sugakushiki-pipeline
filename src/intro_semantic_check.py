@@ -3,7 +3,10 @@
 `scene_definition.json` の `description.intro` は YouTube 概要欄の【導入】に焼き込まれる
 本編の短い要約 (引き) で、script_generator が LLM で生成する。生成後に narration を
 編集しても intro は自動同期されないため、**本編が保持している数学的前提条件・限定詞を
-intro が落とし、記述が不正確になる** drift が起こりうる。
+intro が落とし、記述が不正確になる** drift が起こりうる (起票: ある回ゲーデルで
+本編「十分に強い**無矛盾な**形式体系には…」の『無矛盾な』が intro から欠落。無矛盾で
+ない体系はすべてを証明でき、不完全性定理は成り立たないので、この省略は主張を誤りに
+する)。
 
 既存 2 チェックはこの意味 drift を捕まえない:
   - qa_checker._detect_description_drift : intro <-> narration の 6-gram coverage。
@@ -11,7 +14,7 @@ intro が落とし、記述が不正確になる** drift が起こりうる。
   - description_meta.check_staleness : episode_config -> intro の決定論署名。
     narration -> intro の意味方向は見ない (別軸)。
 
-方式:
+方式 (references review layer F と同型の ADVISORY):
   intro + narration 全文を Claude に渡し、**本編にある限定詞を intro が落として記述が
   不正確になっている箇所だけ**を高確信で報告させる。anti-hallucination の接地として
   `narration_evidence` に「その限定詞を含む本編の該当文の引用」を必須化する
@@ -24,12 +27,16 @@ intro が落とし、記述が不正確になる** drift が起こりうる。
   graceful degrade: 空応答 / parse 失敗は status="UNAVAILABLE" (怖い偽 issue を出さない)。
   cache は intro + narration の hash に独立 (関係ないフィールド編集では再実行しない)。
 
-刻印不要: intro と narration の現在値だけで判定するので、
+刻印不要 (と違い署名を持たない): intro と narration の現在値だけで判定するので、
 出荷済み ep でも sidecar 無しでそのまま走る (後方互換の心配なし)。
 
 Signal/noise (2026-07-25 に実 Opus で 27 shipped ep + planted 1 を calibrate):
-  - 明白な FP = 0/27。25 ep はクリーン PASS。
-  - recall: ある回ゲーデルで本編にある『無矛盾な』欠落 (conf 0.95) を実発見。planted を検出しつつ同 ep の正版 ある回は PASS = 1語違いのクリーン分離。
+  - 明白な FP = 0/27。25 ep はクリーン PASS (限定詞欠落なしを正しく判定 -- 例:
+    ある回「厳密な意味で」は正しい弱化, ある回/037 は本編と逐語一致でスコープ保持,
+    ある回「完全な世界地図」は許容言い換え, ある回「80年 vs 45年」は数値相違で scope 外)。
+  - recall: ある回ゲーデルで本編にある『無矛盾な』欠落 (conf 0.95) を実発見 (
+    起票の当該欠陥が出荷 intro に今も残る real TP)。planted (ある回から『無矛盾な』を
+    1語抜いた版) を検出しつつ同 ep の正版 ある回は PASS = 1語違いのクリーン分離。
   - 加えて ある回アーベルで『5次方程式の不可能性証明』の限定詞『代数的に(べき根で)/
     一般』欠落を borderline (conf 0.85) で surface。本編は正確形を述べつつ短縮ラベルも
     自ら使うので judgment call だが、 が名指しする『可解性の代数的に』クラスの正当な
@@ -83,7 +90,7 @@ def content_hash(scene_def: dict) -> str:
 def build_intro_semantic_prompt(scene_def: dict, subject: str = "") -> str:
     """narrow / advisory / anti-hallucination プロンプト.
 
-    設計: 高確信の**限定詞欠落による不正確化**のみ報告する。
+    設計 (と同じ規律): 高確信の**限定詞欠落による不正確化**のみ報告する。
     要約による省略それ自体は問題にしない (詳細/人名/年号/背景の省略は正常)。
     correction は書かない (LLM は文言をでっちあげる)。確信なければ PASS。
     `narration_evidence` の引用を必須にして「本編に実在する限定詞」に接地する。
@@ -225,7 +232,8 @@ def read_cached_report(scene_def: dict, episode_dir: str) -> dict | None:
     返す (Claude を呼ばない)。cache 無し / stale (内容が変わった) / 空 intro なら None。
 
     pipeline.verify_outputs の最終 roll-up 用: 高い Claude 呼び出しは credits step が
-    済ませておき、verify は cache を読むだけにして安価に保つ。"""
+    済ませておき、verify は cache を読むだけにして安価に保つ (の verify 側と同じ
+    「照合は複数箇所、実行は 1 箇所」方針)。"""
     from pre_script_fact_check import _load_cache
 
     if not intro_text(scene_def).strip():

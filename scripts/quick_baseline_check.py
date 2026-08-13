@@ -9,9 +9,9 @@ Example:
 Compares SHA256 hashes of episode artifacts (audio/, visuals/, key files) against
 the recorded baseline. Reports PASS / FAIL with detailed diff for any mismatches.
 
-Designed for fast layer-A verification during refactor commits.
+Designed for fast layer-A verification during refactor commits (-9).
 For full structural / quality verification, use the dedicated verify_*.py scripts
-.
+(planned for ).
 """
 
 import hashlib

@@ -59,7 +59,7 @@ STYLE_GUIDE_PROMPT = """
 - **narration での「今日」禁止** (VOICEVOX が「きょう」(today) と「こんにち」(modern times) を文脈で区別できず誤読頻発、ある回で繰り返し顕在化)。「現代」「今」「これから」「近代」など文脈に応じた言い換えを使う。許容: 「今日の」が「modern」の意味で必要な場合のみ「今日 (こんにち) の」のように読み補注を入れるか、narration_speech で「こんにちの」と書く
 - 許容する強調:「ここが面白いのは」「注目すべきは」等の抑制的な表現
 - 数学者の描写: 敬意はあるが神格化しない。失敗や人間的な弱さも等しく描く
-- **person section は人物の物語として厚く書く** (経歴の列挙だけにせず): 性格・苦悩・家族・教育者像・同時代人との関係・困難など、verified_facts に基づく人物的側面を必ず含める。3 scenes 600 字程度では薄い、4-5 scenes 900-1200 字を target に。視聴者は数式より人物の物語に引き込まれる
+- **person section は人物の物語として厚く書く** (経歴の列挙だけにせず): 性格・苦悩・家族・教育者像・同時代人との関係・困難など、verified_facts に基づく人物的側面を必ず含める。3 scenes 600 字程度では薄い、4-5 scenes 900-1200 字を target に。視聴者は数式より人物の物語に引き込まれる (ある回 user 指摘で確立)
 - 数学の説明: 数式を「導出する」のではなく「意味を語る」スタンス
 - 数値や引用は「〜と言われています」「〜によると」等で典拠を示唆する
 """.strip()
@@ -1087,7 +1087,7 @@ def strip_llm_cloud_readings(scene_def: dict) -> int:
     rewrites word-internal は to わ as well (blanket-わ). Chirp3-HD then inserts a
     phantom pause at every lone わ (~25% longer by A/B) and the reading sounds unnatural.
     gen_cloud only FILLS scenes that lack a cloud, so an LLM-emitted blanket-わ survives
-    all the way to synthesis.
+    all the way to synthesis (an earlier episode; the advisory lint caught it only post-synth).
 
     Stripping here -- the deterministic point where the LLM output is finalized --
     removes that whole failure class at the source: gen_cloud then regenerates every
@@ -1600,7 +1600,7 @@ def main():
 
         _dmeta = _write_desc_meta(os.path.dirname(os.path.abspath(output_path)), config, scene_def)
         if _dmeta:
-            print(f"  Description meta: {os.path.basename(_dmeta)}")
+            print(f"  Description meta: {os.path.basename(_dmeta)} (staleness stamp)")
     except Exception as _e:  # noqa: BLE001 - advisory stamp, never fatal
         print(f"  [WARN] description meta stamp failed: {_e!r}")
 

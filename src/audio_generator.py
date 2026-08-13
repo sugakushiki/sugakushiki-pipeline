@@ -246,10 +246,10 @@ def write_kana_preview(entries: list, output_dir: str) -> str:
     flagged = 0
     amb_flagged = 0
     lines = [
-        "# kana preview - VOICEVOX 予測カナ",
+        "# kana preview - VOICEVOX 予測カナ (音声合成前レビュー用、強化 D)",
         "# 各行: [scene_id][i] 読み上げテキスト / → 予測カナ",
         "# [!latin] = 英字含み (NaN→なえぬ 型の高リスク、優先 scan)",
-        "# [!読み注意:X] = 多読み漢字 X を含む",
+        "# [!読み注意:X] = 多読み漢字 X を含む (表=おもて/ひょう 等、文脈で読み分かれ。ある回)",
         "# 誤読を見つけたら global 辞書 (audio_generator._MISREADING_CATEGORIES)"
         " か narration_speech で修正してから本ビルド",
         "",
@@ -319,7 +319,7 @@ PRONUNCIATION_CHECK_PROMPT = """あなたはVOICEVOXナレーションの読み�
 - corrected_speechは**元のテキストに最小限の修正を加えた日本語**にすること
 - 誤読される漢字だけをひらがなに置き換え、それ以外は元のまま残す
 - 全文カタカナにしてはいけない
-- **漢字熟語の一部だけをひらがな化する hybrid 表記は禁止**。
+- **漢字熟語の一部だけをひらがな化する hybrid 表記は禁止** (ある時点 で発見した ある回の Sonnet 誤生成パターン)。
   - NG 例: 「半年後」を「半ねんご」と直す → VOICEVOX は「はん」+「ねんご」と読んで「はんねんご」誤読再発
   - OK 例: 「半年後」→「はんとしご」(熟語全体をひらがな化)
   - OK 例: 「半年後」→「半年後」のまま (漢字維持、VOICEVOX user dict 補正に委ねる)
@@ -1179,7 +1179,7 @@ _MISREADING_REGEX_RULES: list[tuple[re.Pattern, str, str]] = [
 
 def detect_stale_ns_from_old_rules(scene_def: dict) -> list:
     """Detect existing narration_speech entries that may contain stale kana
-    from previous _MISREADING_CATEGORIES rule versions.
+    from previous _MISREADING_CATEGORIES rule versions (G3, an earlier episode).
 
     Failure mode pattern:
     - Old rule "本名 → ほんめい" applied → NS "ほんめいアントワーヌ" written back
@@ -2045,7 +2045,7 @@ def _wav_fingerprint(wav_path: str) -> str | None:
     unchanged but its bytes replaced. That happens on cloud_speed_qa --restore
     (reverting to the pre-norm original), a manual file copy, or a corrupt/partial
     write. Without it the cache (text hash only) would cache-hit and reuse the
-    stale wav."""
+    stale wav (ある回 shipped "入/切" audio while the text said "オン/オフ")."""
     import hashlib
 
     try:
@@ -2317,7 +2317,7 @@ def main():
     # (the audio cache key) both use it, so a speed change invalidates the cache.
     if args.speed_scale is not None:
         SPEED_SCALE = args.speed_scale
-        print
+        print(f"  speedScale override -> {SPEED_SCALE}")
 
     engine = args.tts_engine
     tts_voice = args.tts_voice

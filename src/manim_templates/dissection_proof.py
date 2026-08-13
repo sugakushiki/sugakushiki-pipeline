@@ -6,7 +6,7 @@ and decomposed a box into qiandu / yangma / bie'nao solids whose 2:1 volume
 ratio he settled by an infinite-bisection (limit) argument — the same limit
 idea shown for the circle in circle_division.py, applied to a solid.
 
-Redesigned: gougu now shows the actual 弦図
+Redesigned (an earlier episode user feedback): gougu now shows the actual 弦図
 (hypotenuse-square = 4 right triangles + a central square) instead of empty
 boxes, with NO caption overlapping the figure; solids draws schematic
 isometric solids instead of a flat box + romaji; limit uses Japanese text
@@ -100,7 +100,7 @@ class DissectionProof(Scene):
     def _build_gougu(self):
         """出入相補: same outer square (a+b)² shown TWO ways.
 
-        Redesign: the previous layout did not
+        Redesign (an earlier episode round-3 user feedback): the previous layout did not
         visibly "cut and rearrange" -- a^2/b^2 just sat next to a c^2 box.
         Now we show the two classical dissections of the SAME outer square
         of side (a+b):

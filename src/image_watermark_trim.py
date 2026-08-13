@@ -17,6 +17,19 @@ Discovery: a past session — manually generated 4 portraits via
 ChatGPT all had the BR sparkle. Documented in internal notes
 """
 
+# Windows console は cp932。argparse は --help でこの module docstring を
+# description として stdout に書くので、透かしの記号 (✦) と em dash だけで
+# --help が UnicodeEncodeError で死ぬ。記号そのものが「どの透かしか」の情報なので
+# ASCII 代替に置き換えず、出力の入口で utf-8 に寄せる。smoke test section 20 は
+# print()/append() の中しか走査しないため、この経路は見えていなかった。
+import sys as _sys
+
+if _sys.stdout.encoding and _sys.stdout.encoding.lower() != "utf-8":
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import argparse
 import os
 import sys

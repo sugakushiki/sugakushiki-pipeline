@@ -6,7 +6,7 @@ normalization + concat + bgm) -- what viewers actually hear. It extracts each
 scene's audio window from output_final.mp4 (timing.json global offset + the bgm
 intro_pause), STTs via Gemini, and runs the SAME known-misread corpus as stt_qa.
 
-Motivation: the decisive reading check was repeatedly "STT the
+Motivation (an earlier episode session): the decisive reading check was repeatedly "STT the
 SHIPPED audio, not the isolated wav / the scene-def text" -- done by hand ~5x.
 This automates that discipline. advisory + on-demand (NOT wired into every build;
 it doubles STT cost vs the scene-wav stt_qa). Graceful degrade without

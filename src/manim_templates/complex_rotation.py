@@ -14,14 +14,14 @@ Modes:
                   (magnitude sqrt(2), argument 45 deg) rotates by 45 deg
                   AND scales by sqrt(2):  z = 1.5 + 0.5i -> w*z = 1 + 2i.
                   Fixed params: w = 1+i, z = 1.5+0.5i, w*z = 1+2i.
-    contour_taste- A taste of complex analysis: a
+    contour_taste- A taste of complex analysis (an earlier episode Cauchy, block 8): a
                   closed contour C drawn on the complex plane with an interior
                   singular point z_0 (a small cross), and a point running once
                   around C while the contour integral oint_C f(z) dz is named
                   but NOT evaluated (no residue mechanism - door-opener only).
                   Fixed params: contour = circle centre (0.4, 0.3) radius 1.4
                   in data units, singular point at the centre.
-    residue_integral- The concrete fruit: evaluate the
+    residue_integral- The concrete fruit (an earlier episode Cauchy, block 8): evaluate the
                   real definite integral int_{-inf}^{inf} dx/(1+x^2) = pi by
                   residues. The plane sits on the left with the real-axis path
                   (cyan) closed by an upper semicircular arc (gold, radius 2.3
@@ -237,7 +237,7 @@ class ComplexRotation(Scene):
     def build_contour_taste(self):
         """A taste of complex analysis: a closed contour C with an interior
         singular point z_0 and a point running around it. No mechanism is shown
-        (no residue computation) - this only opens the door."""
+        (no residue computation) - this only opens the door (an earlier episode block 8)."""
         duration = self._duration
 
         title = Text("複素解析の扉", font=FONT, font_size=30, color=TEXT_DIM)
@@ -307,7 +307,7 @@ class ComplexRotation(Scene):
     # Mode: residue_integral
     # ------------------------------------------------------------------
     def build_residue_integral(self):
-        """The concrete fruit: evaluate a real definite integral
+        """The concrete fruit (an earlier episode block 8): evaluate a real definite integral
         by residues. Integral_{-inf}^{inf} dx/(1+x^2) = pi via the upper
         semicircle contour and the residue 1/(2i) at the pole z=i. The plane
         sits on the left; the computation stack reveals on the right while a
@@ -447,6 +447,6 @@ SCENES = {
     "residue_integral": {
         "class": "ComplexRotation",
         "params": {"mode": "residue_integral"},
-        "description": "Evaluate the real integral int dx/(1+x^2)=pi by residues: upper semicircle contour, pole at z=i, residue 1/(2i). One worked example, mechanism illustrated not proved",
+        "description": "Evaluate the real integral int dx/(1+x^2)=pi by residues: upper semicircle contour, pole at z=i, residue 1/(2i). One worked example (an earlier episode Cauchy fruit), mechanism illustrated not proved",
     },
 }

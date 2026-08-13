@@ -18,10 +18,23 @@ except ImportError:
     print("ERROR: fonttools が必要です。 pip install fonttools")
     sys.exit(1)
 
-# --- 環境に合わせて変更 ---
+# Font lookup. Must stay a superset of video_assembler.ensure_font_file's list:
+# that one carries the name the font actually installs under
+# (C:\Windows\Fonts\BIZ-UDMinchoM.ttc) and works, while this list did not and
+# never resolved anywhere except inside this repository -- its only surviving
+# entry was the bundled _font.ttc, which was deliberately removed from the
+# published copy in 2026-07-25 for licensing. So from that day the published
+# font_check step failed for every user, and nothing here noticed, because the
+# private checkout still had the file sitting next to it.
+#
+# Two modules keeping two hand-written lists of the same thing is the actual
+# defect; smoke test section 30 now fails if they diverge again.
 FONT_CANDIDATES = [
+    r"C:\Windows\Fonts\BIZ-UDMinchoM.ttc",
+    r"C:\Windows\Fonts\BIZUDMincho-Regular.ttc",
     r"C:\Windows\Fonts\BIZUDMincho-Regular.ttf",
     r"C:\Windows\Fonts\BIZUDMincho_Regular.ttf",
+    "/usr/share/fonts/truetype/bizud-mincho/BIZUDMincho-Regular.ttf",
     str(Path(__file__).resolve().parent.parent / "_font.ttc"),
 ]
 
@@ -30,6 +43,11 @@ def find_font():
     for p in FONT_CANDIDATES:
         if Path(p).exists():
             return p
+    # Last resort: the family is installed under a name nobody listed. Better to
+    # find it by shape than to report "no font" on a machine that has one.
+    for pattern in ("BIZ*Mincho*.ttc", "BIZ*Mincho*.ttf"):
+        for hit in sorted(Path(r"C:\Windows\Fonts").glob(pattern)):
+            return str(hit)
     return None
 
 

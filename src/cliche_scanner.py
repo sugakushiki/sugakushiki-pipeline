@@ -1,4 +1,4 @@
-"""cliche_scanner.py — source_prompt 内の時代物 cliche 検出
+"""cliche_scanner.py — source_prompt 内の時代物 cliche 検出 (, )
 
 Detects unverified period-stereotype phrases in `source_prompt` fields of
 scene_definition.json's visual blocks. Two-layer design:
@@ -19,7 +19,7 @@ Per-scene opt-out:
     for that scene (e.g. Vienna Circle smoking IS verified, opt-out lets the
     scanner stay silent).
 
-Why it's needed:
+Why it's needed (background):
     A past prompt edit used "intellectuals smoking pipes and gesturing animatedly"
     as source_prompt → Gemini Flash produced a Vienna Circle scene with
     pipes that had no historical basis. The error was caught only at

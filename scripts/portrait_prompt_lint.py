@@ -284,7 +284,7 @@ def main() -> int:
                 f"{episode_dir}/images/wiki_*.* -> lint cannot run; 主題肖像は "
                 f"text-only 生成の可能性大 (本人と乖離)。wikimedia_credits.json の "
                 f"solo_portrait を確認してください "
-                f"。"
+                f"(ある回で solo 誤判定->全肖像 text-only 化した回帰)。"
             )
             print(f"\n{'=' * 60}")
             print(banner)
@@ -376,7 +376,7 @@ def main() -> int:
     if n_identity:
         print(
             "  [!] IDENTITY mismatch = source_prompt が reference と顔の毛/頭髪/骨格で矛盾 "
-            "-- 本人の風貌が誤って伝わる恐れ。出荷前に必ず確認。"
+            "-- 本人の風貌が誤って伝わる恐れ。出荷前に必ず確認 (ある回 full beard vs 口ひげ)。"
         )
         for r in id_scenes:
             for c, mm in r.get("_categorized", []):

@@ -68,7 +68,7 @@ def strip_for_cloud(text: str) -> str:
     The ONLY transform safe to apply automatically on the Cloud path:
       - remove | subtitle break markers
       - remove VOICEVOX word-separation spaces (half- and full-width)
-      - remove emphasis/quote brackets 「」『』《》:
+      - remove emphasis/quote brackets 「」『』《》 (an earlier episode belt-and-suspenders):
         Chirp3-HD voices these NON-deterministically (heard as "ま"/"うぇ" at some
         《, silent at others). gen_cloud._cleanup already strips them on the
         generated path, but a HAND-WRITTEN narration_speech_cloud bypasses

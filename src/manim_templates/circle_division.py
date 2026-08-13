@@ -7,7 +7,7 @@ stated that "cutting again and again until it cannot be cut" makes the polygon
 coincide with the circle (a limit idea). NOT the Archimedes template; Liu Hui
 used the inscribed polygon only.
 
-Redesigned: the inscribed polygon is FILLED so the
+Redesigned (an earlier episode user feedback): the inscribed polygon is FILLED so the
 shrinking gap between polygon and circle is the visual story; the per-step
 lower-bound value is large and next to the figure; buildup stops at a count
 where the polygon is still visibly faceted (does not end on a circle-looking
@@ -226,7 +226,7 @@ class CircleDivision(Scene):
     def _build_area_proof(self):
         """Sectors -> parallelogram drawn as a CLEAR strip of triangles.
 
-        Redesign:
+        Redesign (an earlier episode round-3 user feedback):
         - Circle gets an explicit '円周 C = 2πr' label + arrow so the C
           in the area formula is visually grounded.
         - Right parallelogram is drawn as a collection of N triangles with

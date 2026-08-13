@@ -180,7 +180,7 @@ def adjacent_pair_warnings(scenes: list[dict], jaccard_floor: float = 0.4) -> li
     variable conventions. The high-value signal is when a formula_display
     "summary card" scene appears adjacent to a Manim scene that already
     showed the same physical formulas: the summary MUST reuse the Manim
-    scene's variables. All other pairs are
+    scene's variables (an earlier episode vs math_17 case). All other pairs are
     skipped to avoid topic-boundary false positives.
     """
     warns: list[str] = []

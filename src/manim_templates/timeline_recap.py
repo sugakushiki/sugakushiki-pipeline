@@ -4,10 +4,12 @@ timeline_recap.py - Two-track life/work timeline for the closing (数学史記)
 Data-driven: title, milestones and legend are read from _manim_params.json
 (supplied per-episode through the scene's visual.params in scene_definition.json),
 so ANY episode provides its own chronology with no code change. Falls back to the
-Laplace data ONLY when NO data params are given at all. If a caller supplies ANY data key
+Laplace data ONLY when NO data params are given at all (the discovery/standalone
+self-test, backward compatible with an earlier episode). If a caller supplies ANY data key
 (title, or the LLM's name/birth_year/life_events/work_events shape) but omits
 `milestones`, that is a misconfiguration and we raise rather than silently
-shipping Laplace's life events under another episode's title. Real pipeline runs
+shipping Laplace's life events under another episode's title (the silent
+partial-fallback rendered Laplace data in an earlier episode). Real pipeline runs
 are normalized to the milestones schema upstream by
 script_generator.normalize_timeline_recap_scenes(); this raise is the backstop
 for un-normalized / novel schemas.
@@ -36,7 +38,7 @@ params (visual.params in scene_definition.json):
 
 Duration-aware: reads target duration from _manim_params.json.
 
-Used by: any closing recap.
+Used by: any closing recap (e.g. An earlier episode Laplace, an earlier episode Germain).
 """
 
 from manim import (
@@ -148,7 +150,7 @@ class TimelineRecap(Scene):
                 "milestones (list of [year, label, track, colour]); the LLM's "
                 "life/work schema is converted upstream by "
                 "script_generator.normalize_timeline_recap_scenes(). Omit ALL "
-                "data keys for the Laplace self-test."
+                "data keys for the Laplace self-test. (no silent fallback)"
             )
 
         require_title(params)
@@ -186,7 +188,7 @@ class TimelineRecap(Scene):
                 "timeline_recap colours must be KEYS of _COLOR "
                 f"({'/'.join(sorted(_COLOR))}), not colour values. "
                 f"Unknown: {bad_colours}. A hex string silently renders as white "
-                "."
+                "(an earlier episode shipped an all-white timeline that way)."
             )
 
         # The legend is the KEY that decodes the picture, so derive what it can be

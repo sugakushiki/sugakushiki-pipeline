@@ -14,12 +14,13 @@ What it flags (advisory, WARN/INFO; never blocks a build):
     person name or year on screen:
       - reads data from params  -> INFO  (param-driven; verify every episode
         supplies the data params, else the hardcoded fallback renders)
-      - does NOT read from params -> WARN
+      - does NOT read from params -> WARN (non-parameterized hardcode; reusing
+        for another subject shows stale data -- parameterize like)
   * FOREIGN-name leak: a template hardcodes a subject name that is NOT a subject
     of any episode using it (e.g. a Germain template that prints "ラプラス").
 
 Hardcoded names/years already declared in LINT_FACTUAL_CLAIMS are ignored here
-. Years come from string literals (\\d{3,4}年 / N世紀);
+(those are's job). Years come from string literals (\\d{3,4}年 / N世紀);
 names are matched against the distinctive katakana parts of every episode's
 subject so generic katakana (ルート, シグマ ...) is not flagged.
 
@@ -201,14 +202,14 @@ def run(episodes_dir: str, manim_dir: str):
 
 
 def main():
-    ap = argparse.ArgumentParser
+    ap = argparse.ArgumentParser(description=" reusable-template hardcode audit")
     ap.add_argument("--episodes-dir", default=os.path.join(_ROOT, "episodes"))
     ap.add_argument("--manim-templates", default=os.path.join(_SRC, "manim_templates"))
     ap.add_argument("--strict", action="store_true", help="exit 1 if any WARN")
     args = ap.parse_args()
 
     print("=" * 64)
-    print
+    print("  reusable Manim template hardcode audit")
     print("=" * 64)
     findings = run(args.episodes_dir, args.manim_templates)
     warns = [f for f in findings if f["severity"] == "WARN"]

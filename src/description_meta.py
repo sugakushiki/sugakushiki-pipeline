@@ -4,14 +4,16 @@
 episode_config の導入系フィールド (theme / hook / modern_connection /
 description.intro_guidance) から生成する。生成後にこれらの config フィールドを
 編集しても intro は自動同期されず、credits_generator が古い intro をそのまま
-description.txt (公開 YouTube 概要欄) に焼き込む。
+description.txt (公開 YouTube 概要欄) に焼き込む (経緯: ある時点 で config を
+「半世紀以上後→およそ60年後」に直したのに scene_def.description.intro は旧文
+「半世紀後」のまま残り、手動修正 + credits 再実行で fix した事故)。
 
 既存の 2 チェックはこの config -> intro drift を捕まえない:
   - credits_generator.description_drift : description.txt を scene_def から
     再生成して比較。config 起因の stale は description.txt と scene_def が
     「同じ古い intro」で揃うため素通り (両方 stale なので diff ゼロ)。
   - qa_checker._detect_description_drift : intro <-> narration の 6-gram
-    coverage。config は見ない。
+    coverage (方向)。config は見ない。
 
 intro_guidance と intro の内容比較も不可能: intro_guidance は長い手書き
 ガイダンス、intro は短い要約なので、同期済みの出荷 ep でも SequenceMatcher
@@ -25,7 +27,7 @@ ratio が 0.05-0.5 に散らばり、stale / in-sync を分離する閾値が存
     を刻印し、照合時に **config 署名が変化 AND intro テキストが刻印時から不変**
     の両成立でのみ WARN する。
       - config を編集したのに intro が「刻印時のバイト列そのまま」= 旧生成文
-        のまま = stale。
+        のまま = stale (の失敗そのもの)。
       - intro を手で直したら text hash が変わる -> 「同期済みとみなして」抑止。
         これにより手動 sync 後に WARN が居座る FP と re-stamp 運用を不要にする
         (naive な mtime / 署名だけの比較との決定的な違い)。

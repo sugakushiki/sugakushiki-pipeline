@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""post_build_verify.py — post-build structural verification (10 checks).
+"""post_build_verify.py — post-build structural verification.
+
+The number of checks is not written here on purpose; read it from CHECKS /
+check_count(). Three different hand-typed counts (8, 10, "nine") were live in
+this repository at once.
 
 Runs a systematic verification checklist on a built episode directory so that
 "build complete" is backed by evidence, not just a pipeline exit code of 0. It
@@ -44,8 +48,14 @@ unreviewed Manim frames.
 10. **Chapter timestamps vs timing.json**: recompute the YouTube chapter marks
    from timing.json and compare them with the ones written into description.txt
    -> a partial rebuild that changed the timing but skipped the credits step
-   leaves the old numbers behind.
+   leaves the old numbers behind (an earlier episode said 1:38 for a chapter now at 1:41).
    Check 3 cannot see this: it compares mtimes, and not against timing.json.
+
+11. **Bottom-corner contact sheet**: tile the bottom corners of every generated
+   image into one gamma-lifted sheet. Not a detector -- a looking aid. Image
+   models paint a signature there, and two attempts at detecting it automatically
+   both pointed at the wrong things; one episode shipped with 6 of 13 images
+   signed because only 2 were checked by eye.
 
 This script does not replace human review; it forces a look at every artifact
 before a build is reported as complete.
@@ -599,15 +609,44 @@ def format_actions(checks: list[tuple[str, dict]]) -> list[str]:
     if sheet:
         lines.append(
             "[ACTION] 生成画像の下隅を一枚にまとめました。署名の描き込みが無いか見てください "
-            ":"
+            "(ある回は 13 枚中 6 枚にあり、2 枚しか見ずに出荷しかけました):"
         )
         lines.append(f"  Read {sheet}")
     return lines
 
 
+# The checks, in report order. Single source of truth for BOTH what runs and how
+# many there are: the count used to be typed by hand in four places and had drifted
+# to three different values (8 in the README, 10 in this file's docstring and
+# --help, "nine" in run_all's). An earlier episode fixed the one occurrence in the printed
+# output and left the rest, which is how a number written down beside a list goes
+# stale -- so nothing below writes the number down.
+#
+# Signature is uniform (ep_dir, out_dir, subject) even where a check ignores two
+# of the three, so the table stays a table.
+CHECKS: tuple[tuple[str, object], ...] = (
+    ("Manim fallbacks (G1)", lambda ep, out, subj: check_manim_fallbacks(ep)),
+    ("Subtitle/narration hash sync (G2)", lambda ep, out, subj: check_subtitle_hash(ep)),
+    ("description.txt freshness (G6)", lambda ep, out, subj: check_description_freshness(ep)),
+    ("narration vs NS structural diff", lambda ep, out, subj: check_narration_ns_sync(ep)),
+    ("Manim scene frame extraction", lambda ep, out, subj: extract_manim_frames(ep, out)),
+    ("VOICEVOX proper noun verify", lambda ep, out, subj: verify_voicevox_proper_nouns(subj)),
+    ("Subtitle char count (>25 jp)", lambda ep, out, subj: check_subtitle_char_count(ep)),
+    ("temp_videos sync", lambda ep, out, subj: check_temp_videos_sync(ep)),
+    ("output_final.mp4 health", lambda ep, out, subj: check_output_final_health(ep)),
+    ("章タイムスタンプ vs timing.json", lambda ep, out, subj: check_chapter_timestamps(ep)),
+    ("画像の下隅シート (目視用)", lambda ep, out, subj: build_corner_sheet(ep, out)),
+)
+
+
+def check_count() -> int:
+    """How many checks there are. Read this instead of typing a number."""
+    return len(CHECKS)
+
+
 def run_all(ep_dir: Path, out_dir: Path, subject: str) -> list[tuple[str, dict]]:
     """Every check, as [(name, result)]. Split out of main() so the pipeline can
-    run the same nine checks without shelling out and parsing printed text.
+    run them without shelling out and parsing printed text.
 
     This file was written on as a hard gate after a build shipped with
     eight defects, and enforcement was left to a note in memory saying to run it.
@@ -621,22 +660,14 @@ def run_all(ep_dir: Path, out_dir: Path, subject: str) -> list[tuple[str, dict]]
     # that dies while verifying is the failure mode this file exists to prevent.
     ep_dir, out_dir = Path(ep_dir).resolve(), Path(out_dir).resolve()
     return [
-        ("1. Manim fallbacks (G1)", check_manim_fallbacks(ep_dir)),
-        ("2. Subtitle/narration hash sync (G2)", check_subtitle_hash(ep_dir)),
-        ("3. description.txt freshness (G6)", check_description_freshness(ep_dir)),
-        ("4. narration vs NS structural diff", check_narration_ns_sync(ep_dir)),
-        ("5. Manim scene frame extraction", extract_manim_frames(ep_dir, out_dir)),
-        ("6. VOICEVOX proper noun verify", verify_voicevox_proper_nouns(subject)),
-        ("7. Subtitle char count (>25 jp)", check_subtitle_char_count(ep_dir)),
-        ("8. temp_videos sync", check_temp_videos_sync(ep_dir)),
-        ("9. output_final.mp4 health", check_output_final_health(ep_dir)),
-        ("10. 章タイムスタンプ vs timing.json", check_chapter_timestamps(ep_dir)),
-        ("11. 画像の下隅シート (目視用)", build_corner_sheet(ep_dir, out_dir)),
+        (f"{i}. {label}", fn(ep_dir, out_dir, subject)) for i, (label, fn) in enumerate(CHECKS, 1)
     ]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Post-build structural verification (10 checks)")
+    parser = argparse.ArgumentParser(
+        description=f"Post-build structural verification ({check_count()} checks)"
+    )
     parser.add_argument("episode_dir", help="Path to episode directory")
     parser.add_argument(
         "--subject",

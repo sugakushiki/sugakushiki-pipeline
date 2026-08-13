@@ -161,11 +161,14 @@ sugakushiki/
 │   ├── audio_generator.py        # VOICEVOX + 辞書 + 発音チェック
 │   ├── cloud_tts.py              # Google Cloud TTS (Chirp3-HD) + SSML 読み固定
 │   ├── subtitle_generator.py     # SRT + drawtext filter_script 生成
+│   ├── sentence_align.py         # 字幕の文境界を実測無音から壁時計時間へ戻す
 │   ├── wikimedia_fetcher.py      # Wikimedia Commons 画像取得 + ライセンス検証
 │   ├── image_generator.py        # Gemini Flash + Vision QA + リファレンス生成
 │   ├── image_watermark_trim.py   # ChatGPT/Sora 透かし除去 + 1920x1080 リサイズ
 │   ├── visual_generator.py       # Ken Burns + text_overlay + Manim + Blender + ディスパッチ
 │   ├── route_map_render.py       # route_map の描画・レイアウト検査・preflight
+│   ├── route_legend_check.py     # route_map の凡例ラベルが全経路について真か review
+│   ├── route_place_check.py      # ナレーションが語る土地が地図にあるか review
 │   ├── blender_renderer.py       # Blender headless レンダリング (Eevee CPU)
 │   ├── video_assembler.py        # FFmpeg 3 段アセンブリ
 │   ├── credits_generator.py      # YouTube 概要欄 + チャプター + クレジット
@@ -184,6 +187,7 @@ sugakushiki/
 │   ├── cliche_dictionary.json    # cliche_scanner 用辞書
 │   ├── config_validator.py       # episode_config スキーマ検証
 │   ├── check_font_coverage.py    # 字幕フォント文字対応事前検証 (fonttools)
+│   ├── repo_health.py            # 取り残された作業 / 行末の反転の検出
 │   ├── math_render.py            # matplotlib mathtext 共有ユーティリティ
 │   ├── sympy_helper.py           # SymPy 記号計算ヘルパー
 │   ├── voicevox_dict.json        # VOICEVOX ユーザー辞書
@@ -199,7 +203,8 @@ sugakushiki/
 ├── scripts/                      # 補助スクリプト (開発・検証ツール)
 │   ├── smoke_test.py             # パイプライン前の静的健全性検査
 │   ├── quick_baseline_check.py   # 出力ベースライン照合
-│   ├── post_build_verify.py      # build 後の構造 verify (8 check)
+│   ├── post_build_verify.py      # build 後の構造 verify (件数は CHECKS から)
+│   ├── review_reel.py            # 変更シーンのレビューリール + 未変更区間の同一性証明
 │   ├── manim_preview_modes.py    # Manim テンプレ全 mode の preview render
 │   ├── add_endcard_bgm.py        # 汎用 mp4 エンドカード BGM 付与
 │   │
@@ -217,12 +222,15 @@ sugakushiki/
 │   ├── lint_image_borders.py        # 焼き込まれた白縁・白帯をピクセル実測
 │   ├── manim_vision_qa.py           # Manim 図の意味・美観を Vision 判定
 │   ├── manim_text_collision_qa.py   # Manim の文字 bbox 衝突を決定論検出
+│   ├── check_route_legend.py        # route_map の凡例ラベルが全経路について真か
+│   ├── check_route_places.py        # ナレーションが語る土地が地図にあるか
 │   │
 │   │  # 概要欄 (pipeline も同じ検査を内蔵。これらは単独確認用)
 │   ├── check_description_staleness.py   # config → 導入文 の取り残し検出
 │   ├── check_intro_semantic.py          # narration → 導入文 の限定詞欠落 review
 │   │
 │   │  # 横断 lint (手動)
+│   ├── check_repo_health.py            # 取り残された作業 / 行末の反転
 │   ├── lint_cross_episode_terms.py     # エピソード横断の用語表記揺れ検出
 │   ├── lint_video_spec.py              # 動画仕様 (VIDEO_SPEC) の SSOT lint
 │   ├── lint_template_hardcoded_claims.py  # 再利用テンプレの題材 hardcode 監査

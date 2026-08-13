@@ -793,7 +793,12 @@ def main():
         "--source-image", default=None, help="Override source image filename (in images/)"
     )
     parser.add_argument("--symbol", default=None, help="Override math_symbol")
-    parser.add_argument
+    parser.add_argument(
+        "--strict-source-validation",
+        action="store_true",
+        help="明示指定 source_image の Vision 採点が閾値未満の場合に "
+        "auto-select に強制 fallback する。default は warning のみで採用続行。",
+    )
     args = parser.parse_args()
 
     config_path = os.path.abspath(args.config_json)

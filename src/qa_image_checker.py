@@ -126,7 +126,7 @@ def evaluate_single_scene(scene: dict, image_path: str) -> dict:
 3. 雰囲気・構図 [info]
    oil painting style, academic realism が実現されているか。
 
-4. ナレーションとの整合性
+4. ナレーションとの整合性（以下の各サブ観点で評価）
 
    4-1. 主要人物の有無 [critical: 完全欠落 / warning: 一部欠落]
         source_prompt または narration が固有名・続柄・年齢で言及する主要人物
@@ -214,7 +214,8 @@ def evaluate_consistency(scenes_with_images: list[dict]) -> dict:
 
     ある回強化: visual.is_subject=false のシーン (脇役・別人物、例 テオン/シネシオス) は
     除外する。従来は intro+person 全シーンを「主人公」前提で比較したため、脇役を別人物
-    として「不統一」と誤検出していた。無印は is_subject=true 扱い (後方互換)。主題者シーンが2枚未満なら
+    として「不統一」と誤検出していた (ある回で person_02=テオン・person_04=シネシオスが
+    false positive)。無印は is_subject=true 扱い (後方互換)。主題者シーンが2枚未満なら
     比較対象なしとして skip する。
     """
     # intro + person セクションかつ主題者シーンのみ対象 (脇役は is_subject=false で除外)

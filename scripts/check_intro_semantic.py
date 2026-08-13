@@ -2,7 +2,8 @@
 
 `scene_definition.json` の `description.intro` は本編を短くまとめた公開 概要欄 導入文。
 生成後に narration を編集しても intro は自動同期されず、**本編が保持している数学的
-前提条件・限定詞を intro が落として記述が不正確になる** drift が起こりうる。
+前提条件・限定詞を intro が落として記述が不正確になる** drift が起こりうる (ある回
+ゲーデルで本編『無矛盾な形式体系』の『無矛盾な』が intro から欠落した型)。
 
 このスクリプトは intro + narration を Claude (advisory) に渡し、**本編にある限定詞を
 intro が落として不正確化している箇所だけ**を高確信で報告する。既存 6-gram 表層検査
@@ -55,7 +56,7 @@ def _load(path: str) -> dict:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="narration -> description.intro 意味一致レビュー"
+        description="narration -> description.intro 意味一致レビュー (F, advisory)"
     )
     ap.add_argument("path", help="episode dir or scene_definition.json")
     ap.add_argument("--strict", action="store_true", help="exit 1 if WARN")

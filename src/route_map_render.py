@@ -698,7 +698,7 @@ def _check_route_map_collisions(
         "suggestion": "<concrete fix proposal>",
     }
 
-    E: city_label vs route_label and city_label vs city_label
+    E (an earlier episode Kepler): city_label vs route_label and city_label vs city_label
     were previously unchecked — a displaced route label could land on a city name
     (or two clustered city names overlap) and slip past preflight. Now covered.
 
@@ -2109,11 +2109,12 @@ def route_map_preflight(
         scene_def_path: path to scene_definition.json
         allow: if True, return reports without raising (caller decides STOP)
         auto_fix: if True, mutate scene_def visual params and persist on success
-        advisory_out: if given, every non-blocking finding is appended as {"scene_id", "report"}. The return
+        advisory_out: if given, every non-blocking finding (an earlier episode label ownership /
+            line-through-label) is appended as {"scene_id", "report"}. The return
             value stays blocking-only so existing callers keep their semantics,
             but the pipeline needs the count for its advisory roll-up -- an
             advisory that only ever reaches stdout is one a reader scanning the
-            'Pipeline Complete' tail will miss.
+            'Pipeline Complete' tail will miss (an earlier episode lesson).
 
     Returns:
         dict {scene_id: [collision_report, ...]} for unresolved BLOCKING collisions.

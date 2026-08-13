@@ -11,7 +11,7 @@ Usage (from pipeline.py):
     from config_validator import validate_config
     errors, warnings = validate_config(config, config_path)
 
-verified_facts schema:
+verified_facts schema (, 2026-05-05):
     legacy: {"birth": "1802-08-05 Kragerø, Norway", ...}
     new:    {"birth": {"fact": "1802-08-05 Kragerø, Norway",
                         "source": "MacTutor / Abel Prize biography"}, ...}

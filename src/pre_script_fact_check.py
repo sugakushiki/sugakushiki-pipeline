@@ -776,7 +776,7 @@ def run_reference_check(episode_config: dict, episode_dir: str, debug: bool = Fa
     severity is capped to warning/info (never critical), source-tagged, and the
     caller stores this under report["reference_advisory"] (NOT report["issues"]),
     so it never feeds the pipeline's blocking severity count. Graceful-degrades
-    to status="UNAVAILABLE" on empty/parse failure."""
+    to status="UNAVAILABLE" on empty/parse failure (content-filter class)."""
     book_refs = [
         r
         for r in episode_config.get("references", [])
@@ -996,7 +996,7 @@ def print_pre_script_fact_check_report(report: dict) -> None:
     ref_adv = report.get("reference_advisory")
     if ref_adv:
         ref_issues = ref_adv.get("issues", [])
-        print(f"\n  References: {ref_adv.get('status', '?')}")
+        print(f"\n  References (advisory,): {ref_adv.get('status', '?')}")
         if ref_issues:
             print("  ** 書誌 attribution の要確認 -- 一次資料で web verify のこと (鵜呑み禁止) **")
             for issue in ref_issues:
@@ -1050,7 +1050,7 @@ def _main():
     parser.add_argument(
         "--no-references",
         action="store_true",
-        help="skip F layer",
+        help="skip F layer (references bibliographic review, advisory)",
     )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()

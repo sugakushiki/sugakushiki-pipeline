@@ -143,7 +143,7 @@ class BorelProjectionShadow(Scene):
         Same helper as lebesgue_vs_riemann.py, and for the same reason: these
         scenes really run 40-60 seconds, so one pace() step is 6-9 seconds, and
         handing that to FadeIn on Japanese text leaves the line at half opacity
-        until the narration has moved on. Cap the fade, give the
+        until the narration has moved on (an earlier episode trap). Cap the fade, give the
         remainder back as a wait.
 
         fade + rest == run_time exactly, so the scene cannot overrun.

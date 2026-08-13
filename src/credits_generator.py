@@ -64,10 +64,13 @@ _PAINTING_MARKERS = (
 
 def _reference_kind(death_year, override=None) -> str:
     """Guard-C: 参照肖像の呼称。写真技術 (~1839) 以前に没した人物は肖像画/版画
-    しか存在しないので「肖像画」、以降は「肖像写真」。credit の「肖像写真」誤記を根絶。
+    しか存在しないので「肖像画」、以降は「肖像写真」。credit の「肖像写真」誤記を根絶
+    (ある回 Lagrange d.1813 が「肖像写真を参照」で出荷寸前だった)。
 
     override (config の `portrait_reference_kind`) は没年ヒューリスティックが外れる
-    ケースの明示指定。没年で一律に中立語へ倒すと、参照が実際に写真の回 の記述まで曖昧になるため、既定は据え置き・例外だけ config で名指しする。
+    ケースの明示指定 (ある回ハミルトン d.1865 は絵画 1 点 + 写真 1 点の混在なので
+    中立語「肖像」)。没年で一律に中立語へ倒すと、参照が実際に写真の回 (ある回/050/
+    054/057) の記述まで曖昧になるため、既定は据え置き・例外だけ config で名指しする。
     """
     if isinstance(override, str) and override.strip():
         return override.strip()
@@ -79,7 +82,8 @@ def _detect_painting_reference(ref_photos: list) -> list:
 
     Advisory input for Guard-C2: if the death-year heuristic picked 「肖像写真」 but a
     credited reference is demonstrably a painting, the shipped credit calls a
-    painting a photograph.
+    painting a photograph (ある回 shipped 「パブリックドメイン写真」 while crediting
+    `William Rowan Hamilton painting.jpg`).
     """
     hits = []
     for photo in ref_photos:
@@ -711,7 +715,9 @@ def description_drift(
     Verification / post_build_verify G6). mtime only knows "source is newer";
     this knows the shipped text actually differs -- catching stale title /
     chapter / timestamp / credit content, hand-edits, and stale chapter
-    timestamps left after an audio re-timing.
+    timestamps left after an audio re-timing. (an earlier episode: the shipped
+    description still carried a contradictory title + pre-normalization chapter
+    timestamps that the mtime check alone did not surface.)
 
     intro_pause defaults to config bgm.intro_pause (what the build actually uses)
     so chapter timestamps are compared at the real offset. Callers pass already-
@@ -898,7 +904,7 @@ def main():
                     print(f"    {url}")
                 print(
                     "    → 個別ページの URL に置換してください "
-                    ""
+                    "(root URL は HTTP 200 でも内容無関係の risk、ある回で岩波/学士院/本巣市の 3 件 root URL を deep URL に置換)"
                 )
             else:
                 print("  Root URL check: [OK] all bibliographic references are deep URLs")

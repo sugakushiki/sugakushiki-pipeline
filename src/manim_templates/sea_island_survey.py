@@ -155,7 +155,7 @@ class SeaIslandSurvey(Scene):
     def _build_double_difference(self):
         """重差術 — full two-pole geometry with EVERY variable labelled.
 
-        Redesign: the previous figure showed
+        Redesign (an earlier episode round-3 user feedback): the previous figure showed
         only one similar-triangle pair (eye_1 / pole_1 / summit) and the
         formula contained an undefined 'd' that did not appear on the
         figure. Variable conventions also drifted between modes (a vs h,

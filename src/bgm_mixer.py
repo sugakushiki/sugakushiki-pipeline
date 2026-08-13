@@ -14,6 +14,17 @@ BGM Mixer - Episode動画にBGMを合成する
     -o examples/moriarty/output_final.mp4
 """
 
+# Windows console は cp932。argparse の description に em dash があるだけで
+# --help が UnicodeEncodeError で死ぬ。smoke test section 20 は print()/append()
+# の中しか走査しないので、この経路は見えていなかった。出力の入口で utf-8 に寄せる。
+import sys as _sys
+
+if _sys.stdout.encoding and _sys.stdout.encoding.lower() != "utf-8":
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import argparse
 import json
 import os

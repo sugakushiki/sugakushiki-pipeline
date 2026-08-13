@@ -185,7 +185,8 @@ def check_timeline_legend_coherence(scene_def):
     Calibrated against all 19 episodes using the template: it flags an earlier episode, an earlier episode,
     an earlier episode, an earlier episode and an earlier episode
     under a legend that names only gold, and an earlier episode splits its life track white/pink
-    (転機) with no legend at all -- and passes the 6 coherent ones plus every single-colour-per-track timeline.
+    (転機) with no legend at all -- and passes the 6 coherent ones (an earlier episode, an earlier episode,
+    an earlier episode, an earlier episode, an earlier episode, an earlier episode) plus every single-colour-per-track timeline.
 
     Returns:
         list of dicts {"scene_id", "track", "unnamed"}; empty when coherent.

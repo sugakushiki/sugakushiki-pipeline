@@ -71,7 +71,7 @@ def _solid_icon(kind, size, color, stroke=2.0):
     """3D wireframe of a Platonic solid (projected, with hidden-line removal).
 
     Reuses polyhedron_euler's perspective projection + ConvexHull hidden-line
-    removal so the solids read as recognisable 3D shapes.
+    removal so the solids read as recognisable 3D shapes (an earlier episode approach).
     """
     verts = _SOLID_VERTS.get(kind, TETRA_V)
     return _polyhedron_wireframe(verts, [0, 0, 0], size, color, stroke=stroke)

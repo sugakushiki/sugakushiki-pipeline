@@ -5,7 +5,7 @@ back to narration_speech (VOICEVOX kana) at synthesis time -- which reads flat, 
 (worse) the fallback wavs become a silent source of stale audio. This produces a
 proper cloud reading up front, so the audio step never falls back.
 
-Rule:
+Rule (calibrated from an earlier episode):
   - prose sentence  -> narration[i] with | markers removed (Cloud reads kanji well)
   - symbol sentence -> narration_speech[i] (the VOICEVOX spell-out already turns
     x^2=x etc. into エックスのにじょうはエックス; engine-neutral, correct for Cloud),

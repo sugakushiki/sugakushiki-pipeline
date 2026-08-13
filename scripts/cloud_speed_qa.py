@@ -1,6 +1,6 @@
 """cloud_speed_qa.py - Cloud TTS 発話速度の検出ガード + atempo 正規化 (opt-in fix)。
 
-背景:
+背景 (ある回の学び, internal notes):
   Google Cloud TTS (Chirp3-HD) は文ごとに **実発話速度そのもの** を大きく揺らす。
   実測で同一合成セッション内でも隣接文で 24-31% 差 (無音を除いた発話速度)。
   `tts.rate` は全体基準にすぎず、文単位の局所テンポは API で制御できない。しかも
@@ -253,9 +253,9 @@ def _autotune(rows: list) -> tuple[float, float]:
     would otherwise speed up. Sets globals STRENGTH/FLOOR_FRAC and returns them.
 
     Rationale: the fixed STRENGTH=0.60 is calibrated for an earlier episode's raw stdev
-    ~0.60; on a lower-variance episode it over-flattens to stdev
+    ~0.60; on a lower-variance episode (an earlier episode raw 0.45) it over-flattens to stdev
     0.23 ("一本調子"). Searching for the minimal jump-killing strength kept stdev at
-    0.35 while still fixing the +25% jumps, and raising FLOOR 0.72->
+    0.35 (an earlier episode-like) while still fixing the +25% jumps, and raising FLOOR 0.72->
     ~0.83 preserved the punch line「答えは、幾何学です。」(artic 6.14).
     """
     global STRENGTH, FLOOR_FRAC
@@ -409,7 +409,7 @@ def _pause_anomalies(rows: list) -> list:
 
 
 def _profile_checks(median: float, stdev: float, amin: float) -> list:
-    """Episode-level speed-profile checks vs baseline.
+    """Episode-level speed-profile checks vs baseline (an earlier episode shipped calibration).
 
     Returns (ok, label, detail) tuples. ok=True is an [OK], False is a [WARN].
     Complements the per-sentence adjacent-jump WARN with a whole-episode view: the
@@ -421,7 +421,7 @@ def _profile_checks(median: float, stdev: float, amin: float) -> list:
             stdev >= PROFILE_MIN_STDEV,
             f"stdev>={PROFILE_MIN_STDEV:.2f}",
             f"stdev={stdev:.2f}: 緩急が乏しく一本調子。正規化のかけ過ぎ/strength過大の恐れ "
-            f"",
+            f"(承認済み ある回は stdev~0.40)",
         )
     )
     out.append(
@@ -437,7 +437,7 @@ def _profile_checks(median: float, stdev: float, amin: float) -> list:
             amin <= PROFILE_MAX_MIN,
             f"min<={PROFILE_MAX_MIN:.1f}",
             f"min={amin:.2f} mora/s: 遅い山場が無く間・緩急が消えている可能性 "
-            f"",
+            f"(承認済み ある回は min~4.5)",
         )
     )
     return out
@@ -568,7 +568,7 @@ def cmd_detect(scene_def, audio_dir, report_path, strict) -> int:
     for sid, i0, i1, a0, a1, pct, _txt in sorted(jumps, key=lambda j: -abs(j[5]))[:15]:
         flag = "  <-- WARN" if abs(pct) > ADJACENT_WARN_PCT else ""
         lines.append(f"  {sid}[{i0 + 1}->{i1 + 1}] {a0:.2f}->{a1:.2f}  {pct:+.0f}%{flag}")
-    lines.append("\nSpeed profile:")
+    lines.append("\nSpeed profile (episode-level vs an earlier episode baseline):")
     lines.append(f"  median={target:.2f} mora/s  stdev={stdev:.2f}  min={amin:.2f}  max={amax:.2f}")
     for ok, label, detail in profile:
         lines.append(f"  [{'OK' if ok else 'WARN'}] {label}  ({detail})")
@@ -665,7 +665,8 @@ def _backup_is_stale(audio_dir: str, backup: str) -> bool:
     left an orphan backup while a LATER build re-synthesized the wavs. cmd_apply touches
     a '.applied' marker when a normalization completes; if ANY wav in audio_dir is newer
     than that marker, the current audio is fresh (un-normalized) and MUST be re-normalized
-    rather than skipped. We scan ALL wavs, not only backed-up ones: an earlier episode surgically re-synth'd a
+    rather than skipped (an earlier episode: the skip-guard shipped un-normalized audio, stdev
+    0.34->0.52). We scan ALL wavs, not only backed-up ones: an earlier episode surgically re-synth'd a
     sentence that had been WITHIN band at the prior apply (so it was never atempo'd/backed
     up); checking only the backup missed it and SKIPped, shipping it un-normalized. A
     backup with no marker predates this guard -> treat as stale (safe: re-normalize)."""
@@ -694,11 +695,12 @@ def _revert_untouched_from_backup(audio_dir: str, backup: str) -> int:
     A stale backup means "some audio changed after the last normalization". The old
     behaviour simply dropped the backup and normalized whatever was on disk -- but the
     sentences that did NOT change still hold the PREVIOUS atempo, so they get
-    compressed toward the median a second time.
+    compressed toward the median a second time (an earlier episode: the only way to avoid it was to
+    run --restore by hand before every partial rebuild).
 
     A blanket restore is not the answer either: a sentence re-synthesized from edited
     text must keep its NEW audio, and copying the backup over it would resurrect the
-    old wording (earlier operational experience). So revert exactly the
+    old wording. So revert exactly the
     sentences whose live wav is older than the marker -- those are the ones still
     carrying the previous normalization -- and leave anything newer alone.
     """

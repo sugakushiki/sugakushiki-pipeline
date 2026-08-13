@@ -51,6 +51,18 @@ an opt-in tool for the template-editing workflow.
 
 from __future__ import annotations
 
+# Windows console は cp932。argparse は --help でこの module docstring を
+# description として stdout に書くので、docstring の em dash だけで --help が
+# UnicodeEncodeError で死ぬ。smoke test section 20 は print()/append() の中しか
+# 走査しないため、この経路は見えていなかった。出力の入口で一度だけ utf-8 に寄せる。
+import sys as _sys
+
+if _sys.stdout.encoding and _sys.stdout.encoding.lower() != "utf-8":
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import argparse
 import ast
 import json

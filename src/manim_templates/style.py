@@ -42,7 +42,7 @@ def load_params() -> dict:
 
 
 def pace(duration, weights, intro=0.0, coda=0.0, floor=0.12):
-    """Split a scene's animation budget across steps by weight.
+    """Split a scene's animation budget across steps by weight (an earlier episode fix).
 
     Returns a list of run_times = w_i * per, where per = budget / sum(weights) and
     budget = (duration - intro - coda). Because the denominator is ALWAYS the actual
@@ -53,7 +53,7 @@ def pace(duration, weights, intro=0.0, coda=0.0, floor=0.12):
     This replaces the error-prone hand-written `per = body / N` pattern: if N was typed
     smaller than the true weight-sum, the animations overran `duration`, Manim rendered
     a too-long mp4, the assembler cut it to the audio, and the final reveal + coda were
-    lost.
+    lost (an earlier episode "the pink conclusion showed for barely a second at ~11:20").
 
     Args:
         duration: total scene seconds (usually the audio length passed via params).

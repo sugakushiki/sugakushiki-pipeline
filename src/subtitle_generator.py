@@ -756,7 +756,7 @@ def build_era_map(scene_def: dict) -> dict[str, str]:
     Each scene may carry an ``era_caption`` field (e.g. "1785年" or
     "確率論｜1774年"). Used to burn a persistent top-right date caption per
     scene so the viewer keeps temporal orientation as the person/theme
-    pillars jump between years.
+    pillars jump between years (an earlier episode user request).
     """
     era_map: dict[str, str] = {}
     for section in scene_def.get("sections", []):
@@ -877,7 +877,8 @@ def timing_signature(timing_data: dict) -> str:
     durations (timing.json) shift, so subtitles.srt timestamps go stale while
     the text hash still matches (字幕/音声 desync undetected). Storing this
     signature lets the assemble preflight + G2 compare the timing the subtitles
-    were baked against vs the current timing.json. MUST stay identical to pipeline._timing_signature.
+    were baked against vs the current timing.json (mirror of the visual
+    staleness check). MUST stay identical to pipeline._timing_signature.
     """
     import hashlib
 

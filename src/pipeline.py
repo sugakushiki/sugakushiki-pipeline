@@ -152,7 +152,7 @@ def _visual_staleness_preflight(episode_dir: str, timing_json: str) -> list:
         with open(timing_json, encoding="utf-8") as f:
             timing = json.load(f)
     except Exception as e:
-        print
+        print(f"  timing.json を読めず staleness check skip: {e}")
         return stale
     visuals_dir = os.path.join(episode_dir, "visuals")
     for scene_id, sc in timing.get("scenes", {}).items():
@@ -199,7 +199,7 @@ def _visual_staleness_preflight(episode_dir: str, timing_json: str) -> list:
 
 
 def _timing_signature(timing_data: dict) -> str:
-    """Deterministic digest of per-scene durations.
+    """Deterministic digest of per-scene durations (Guard-B2, an earlier episode).
 
     MUST stay identical to subtitle_generator.timing_signature -- both sides
     hash the same per-scene durations so the assemble preflight can compare the
@@ -219,11 +219,13 @@ def _subtitle_staleness_check(episode_dir: str, scene_json: str) -> str | None:
 
     2 層で staleness を検出する:
       Guard-B: narration TEXT を編集したのに subtitles 未再生成 →
-        narration_hash mismatch。
+        narration_hash mismatch (ある回で subtitles を steps に入れ忘れ、
+        assemble 完走後に G2 が検出 = 20分の無駄ビルド)。
       Guard-B2: narration TEXT は不変だが読み (narration_speech_cloud) 修正 /
         速度正規化 (cloud_speed_qa --apply) で音声尺 = timing.json が刷新され、
         subtitles.srt の timestamp だけ旧尺のまま残る → timing_hash mismatch。
-        text hash は一致するので Guard-B では捕まらなかった desync クラス。
+        text hash は一致するので Guard-B では捕まらなかった desync クラス
+        (ある回で読み修正の partial rebuild が字幕/音声を desync させ user 耳検出)。
     ハッシュ計算は subtitle_generator / G2 検査と同一。"""
     import hashlib
 
@@ -283,7 +285,7 @@ def _subtitle_text_staleness_check(episode_dir: str, scene_json: str) -> str | N
     まま**になる。しかも `_subtitles_meta.json` には**編集後の** narration hash が
     刻まれるため、Guard-B は満足して沈黙する = 古い字幕を「検査済み」として出荷する。
 
-    実測: 字幕ステップは 5.4 秒で
+    実測 (ある回の複製で narration を 1 語だけ変えて実ビルド): 字幕ステップは 5.4 秒で
     完走し subtitles.srt を書き直したが、本文は編集前のままで、Guard-B/B2 はどちらも
     None を返した。
 
@@ -355,7 +357,7 @@ def _output_final_summary(episode_dir: str) -> dict:
 
 
 def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> list[str]:
-    """Post-pipeline output verification.
+    """Post-pipeline output verification (/ D-3).
 
     Each step that completed should have left specific artifacts behind.
     A successful exit code is not enough — a past run had a step return 0 but
@@ -449,7 +451,7 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
                     f"{_measured}"
                     "Chirp3-HD の文単位速度揺れは cloud_speed_qa --apply で均す "
                     "(045/046/047 は適用済)。`python scripts/cloud_speed_qa.py <scene_def>` で"
-                    "隣接段差を確認し --apply を検討"
+                    "隣接段差を確認し --apply を検討 (ある回掛け忘れの反省)"
                 )
 
     if "credits" in steps_run:
@@ -725,7 +727,7 @@ def verify_outputs(episode_dir: str, steps_run: list[str], scene_json: str) -> l
             _isem = read_cached_report(_sd_b21, episode_dir)
             if _isem and _isem.get("issues"):
                 warnings.append(
-                    "  [credits] description.intro 限定詞欠落候補:\n"
+                    "  [credits] description.intro 限定詞欠落候補 (F, advisory):\n"
                     + format_report(_isem)
                 )
         except Exception:  # noqa: BLE001 - verification helper, never fatal
@@ -1113,7 +1115,7 @@ def _synthesis_forecast_gate(
 def _run_pre_images_checks(
     episode_dir: str, scene_json: str, config_path: str, src_dir: str
 ) -> None:
-    """画像を作る**前**の検査。
+    """画像を作る**前**の検査 (ある回: 主題肖像の use_reference gap)。
 
     `--rebuild-scene` の ken_burns 経路も画像を作り直すのに、この検査を通って
     いなかった (2026-08-06 の再検証で判明。最初の棚卸しでは音声・visual 側だけを
@@ -1145,7 +1147,7 @@ def _run_pre_images_checks(
 
 
 def _run_post_images_border_lint(episode_dir: str, src_dir: str) -> None:
-    """生成画像の白縁を実測する。両経路で共有する。"""
+    """生成画像の白縁を実測する (の source 側)。両経路で共有する。"""
     # ─── ある回: 白縁検出 (安価な静的チェック、Vision QA とは別) ──────
     # Gemini が油絵に焼き込む白いキャンバス/額縁の縁は ken_burns の 15% ズーム
     # では消えきらず、最終動画で白帯になる。images
@@ -1311,7 +1313,7 @@ def _run_audio_post_checks(
     # audio, and before subtitles/visuals so timing.json is final.
     if allow_normalize and args.normalize_cloud_speed and os.path.exists(speed_script):
         run_step(
-            "cloud_speed_normalize",
+            "cloud_speed_normalize (fix)",
             [
                 sys.executable,
                 speed_script,
@@ -1326,7 +1328,8 @@ def _run_audio_post_checks(
     elif args.normalize_cloud_speed and not allow_normalize:
         print(
             "\n[cloud_speed_normalize] 部分再ビルドでは --apply を走らせません "
-            "。必要なら再ビルド後に単体で実行してください。"
+            "(episode 全体の wav を書き換えると、再 render していない scene の尺だけが"
+            "動いて で止まります)。必要なら再ビルド後に単体で実行してください。"
         )
 
     # Cloud read verification via Gemini STT (advisory; VOICEVOX uses the
@@ -1343,7 +1346,7 @@ def _run_audio_post_checks(
     # regardless of the opt-in fix, so the problem is never invisible.
     if os.path.exists(speed_script):
         run_step(
-            "speed_qa",
+            "speed_qa (Cloud speed check)",
             [sys.executable, speed_script, scene_json, "--audio-dir", audio_subdir],
             required=False,
         )
@@ -1779,7 +1782,7 @@ def _reprobe_claude_mid_build(context: str, resume_hint: str, skip: bool) -> boo
         f"    再認証: claude setup-token  →  再開: {resume_hint}"
     )
     print(f"\n{'!' * 60}")
-    print
+    print(f"  {banner}")
     print(f"{'!' * 60}\n")
     _auth_probe_warnings.append(f"{context}: {reason} ({resume_hint})")
     try:
@@ -1800,7 +1803,7 @@ def _review_snapshot(episode_dir: str, src_dir: str, enabled: bool = True) -> No
 
     ビルドは動画を上書きするので、**ここで採らないと「触っていない所は変わって
     いない」を後から証明できない**。証明が無いままリールだけ見せるのは、見せな
-    かった部分について裏付けの無い主張をすることになる。
+    かった部分について裏付けの無い主張をすることになる (の設計議論)。
 
     full build と `--rebuild-scene` の両方から呼ぶためのヘルパー。後者は
     full-build 経路へ入らず return するので、共有しないと**リールが最も要る
@@ -1857,7 +1860,7 @@ def _review_reel_run(
 def _run_pre_visuals_checks(
     episode_dir: str, scene_json: str, config: dict, args, src_dir: str
 ) -> None:
-    """visuals をレンダする**前**に走る検査群。
+    """visuals をレンダする**前**に走る検査群 (/ ある回-063 /)。
 
     main() の中に 230 行のべた書きで並んでいたものを関数にした。**構造そのものが事故を
     生んでいた**のが理由で、scene_definition の読み込みが の abort ゲート
@@ -1865,7 +1868,7 @@ def _run_pre_visuals_checks(
     無関係な advisory 6 件が道連れで黙っていた (2026-08-06 の再検証で発見)。1 つの
     関数に集めて各検査が自分のガードだけを持つ形にすると、同じ取り違えが起きにくい。
 
-    副作用のみ。
+    副作用のみ (print / `_advisory_warn_counts` への計上 / 違反時の sys.exit)。
     振る舞いは抽出前と同一 -- 文は 1 つも書き換えていない (インデントのみ)。
     """
     # G1: Clear stale _fallback_scenes.json from previous
@@ -1902,7 +1905,7 @@ def _run_pre_visuals_checks(
             "manim lint skipped (exception)",
             error=f"{type(_e).__name__}: {_e}",
         )
-        print
+        print(f"lint skipped: {_e}")
 
     # scene_definition はこの先の検査が全部使うので、ゲートの外で 1 回だけ読む。
     # **以前は の abort ゲート `--allow-empty-template-params` の内側で
@@ -1930,7 +1933,7 @@ def _run_pre_visuals_checks(
             _tmpl_viol = check_reused_template_params(_sd_b60)
         except Exception as _e:
             _tmpl_viol = []
-            print
+            print(f"reused-template param check skipped: {_e}")
 
     # params present but the scene is too short to draw them
     #. Advisory: the content is correct, only the budget is wrong, so
@@ -1947,7 +1950,7 @@ def _run_pre_visuals_checks(
             _dur_viol = []
     except Exception as _e:
         _dur_viol = []
-        print
+        print(f"template duration-budget check skipped: {_e}")
     if _dur_viol:
         for _v in _dur_viol:
             print(
@@ -1969,7 +1972,7 @@ def _run_pre_visuals_checks(
         _year_findings = check_onscreen_years_traceable(_sd_b60, config)
     except Exception as _e:
         _year_findings = []
-        print
+        print(f"[an earlier episode] on-screen year traceability check skipped: {_e}")
     if _year_findings:
         for _v in _year_findings:
             print(
@@ -1995,7 +1998,7 @@ def _run_pre_visuals_checks(
         _vis_viol = check_narration_names_absent_visual(_sd_b60, _manim_dir)
     except Exception as _e:
         _vis_viol = []
-        print
+        print(f"[an earlier episode] narration/visual element check skipped: {_e}")
     if _vis_viol:
         for _v in _vis_viol:
             print(
@@ -2012,7 +2015,7 @@ def _run_pre_visuals_checks(
         _leg_viol = check_timeline_legend_coherence(_sd_b60)
     except Exception as _e:
         _leg_viol = []
-        print
+        print(f"[an earlier episode] timeline legend coherence check skipped: {_e}")
     if _leg_viol:
         for _v in _leg_viol:
             print(
@@ -2046,7 +2049,7 @@ def _run_pre_visuals_checks(
                 )
                 _advisory_warn_counts["lint_route_legend"] = len(_rl_issues)
         except Exception as _e:
-            print
+            print(f"[an earlier episode] route_map legend coherence check skipped: {_e}")
 
     # the same map, checked from the other side. Every existing
     # route_map guard is about LAYOUT (collisions, clipping, ownership,
@@ -2075,7 +2078,7 @@ def _run_pre_visuals_checks(
                 )
                 _advisory_warn_counts["lint_route_place"] = len(_rp_issues)
         except Exception as _e:
-            print
+            print(f"route_map place coverage check skipped: {_e}")
 
     if _tmpl_viol:
         for _v in _tmpl_viol:
@@ -2135,7 +2138,12 @@ def _run_route_map_preflight(scene_json: str, args) -> None:
                 unresolved_count=len(_unresolved) if hasattr(_unresolved, "__len__") else None,
             )
             pipeline_log.close()
-            print
+            print(
+                "\nroute_map preflight aborted pipeline. "
+                "Fix collisions and re-run, or use "
+                "--allow-route-collision / --auto-fix-route-collisions / "
+                "--skip-route-preflight."
+            )
             sys.exit(1)
         pipeline_log.emit(
             pipeline_log.LEVEL_WARNING
@@ -2157,13 +2165,13 @@ def _run_route_map_preflight(scene_json: str, args) -> None:
             "route_map preflight skipped (exception)",
             error=f"{type(_e).__name__}: {_e}",
         )
-        print
+        print(f"route_map preflight skipped: {_e}")
 
 
 def _run_post_visual_lints(
     episode_dir: str, scene_json: str, src_dir: str, args, scenes: str | None = None
 ) -> None:
-    """visuals をレンダした**後**の検査。
+    """visuals をレンダした**後**の検査 (白帯 / Vision QA / bbox 衝突)。
 
     `scenes` を渡すと Vision QA をそのシーンだけに絞る (Claude vision は scene 数に
     比例して課金・所要時間が伸びるので、1 シーンの再 render に 20 シーン分を投げない)。
@@ -2186,7 +2194,7 @@ def _run_post_visual_lints(
         _vw = _vborder(os.path.join(episode_dir, "visuals"))
     except Exception as _e:
         _vw = []
-        print
+        print(f"video border check skipped: {_e}")
     if _vw:
         severe = [v for v in _vw if v["max_pct"] >= 0.08]
         print(f"\n{'!' * 60}")
@@ -2203,7 +2211,7 @@ def _run_post_visual_lints(
             if not _confirm_continue(
                 "白帯>=8% は ken_burns で消えません。source を --trim し visuals 再描画を推奨。"
             ):
-                print("Pipeline aborted.")
+                print("Pipeline aborted (video border).")
                 sys.exit(1)
 
     # Manim Vision QA (P5): 各 Manim/route_map/timeline フレームを Claude
@@ -2246,7 +2254,7 @@ def _run_post_visual_lints(
 def _run_pre_assemble_guards(
     episode_dir: str, scene_json: str, timing_json: str, steps: list[str], args
 ) -> None:
-    """assemble の**前**に走る 3 つの stale ゲート。
+    """assemble の**前**に走る 3 つの stale ゲート (/ Guard-B,B2 / Guard-B3)。
 
     `steps` はこの実行で走った (走る) ステップ名。部分再ビルドは audio も
     subtitles も回すので Guard-B / B3 は自動的に skip され、 だけが効く
@@ -2258,7 +2266,7 @@ def _run_pre_assemble_guards(
     if not args.allow_stale_visuals:
         stale = _visual_staleness_preflight(episode_dir, timing_json)
         if stale:
-            print
+            print("\nassemble preflight: visual と timing.json の尺が不一致です")
             for s in stale:
                 vd = s["visual_dur"]
                 vd_s = f"{vd}s" if vd is not None else "N/A"
@@ -2321,7 +2329,9 @@ def _run_output_verification(
 
     ビルドの**終わり**にやることを 1 か所に集めた。full build にしか無かったため、
     `--rebuild-scene` で出荷物を作り直しても post_build_verify (構造検査 11 件) も
-    verify_outputs も走らず、temp_videos のコピーも更新されなかった。
+    verify_outputs も走らず、temp_videos のコピーも更新されなかった
+    (= ある回で 1 レビュー周回を無駄にしたのと同じ事故が、部分再ビルドでは
+    そのまま起きうる状態だった)。
 
     Returns (verify_outputs の警告, post_build_verify の警告数)。
     """
@@ -2482,7 +2492,8 @@ def _confirm_continue(noninteractive_hint: str) -> bool:
 
     In a non-interactive run (background task, CI, ``> log 2>&1`` with no TTY)
     ``input()`` gets EOF immediately, which previously looked like an opaque
-    silent abort. When stdin is not a TTY we therefore DO NOT prompt: we
+    silent abort (: a backgrounded build died at the image-QA prompt with
+    no explanation). When stdin is not a TTY we therefore DO NOT prompt: we
     print an actionable hint and abort deterministically (never auto-proceed
     past flagged issues without an explicit flag). Returns True to continue.
     """
@@ -2640,7 +2651,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="既存キャッシュがあるのに半数以上の文を再合成する、という予告が出ても "
         "止まらずに進む。Cloud は非決定的なので、再合成した文は尺が変わり "
-        "visual の再 render まで波及する。",
+        "visual の再 render まで波及する (ある回で 1 文の修正が 57 分になった)。",
     )
     parser.add_argument(
         "--force-regen-visuals",
@@ -2660,7 +2671,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "(advisory speed_qa_report.txt); this opt-in applies the fix. "
         "Cloud-only; inert for voicevox. Undo with cloud_speed_qa.py --restore.",
     )
-    parser.add_argument
+    parser.add_argument(
+        "--skip-fact-check",
+        action="store_true",
+        help="skip pre-script episode_config fact check",
+    )
     parser.add_argument(
         "--fact-check-allow-warn",
         action="store_true",
@@ -2722,7 +2737,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-portrait-lint",
         action="store_true",
-        help="強化 H2: skip portrait_prompt_lint。default: enabled when use_reference scenes + wiki_*.jpg refs exist。WARN only、build halt しない。",
+        help="強化 H2: skip portrait_prompt_lint (Gemini Vision で reference 写真と source_prompt の特徴矛盾を catch、ある回 kimono mismatch 防御)。default: enabled when use_reference scenes + wiki_*.jpg refs exist。WARN only、build halt しない。",
     )
     parser.add_argument(
         "--skip-qa-script-only",
@@ -2774,7 +2789,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "subtitles.srt embedded hash). Use only when intentionally assembling with "
         "subtitles that predate the current narration.",
     )
-    parser.add_argument
+    parser.add_argument(
+        "--rebuild-scene",
+        default=None,
+        metavar="SCENE_ID",
+        help="Partial rebuild: regenerate a single scene and re-run assembly+bgm. "
+        "Exclusive with --steps, --skip-* flags. "
+        "Runs the same guards as a full build (reading lint / STT / route_map "
+        "preflight / stale-visual and stale-subtitle preflights / post_build_verify "
+        "/ review reel); the expensive ones are narrowed to the rebuilt scene.",
+    )
     parser.add_argument(
         "--log-file",
         default=None,
@@ -3063,7 +3087,7 @@ def main():
                 save_report,
             )
 
-            print
+            print("\nPre-script fact check on episode_config.json")
             _report = run_pre_script_fact_check(
                 episode_config=config,
                 episode_dir=episode_dir,
@@ -3083,7 +3107,10 @@ def main():
                     warning=_warn,
                 )
                 pipeline_log.close()
-                print
+                print(
+                    "CRITICAL detected -- aborting before script "
+                    "step. Fix episode_config.json and re-run."
+                )
                 sys.exit(1)
             if _warn > 0 and not args.fact_check_allow_warn:
                 pipeline_log.emit(
@@ -3094,7 +3121,10 @@ def main():
                     warning=_warn,
                 )
                 pipeline_log.close()
-                print
+                print(
+                    "WARNING detected -- aborting before script "
+                    "step. Use --fact-check-allow-warn to continue."
+                )
                 sys.exit(1)
             if _warn > 0:
                 pipeline_log.emit(
@@ -3122,7 +3152,7 @@ def main():
                 "pre-script fact check skipped (exception)",
                 error=f"{type(_e).__name__}: {_e}",
             )
-            print
+            print(f"pre-script fact check skipped due to error: {_e}")
 
     # ─── Step 1: Script generation ───────────────────────────────────────
     if "script" in steps:
@@ -3462,7 +3492,7 @@ def main():
                     )
                 )
                 if _has_ref_scene and _wiki_exists:
-                    print("\n=== Step: portrait_prompt_lint ===")
+                    print("\n=== Step: portrait_prompt_lint (H2) ===")
                     _lint_cmd = [
                         sys.executable,
                         os.path.join(
@@ -3494,7 +3524,7 @@ def main():
                         print(
                             f"  [!] portrait_prompt_lint: IDENTITY mismatch x{_n_id} "
                             "(顔の毛/頭髪/骨格が reference と矛盾) -- 本人の風貌が誤って"
-                            "伝わる。出荷前に必ず確認。"
+                            "伝わる。出荷前に必ず確認 (ある回 full beard vs 口ひげ)。"
                         )
                         try:
                             pipeline_log.emit_stderr_warn_summary(

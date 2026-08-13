@@ -239,7 +239,7 @@ class LebesgueVsRiemann(Scene):
         capped slice on the fade and give the remainder back as a wait.
 
         fade + rest == run_time exactly, so the step consumes what pace() gave it
-        and the scene cannot overrun.
+        and the scene cannot overrun (an earlier episode failure mode).
 
         Shapes are NOT put through this: axes, curves, strips and bands read well
         appearing slowly, and leaving them on the long fade keeps the frame from

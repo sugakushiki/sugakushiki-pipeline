@@ -43,3 +43,10 @@ test_output/
 *.wav
 *.mp3
 
+# Written by the tools this repo ships, into the tree they are run from. Both
+# turned up in a release staging diff -- the demo episode's progress file was one
+# `git add -A` away from being published, and ruff's cache appears the moment
+# anyone follows the lint command in CLAUDE.md.
+_pipeline_progress.json
+.ruff_cache/
+

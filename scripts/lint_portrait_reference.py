@@ -1,4 +1,4 @@
-"""lint_portrait_reference.py - subject-portrait use_reference gap check
+"""lint_portrait_reference.py - subject-portrait use_reference gap check (数学史記, an earlier episode)
 
 When a real photo/portrait of the episode subject exists (episode_config.json has a
 non-empty `wikimedia_photo_urls`), the subject's ken_burns PORTRAIT scenes should set
@@ -147,7 +147,7 @@ def run_lint(scene_path: str, config_path: str) -> list:
                     "scene_id": sc.get("scene_id"),
                     "note": (
                         "実写参照 (wikimedia_photo_urls) があるのに主題の肖像 ken_burns が "
-                        "text-only 生成される。"
+                        "text-only 生成される (理想化の恐れ、ある回: 髭過長・眼鏡欠落)。"
                         "参照 gate が OFF (config に birth_year が無い) 可能性が高い ── "
                         "config に birth_year を明記して gate を ON にする "
                         "(gate ON なら use_reference 未設定でも参照ベースになる)"

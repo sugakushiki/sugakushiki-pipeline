@@ -2,7 +2,7 @@
 the running pipeline so a watcher can tell, reliably, what step is running and
 whether the build finished.
 
-Why this exists:
+Why this exists (an earlier episode monitoring failures):
 - stdout/Tee-Object logs buffer, so reading a mid-step line ("math_06") and
   concluding "順調" missed both a stuck step and a completed build.
 - the background watcher's task-notification was unreliable in this environment.

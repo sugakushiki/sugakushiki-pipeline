@@ -222,7 +222,9 @@ def _prompt_fingerprint(task: dict, appearance: str = "") -> str:
 
     強化: appearance (subject_appearance / 顔特徴記述) は use_reference
     シーンの生成 prompt に _build_reference_prompt で注入されるため、reference
-    使用シーンでは fingerprint に含める。
+    使用シーンでは fingerprint に含める (顔特徴を編集したら自動再生成させる。
+    従来は source_prompt しか見ず、appearance 編集が silent に無反映で手動
+    --regen を強いていた。ある回で発覚)。
     appearance を渡さない呼び出し ('') は legacy fingerprint (appearance 非対象)
     を返し、旧 meta の後方互換判定に使う (deploy 時の一斉再生成を回避)。
     """
@@ -806,7 +808,7 @@ def _vision_count_people(image_path: str) -> int | None:
 
     Uses Gemini Vision (gemini-2.5-flash), matching the call shape of
     scripts/portrait_prompt_lint.describe_reference_vision. Used ONLY to recover a
-    text-heuristic-dropped photo that is actually a solo portrait.
+    text-heuristic-dropped photo that is actually a solo portrait (an earlier episode regression).
 
     Graceful degrade: returns None on ANY error, and when google-genai is not
     installed or GOOGLE_API_KEY is missing (the caller treats None as "cannot
@@ -877,7 +879,7 @@ def _demote_group_photo_in_credits(credits_path: str, filename: str, n_people: i
     """Persist solo_portrait=False + usage="unused" for a ref Vision found to be a
     GROUP photo. Mirror of _set_solo_portrait_in_credits (the promote path):
     is_solo_portrait() is a text heuristic that can mis-tag a group photo as solo
-, which would then contaminate the identity
+    (an earlier episode Tribeca-festival photo), which would then contaminate the identity
     reference. Persisting the demotion stops it being used AND being credited.
     """
     if not credits_path or not os.path.exists(credits_path):
@@ -909,7 +911,7 @@ def _demote_group_photo_in_credits(credits_path: str, filename: str, n_people: i
 def _warn_refs_present_but_unusable() -> None:
     """Fail-loud backstop (Part B): wiki_* reference photos exist but none are usable
     as a solo portrait even after Vision -> subject portraits fall back to text-only
-    generation and drift from the real person. Advisory only:
+    generation and drift from the real person (an earlier episode regression). Advisory only:
     emits a prominent WARN to stderr for the pipeline roll-up, never halts the build.
     """
     global _REF_TEXTONLY_HITS
@@ -923,7 +925,7 @@ def _warn_refs_present_but_unusable() -> None:
         "  [WARN] 参照写真は存在するのに使える solo portrait が 0 件 "
         "-> 主題肖像が text-only 生成になり本人と乖離します。"
         "wikimedia_credits.json の solo_portrait を確認してください "
-        "。"
+        "(ある回で solo 誤判定->全肖像 text-only 化した回帰)。"
     )
     print(msg, file=sys.stderr)
     try:
@@ -2446,7 +2448,7 @@ def main():
     parser.add_argument(
         "--cliche-llm-review",
         action="store_true",
-        help="Run Layer 2 LLM-based cliche review"
+        help=": Run Layer 2 LLM-based cliche review"
         " (Claude Sonnet) in addition to the always-on dictionary scan."
         " Default: off. Cost: 0 (Max subscription).",
     )

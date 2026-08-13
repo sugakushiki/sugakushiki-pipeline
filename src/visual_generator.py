@@ -175,7 +175,7 @@ def _pipe_frames_to_ffmpeg(cmd, frames, timeout_s, label):
     Raw 1080p frames are ~6 MB each, so they must be streamed rather than
     buffered -- which rules out subprocess.run(timeout=). A Timer kills ffmpeg
     if it overruns; the kill breaks the pipe and unblocks any write() stuck on a
-    full buffer. On a clean exit (rc 0) we return; otherwise we
+    full buffer (an earlier episode hang). On a clean exit (rc 0) we return; otherwise we
     distinguish a timeout (_FFmpegTimeout) from a genuine ffmpeg error
     (_FFmpegError) -- the latter was previously swallowed because proc.wait()'s
     return code was ignored.
@@ -381,7 +381,7 @@ _KINSOKU_TAIL = "（［｛「『【〔〈《“‘"  # これで行を終えな�
 
 
 def _apply_kinsoku(lines: list[str]) -> list[str]:
-    """禁則処理: 折り返し後、行が、。」』 等で始まらない・「『（ 等で終わらないよう整える。
+    """禁則処理: 折り返し後、行が、。」』 等で始まらない・「『（等で終わらないよう整える。
     ある回: quote overlay が『…寿命を』/『、いわば二倍にした』と折り返し、読点が行頭に
     孤立して不自然だった (行頭禁則違反)。行頭約物は直前行末尾へ追い込み、行末の開き括弧は
     次行先頭へ追い出す。lines を破壊的に整えて返す。"""
@@ -762,7 +762,7 @@ def discover_manim_templates(manim_templates_dir: str) -> dict[str, tuple[str, s
 
 
 def _record_manim_fallback(output_path: str, scene_id: str, reason: str) -> None:
-    """Append scene_id to _fallback_scenes.json sidecar.
+    """Append scene_id to _fallback_scenes.json sidecar (G1, an earlier episode).
 
     Manim render fallback (timeout / error / lookup fail) が「[OK]」報告 +
     placeholder mp4 で silent fail する問題への layered detect。pipeline
@@ -1571,7 +1571,7 @@ def process_scene(
     degraded to a recorded fallback marker + a pipe-free black placeholder,
     mirroring the Manim/Blender fallback path. The build keeps going, the failure
     is surfaced (not silent), and a stuck ffmpeg can no longer hang the whole
-    pipeline.
+    pipeline (an earlier episode: person_04 ken_burns hung >1h before a manual kill).
     """
     scene_id = scene["scene_id"]
     visual = scene["visual"]
@@ -2013,7 +2013,7 @@ def main():
         scene_filter = {s.strip() for s in args.scenes.split(",") if s.strip()}
         print(f"--scenes: {sorted(scene_filter)} のみ対象 (他は既存 mp4 を保持)")
     if args.force_regen_visuals:
-        print
+        print("--force-regen-visuals: キャッシュ無視で全 in-scope scene を再 render")
     reused = 0
     rendered = 0
     kept = 0  # out-of-scope (--scenes) scenes left untouched

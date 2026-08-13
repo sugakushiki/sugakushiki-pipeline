@@ -586,7 +586,7 @@ def _label_filter(episode_dir: Path, text: str) -> str | None:
     """セグメント左上に貼る ASCII ラベルの drawtext。フォントが無ければ None。
 
     ラベルは ASCII だけにしてある (scene_id と理由コード)。日本語を焼くと
-    drawtext のエスケープ事故 の面積が広がるため、
+    drawtext のエスケープ事故 (ある回の filter 文字列漏れ) の面積が広がるため、
     日本語の理由は report 側に書く。
     """
     if not (episode_dir / "_font.ttc").exists():
