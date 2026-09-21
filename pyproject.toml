@@ -13,6 +13,10 @@
 
 [tool.ruff]
 line-length = 100
+# 2026-09-22: the runtime is 3.13 (README / .python-version), but the code
+# stays 3.11-compatible on purpose -- the pinned requirements install on both and
+# a 3.11 environment is kept as the fallback. Raising this would let ruff rewrite
+# code into 3.12+ syntax and quietly end that compatibility.
 target-version = "py311"
 
 # Files / directories ruff should look at by default

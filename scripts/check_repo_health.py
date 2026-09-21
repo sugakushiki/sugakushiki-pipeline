@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from repo_health import DEFAULT_TRUNK, format_report, run_all  # noqa: E402
+from repo_health import DEFAULT_TRUNK, blocking_findings, format_report, run_all  # noqa: E402
 
 
 def main() -> int:
@@ -36,7 +36,7 @@ def main() -> int:
 
     findings = run_all(args.repo_root, args.trunk)
     print(format_report(findings))
-    return 1 if (args.strict and findings) else 0
+    return 1 if (args.strict and blocking_findings(findings)) else 0
 
 
 if __name__ == "__main__":

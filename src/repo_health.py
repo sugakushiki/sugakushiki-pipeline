@@ -41,6 +41,15 @@ import subprocess
 # longer described what it held -- 75 episodes and the whole pipeline).
 DEFAULT_TRUNK = "develop"
 
+# 2026-09-22: DEFAULT_TRUNK is THIS repo's branch. The tool is published,
+# and a reader who clones the public copy has `main` only, so every run there
+# warned "trunk 'develop' does not resolve" and asked for --trunk. Fall back to
+# the conventional names, then to whatever origin/HEAD points at, and SAY which
+# one was used (an INFO line, not a WARN: a warning on a healthy clone trains
+# the reader to skip warnings). Only when none resolves is the comparison
+# really impossible, and that stays the WARN it was.
+TRUNK_FALLBACKS = ("main", "master")
+
 # What counts as "work that would be lost", split by tracked vs untracked rather
 # than by directory.
 #
@@ -135,6 +144,31 @@ def _count_pipeline_changes(status_porcelain: str) -> tuple[int, int]:
     return modified, new_code
 
 
+def _resolve_trunk(git, repo_root: str, trunk: str) -> str | None:
+    """The branch to compare against: `trunk` itself, else the first of
+    TRUNK_FALLBACKS that exists, else what origin/HEAD points at, else None."""
+
+    def exists(ref: str) -> bool:
+        return bool(git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], repo_root))
+
+    if exists(trunk):
+        return trunk
+    for candidate in TRUNK_FALLBACKS:
+        if candidate != trunk and exists(candidate):
+            return candidate
+    head = git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], repo_root)
+    head = head.strip()
+    if head and head != trunk and exists(head):
+        return head
+    return None
+
+
+def blocking_findings(findings: list[dict]) -> list[dict]:
+    """Findings that should fail a --strict run. `trunk_fallback` is information
+    about what was compared, not a defect, so it is not one of them."""
+    return [f for f in findings if f["kind"] != "trunk_fallback"]
+
+
 def scan_worktrees(
     repo_root: str = ".",
     trunk: str = DEFAULT_TRUNK,
@@ -162,8 +196,11 @@ def scan_worktrees(
     # git then fails, rev-list yields "", unmerged becomes 0, and a worktree whose
     # only risk is unpushed commits is dropped by the `not uncommitted and not
     # unmerged` guard below -- reported as an all-clear. Establish once whether the
-    # comparison is even possible, and say so when it is not.
-    trunk_ok = bool(git(["rev-parse", "--verify", "--quiet", f"{trunk}^{{commit}}"], repo_root))
+    # comparison is even possible, fall back to the conventional branch names and
+    # say which one was used; say so when nothing resolves at all.
+    requested = trunk
+    resolved = _resolve_trunk(git, repo_root, trunk)
+    trunk_ok = resolved is not None
     if not trunk_ok:
         findings.append(
             {
@@ -174,6 +211,20 @@ def scan_worktrees(
                 "unmerged": 0,
                 "behind": 0,
                 "summary": f"trunk '{trunk}' がこのリポジトリで解決できません",
+            }
+        )
+    elif resolved != requested:
+        trunk = resolved
+        findings.append(
+            {
+                "kind": "trunk_fallback",
+                "worktree": repo_root,
+                "branch": requested,
+                "resolved": resolved,
+                "uncommitted": 0,
+                "unmerged": 0,
+                "behind": 0,
+                "summary": f"trunk '{requested}' は無いので '{resolved}' と比較しました",
             }
         )
 
@@ -254,6 +305,12 @@ def check_editing_on_stable(repo_root: str = ".", run_git=None) -> list[dict]:
     branch = git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root).strip()
     if branch != STABLE_BRANCH:
         return []
+    # 2026-09-22: the stable/trunk split is THIS repo's convention. In a clone that has
+    # no trunk branch at all (the published copy has `main` only) editing on `main`
+    # is simply editing, and telling the reader to `git switch develop` would point
+    # at a branch they do not have.
+    if not git(["rev-parse", "--verify", "--quiet", f"{DEFAULT_TRUNK}^{{commit}}"], repo_root):
+        return []
     dirty = [ln for ln in git(["status", "--porcelain"], repo_root).splitlines() if ln.strip()]
     if not dirty:
         return []
@@ -326,8 +383,16 @@ def format_report(findings: list[dict]) -> str:
     wt = [f for f in findings if f["kind"] == "worktree"]
     eol = [f for f in findings if f["kind"] == "eol_flip"]
     trunk_missing = [f for f in findings if f["kind"] == "trunk_missing"]
+    trunk_fallback = [f for f in findings if f["kind"] == "trunk_fallback"]
     on_stable = [f for f in findings if f["kind"] == "editing_on_stable"]
     lines = []
+    # Not a WARN: the comparison was made, against a branch this repo does have.
+    # Said out loud so a reader with a differently named trunk knows what to pass.
+    for f in trunk_fallback:
+        lines.append(f"  INFO: {f['summary']} (別のブランチなら `--trunk <branch>`)")
+    if not blocking_findings(findings):
+        lines.append("  OK: 未コミットの取り残しなし / 行末の反転なし")
+        return "\n".join(lines)
     # Rendered first, and deliberately not as a WARN among the others: it says the
     # worktree half of this report is not a result at all. A finding kind with no
     # branch here would be collected and then never printed, which is the same
