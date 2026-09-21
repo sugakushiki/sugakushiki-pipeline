@@ -35,6 +35,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from claude_backend import (
     call_claude as _call_claude_backend,
 )
+from claude_backend import (
+    repair_json_text,
+)
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -204,14 +207,15 @@ GENERATION_RULES = """
 - 人物パート（person）: 6〜12シーン。時代背景、生い立ち、転機。3〜4分
 - 数学パート（math）: 5〜10シーン。代表的業績を直感的に解説。数式は最小限。3〜4分
 - 締め（closing）: 1〜3シーン。数学史における位置づけ、現代との接続。〜1分
+- **数学パートの最初のシーンは、人物パートから数学へ戻る一文で始める** (人物パートの末尾は死や晩年で終わることが多く、そのまま数学に入ると急すぎる。例: 「ここで、時計を1747年まで戻します。あの論文には何が書かれていたのでしょうか」)
 
 ### ナレーション（★最重要：文字数に注意）
-- 各シーンのナレーション配列は2〜5文。1文は20〜80文字程度
-- 1シーンのナレーションは合計80〜250文字を目安にする
+- 各シーンのナレーション配列は2〜6文。1文は20〜80文字程度
+- 1シーンのナレーションは合計{per_scene_lo}〜{per_scene_hi}文字を目安にする
 - 日本語ナレーションの実効速度は約4.5文字/秒（発話速度＋文間ポーズを含む）
-- 10分動画には約2,700文字が必要
-- **全シーン合計で2,600〜3,200文字になるように調整すること。これより少ないと動画が短すぎる**
-- 人物パートと数学パートは特に各シーン120〜200文字程度にする。短い文の羅列ではなく、具体的なエピソードや説明を丁寧に書くこと
+- この回の目標尺 {target_min}分には約{char_mid_fmt}文字が必要
+- **全シーン合計で{char_min_fmt}〜{char_max_fmt}文字になるように調整すること。これより少ないと動画が短すぎる**
+- 人物パートと数学パートは特に各シーン{per_scene_lo}〜{per_scene_hi}文字程度にする。短い文の羅列ではなく、具体的なエピソードや説明を丁寧に書くこと
 
 ### ビジュアルの使い分け
 - **visual.typeは ken_burns / text_overlay / manim / route_map の4種のみ使用可能。それ以外（pillow_chart等）は絶対に使わないこと**
@@ -228,7 +232,8 @@ route_mapは世界地図上に都市と移動経路を描画する。数学者�
 - route: 移動経路を配列で指定。from/toは必ずcitiesに存在する都市名
 - category: 経路の意味を示す（origin / education / career / wandering / exile / final の6種、上記§visual定義参照）。**招聘・就職・移籍は career**、亡命（exile）と混同しない
 - bounds: 省略推奨（都市座標から自動計算される）。手動指定する場合はすべての都市と矢印が収まる範囲にすること
-- 1つのroute_mapシーンに1〜5経路が適切。あまり多いと見づらい
+- 1つのroute_mapシーンに1〜5経路が適切。あまり多いと見づらい (6 経路以上や遠隔地 (別の国の首都など) を 1 枚に入れるとラベルが衝突して preflight で止まる)
+- **legend_labels を必ず書く**: `"legend_labels": {"origin": "幼少期の転居", "education": "進学", "career": "赴任"}` のように、使った category ごとに**その経路群を正しく言い表す**短い日本語。既定の「生誕」「留学」は国内の転居・進学に合わない
 - 都市の座標は実際の緯度・経度を正確に使用すること
 - 都市名は日本語で記述すること（例: "ブダペスト", "プリンストン"）
 
@@ -533,8 +538,12 @@ def build_system_prompt(manim_templates_dir: str = None) -> str:
     """Build the system prompt with style guide, scene spec, and available templates."""
     template_list = build_manim_template_list(manim_templates_dir)
     rules = GENERATION_RULES.replace("{manim_template_list}", template_list)
+    # 文字数の指示は target_duration_minutes から導く
+    fill = _length_guidance_fields()
+    for key, val in fill.items():
+        rules = rules.replace("{" + key + "}", val)
 
-    return f"""あなたは「数学史記」という日本語YouTubeチャンネルのスクリプトライターです。
+    prompt = f"""あなたは「数学史記」という日本語YouTubeチャンネルのスクリプトライターです。
 数学者の人生と数学的業績を描くドキュメンタリー動画の台本を、JSON形式で生成してください。
 
 {STYLE_GUIDE_PROMPT}
@@ -546,10 +555,30 @@ def build_system_prompt(manim_templates_dir: str = None) -> str:
 出力は **scene_definition.json のJSON のみ** を返してください。
 マークダウンのコードブロック（```json ... ```）で囲んでも構いませんが、JSON以外のテキストは含めないでください。
 
-★重要: ナレーションの合計文字数が2,600〜3,200文字になるようにしてください。
+★重要: ナレーションの合計文字数が{fill["char_min_fmt"]}〜{fill["char_max_fmt"]}文字になるようにしてください（目標尺 {fill["target_min"]}分）。
 各シーンのナレーションは具体的なエピソード、歴史的背景、数学的内容を丁寧に語ってください。
 箇条書き的な短文の羅列ではなく、ドキュメンタリーのナレーションとして自然に聞こえる語り口にしてください。
 """
+    return prompt
+
+
+def _length_guidance_fields() -> dict:
+    """system prompt に埋める文字数の指示。CHAR_COUNT_MIN/MAX (target_duration_minutes 由来) が唯一の源。
+
+    1 シーンの目安は「全体 / 想定シーン数」で出す (26 シーンで下限、18 シーンで上限)。
+    10 分 (2,600〜3,200) なら 110〜160 字、20 分 (5,200〜6,400) なら 220〜320 字。
+    """
+    mid = (CHAR_COUNT_MIN + CHAR_COUNT_MAX) // 2
+    lo = int(mid / 26 // 10 * 10)
+    hi = int(mid / 18 // 10 * 10)
+    return {
+        "char_min_fmt": f"{CHAR_COUNT_MIN:,}",
+        "char_max_fmt": f"{CHAR_COUNT_MAX:,}",
+        "char_mid_fmt": f"{mid:,}",
+        "target_min": f"{mid / 290:.0f}",
+        "per_scene_lo": str(lo),
+        "per_scene_hi": str(hi),
+    }
 
 
 def build_user_prompt(config: dict) -> str:
@@ -613,6 +642,11 @@ def build_user_prompt(config: dict) -> str:
         )
         for p in forbidden:
             parts.append(f"- {p}")
+
+    # ある回: 全話共通の比喩的誇張 (「〜の最初の頁」「〜の父」…) は config に依らず毎回渡す。
+    from hyperbole_lint import prompt_block as _hyperbole_prompt_block
+
+    parts.append(_hyperbole_prompt_block())
 
     required = [p for p in (config.get("required_phrases") or []) if isinstance(p, str) and p]
     if required:
@@ -784,6 +818,22 @@ def extract_json(text: str) -> dict:
             return json.loads(raw)
         except json.JSONDecodeError:
             pass
+
+    # Strategy 5 (shared with claude_backend.extract_json_from_response):
+    # re-escape stray inner quotes / raw control characters inside string
+    # values, then retry the best candidates. Added after the QA SourceManager
+    # agent failed twice on a COMPLETE ```json block whose only defect was an
+    # unescaped " inside a long string value -- the same defect can hit a
+    # narration string here. Only reached when every strategy above failed,
+    # so behaviour on well-formed output is unchanged.
+    repair_candidates = list(reversed(json_blocks))
+    if start >= 0 and end > start:
+        repair_candidates.append(text[start : end + 1])
+    for body in repair_candidates:
+        try:
+            return json.loads(_sanitize_json_keys(repair_json_text(body)), strict=False)
+        except json.JSONDecodeError:
+            continue
 
     raise ValueError(f"Could not extract valid JSON from response.\nFirst 500 chars:\n{text[:500]}")
 
@@ -1024,8 +1074,36 @@ def _life_work_to_milestones(params: dict) -> dict | None:
     return out
 
 
-def normalize_timeline_recap_scenes(scene_def: dict) -> int:
+def normalize_sections(scene_def: dict) -> int:
+    """section に section_type が無ければ section_id から補い、label が無ければ title を使う。
+
+    ある回: LLM が section を {section_id, title} だけで出し、credits_generator は
+    section_type しか見ていなかったので、概要欄の章ラベルが 4 つとも空のまま焼かれた
+    (post_build check 10 が捕まえた)。契約違反は script step で正規化する (ある回の型)。
+    Returns the number of sections touched.
+    """
+    valid = {"intro", "person", "math", "closing"}
+    n = 0
+    for section in scene_def.get("sections", []) or []:
+        touched = False
+        if not section.get("section_type"):
+            sid = str(section.get("section_id") or section.get("id") or "").strip()
+            if sid in valid:
+                section["section_type"] = sid
+                touched = True
+        if not section.get("label") and section.get("title"):
+            section["label"] = section["title"]
+            touched = True
+        n += int(touched)
+    return n
+
+
+def normalize_timeline_recap_scenes(scene_def: dict, subject_ja: str | None = None) -> int:
     """Rewrite timeline_recap scenes' params to the template's milestones schema.
+
+    ある回: `milestones` はあるのに `title` が無い scene は、テンプレの fail-loud が
+    render 時に raise して placeholder になる (closing_02)。`subject_ja` が与えられれば
+    「<主題>の歩んだ時間」で補う (LLM は title を落とすことがある)。
 
     Idempotent: scenes whose `milestones` are ALREADY the template's
     [year,label,track,colour] list rows are left untouched, as are scenes with
@@ -1055,10 +1133,17 @@ def normalize_timeline_recap_scenes(scene_def: dict) -> int:
             legend = _normalize_timeline_legend(params.get("legend"))
             if legend is not None:
                 params["legend"] = legend
-            # Already the template's list-of-rows schema? leave it. (A dict-form
-            # `milestones` is NOT list form, so it falls through to conversion.)
+            # ある回: title の欠落は render 時の raise -> placeholder。主題名から補う。
+            if subject_ja and params.get("milestones") and not params.get("title"):
+                params["title"] = f"{subject_ja}の歩んだ時間"
+                rewritten += 1
+            # Already the template's list-of-rows schema? The SHAPE is right but
+            # the WORDS may not be --
+            # vocabulary normalization must run before this early-continue or it
+            # never runs at all.
             if _milestones_in_list_form(params.get("milestones")):
-                if legend is not None:
+                vocab_changed = _normalize_milestone_vocabulary(params)
+                if legend is not None or vocab_changed:
                     rewritten += 1
                 continue
             padded = _pad_short_milestone_rows(params.get("milestones"))
@@ -1075,6 +1160,135 @@ def normalize_timeline_recap_scenes(scene_def: dict) -> int:
             elif legend is not None:
                 rewritten += 1
     return rewritten
+
+
+def normalize_manim_modes(scene_def: dict, manim_dir: str | None = None, autofix: bool = True):
+    """Validate (and where unambiguous, repair) every manim scene's params.mode.
+
+    A brand-new template gives the LLM no shipped example to imitate, and it then
+    writes mode='default'
+    an earlier episode fail-loud templates raise on unknown modes, but only at render time,
+    minute 40 of the build. This runs at the deterministic point where the LLM
+    output is finalized (same rationale as strip_llm_cloud_readings):
+
+      - invalid mode on a SINGLE-mode template -> autofix to the only valid mode
+        (nothing else it could mean);
+      - invalid mode on a multi-mode template -> reported (choosing a mode needs
+        the narration's intent -- a human decision, not a default).
+
+    Returns (n_fixed, errors) where errors is a list of human-readable strings.
+    The pipeline's pre-visuals gate calls this with autofix=False so every
+    invalid mode aborts the build there with the valid-mode list in the message.
+    """
+    if manim_dir is None:
+        manim_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "manim_templates")
+    from qa_manim_consistency import template_scene_modes
+
+    n_fixed = 0
+    errors: list[str] = []
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual", {})
+            if visual.get("type") != "manim":
+                continue
+            template = visual.get("template")
+            params = visual.get("params")
+            mode = params.get("mode") if isinstance(params, dict) else None
+            if not template or mode is None:
+                continue  # missing mode is's job
+            modes = template_scene_modes(template, manim_dir)
+            if modes is None or mode in modes:
+                continue
+            if autofix and len(modes) == 1:
+                only = next(iter(modes))
+                params["mode"] = only
+                n_fixed += 1
+                print(
+                    f"  [MODE] {scene.get('scene_id')}: {template} mode={mode!r} は実在しない"
+                    f" -> 単一 mode {only!r} に自動補完"
+                )
+            else:
+                errors.append(
+                    f"{scene.get('scene_id')}: {template} mode={mode!r} は SCENES に無い"
+                    f" (実在: {'/'.join(sorted(modes))}) -- narration に合う mode を"
+                    f" visual.params.mode に設定すること"
+                )
+    return n_fixed, errors
+
+
+# timeline_recap contract vocabulary: the LLM imitates the 4-column SHAPE
+# but invents its own words -- track '生涯'/'業績' and colour 'BLUE'/'GOLD'. The
+# shape-based normalizer then passes the rows through untouched, and the template
+# renders every unknown colour as silent white.
+_MILESTONE_TRACK_SYNONYMS = {
+    "life": "life",
+    "work": "work",
+    "生涯": "life",
+    "人生": "life",
+    "暮らし": "life",
+    "業績": "work",
+    "仕事": "work",
+    "数学": "work",
+    "研究": "work",
+}
+_MILESTONE_KNOWN_COLOURS = {"white", "gold", "cyan", "pink", "celestial", "probability", "life"}
+_ENGLISH_COLOUR_WORDS = _MILESTONE_KNOWN_COLOURS | {
+    "blue",
+    "red",
+    "green",
+    "yellow",
+    "black",
+    "grey",
+    "gray",
+    "orange",
+    "purple",
+}
+
+
+def _normalize_milestone_vocabulary(params: dict) -> int:
+    """Map LLM-invented track/colour words in 4-column milestones to the contract.
+
+    Track synonyms (生涯 -> life, 業績 -> work) are mapped; unknown tracks fall to
+    'life' (matching the template's own `track == "work"` test, so the picture
+    does not change -- only the words become canonical). Colours are case-folded;
+    a colour that is still unknown falls to the track's default (work -> gold,
+    life -> white) instead of the template's silent white-for-everything.
+    Legend rows whose LABEL is an English colour word are dropped: the LLM wrote
+    [["white", "BLUE"]] -- a legend that names a colour explains nothing.
+    Returns the number of rows changed (0 = untouched, calibrated on all shipped
+    scene definitions).
+    """
+    changed = 0
+    milestones = params.get("milestones") or []
+    for row in milestones:
+        if not isinstance(row, list) or len(row) < 4:
+            continue
+        track_raw = str(row[2]).strip()
+        track = _MILESTONE_TRACK_SYNONYMS.get(
+            track_raw.lower(), _MILESTONE_TRACK_SYNONYMS.get(track_raw)
+        )
+        if track is None:
+            track = "life"
+        colour_raw = str(row[3]).strip()
+        colour = colour_raw.lower()
+        if colour not in _MILESTONE_KNOWN_COLOURS:
+            colour = "gold" if track == "work" else "white"
+        if track != row[2] or colour != row[3]:
+            row[2] = track
+            row[3] = colour
+            changed += 1
+    legend = params.get("legend")
+    if isinstance(legend, list):
+        kept = []
+        for entry in legend:
+            label = str(entry[1]).strip() if isinstance(entry, list) and len(entry) >= 2 else ""
+            if label.lower() in _ENGLISH_COLOUR_WORDS:
+                changed += 1
+                continue
+            kept.append(entry)
+        if len(kept) != len(legend):
+            params["legend"] = kept
+    return changed
 
 
 def strip_llm_cloud_readings(scene_def: dict) -> int:
@@ -1105,6 +1319,75 @@ def strip_llm_cloud_readings(scene_def: dict) -> int:
 # ─── Validation ──────────────────────────────────────────────────────────────
 
 
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
+_YEAR_RE = re.compile(r"(?<![0-9])1[0-9]{3}(?![0-9])")
+
+
+def normalize_formula_display_scenes(scene_def: dict) -> int:
+    """formula_display の dict 形式 formulas で `tex` キーを `latex` に直す。
+
+    テンプレは latex / formula しか読まないので、LLM が書いた `tex` は黙って空の式になり、
+    レンダは通るのに画面にはラベルしか出ない。件数を返す。
+    """
+    n = 0
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual") or {}
+            if visual.get("template") != "formula_display":
+                continue
+            params = visual.get("params")
+            if not isinstance(params, dict):
+                continue
+            for f in params.get("formulas") or []:
+                if isinstance(f, dict) and "tex" in f and not f.get("latex"):
+                    f["latex"] = f.pop("tex")
+                    n += 1
+    return n
+
+
+def _lint_manim_params(visual: dict) -> list[str]:
+    """manim scene の params を script 直後に静的検査する。
+
+    - formula_display: LaTeX 文字列に日本語 (MathTex は CJK でレンダに落ちる)
+    - timeline_recap: 副題 (note) / title が年表の点に無い年号を断言する
+      (ある回: Vision QA が visuals の後で「年表に無い年」と名指しした)
+    """
+    out: list[str] = []
+    template = visual.get("template")
+    params = visual.get("params")
+    if not isinstance(params, dict):
+        return out
+    if template == "formula_display":
+        texs: list[str] = []
+        if params.get("formula"):
+            texs.append(str(params["formula"]))
+        for f in params.get("formulas") or []:
+            if isinstance(f, dict):
+                texs.append(str(f.get("latex") or f.get("formula") or f.get("tex") or ""))
+            else:
+                texs.append(str(f))
+        for t in texs:
+            if _CJK_RE.search(t):
+                out.append(
+                    f"formula_display の LaTeX に日本語があります (MathTex でレンダに落ちる): {t[:40]!r}"
+                    " -- 記号だけにして日本語は label に"
+                )
+    elif template == "timeline_recap":
+        years = set()
+        for m in params.get("milestones") or []:
+            if isinstance(m, (list, tuple)) and m:
+                years |= set(_YEAR_RE.findall(str(m[0])))
+        if years:
+            for key in ("note", "title"):
+                extra = set(_YEAR_RE.findall(str(params.get(key) or ""))) - years
+                if extra:
+                    out.append(
+                        f"timeline_recap の {key} が年表に無い年号 {sorted(extra)} を断言しています"
+                        " -- 副題は描かれている点で言えることだけにする"
+                    )
+    return out
+
+
 def validate_scene_definition(data: dict) -> tuple[list[str], bool]:
     """Validate generated scene_definition.json.
 
@@ -1113,6 +1396,29 @@ def validate_scene_definition(data: dict) -> tuple[list[str], bool]:
     """
     warnings = []
     retry_needed = False
+
+    # ある回: route_map は legend_labels 必須 (既定ラベル 生誕/留学 が国内移動に合わず、review が
+    # 毎回 WARN を出す)。無ければ warning (retry はしない。人が category ごとの言い方を決める)。
+    for _sec in data.get("sections", []) or []:
+        for _sc in _sec.get("scenes", []) or []:
+            _v = _sc.get("visual") or {}
+            if _v.get("type") == "route_map" and not _v.get("legend_labels"):
+                _cats = sorted({r.get("category", "") for r in (_v.get("route") or []) if r})
+                warnings.append(
+                    f"{_sc.get('scene_id')}: route_map に legend_labels がありません "
+                    f"(category {_cats} ごとに経路群を言い表す日本語を書く。既定の 生誕/留学 は国内移動に合わない)"
+                )
+
+    # ある回: 比喩的な誇張 (起源・最上級) を生成直後に名指しする (retry はしない。人が言い換える)。
+    try:
+        from hyperbole_lint import scan_scene_definition as _scan_hyperbole
+
+        for h in _scan_hyperbole(data):
+            warnings.append(
+                f"{h['scene_id']}: 比喩的な誇張 [{h['kind']}] 「{h['match']}」 … {h['context']}"
+            )
+    except Exception as exc:  # lint 側の不具合で生成を止めない
+        warnings.append(f"hyperbole_lint failed: {exc}")
 
     # Top-level fields
     for field in ["episode_id", "title", "version", "sections"]:
@@ -1189,6 +1495,8 @@ def validate_scene_definition(data: dict) -> tuple[list[str], bool]:
 
             if vtype == "manim" and not visual.get("template"):
                 warnings.append(f"{scene_id}: manim has no template")
+            elif vtype == "manim":
+                warnings.extend(f"{scene_id}: {w}" for w in _lint_manim_params(visual))
 
             if vtype == "text_overlay" and not visual.get("content"):
                 warnings.append(f"{scene_id}: text_overlay has no content")
@@ -1229,6 +1537,22 @@ def validate_scene_definition(data: dict) -> tuple[list[str], bool]:
             f"OK: Char count within soft target: {total_chars} chars "
             f"({CHAR_COUNT_MIN}-{CHAR_COUNT_MAX})"
         )
+
+    # ある回: 合計が soft target を下回るときは **1 シーンあたり**でも見る。20 分の回が
+    # 2 回続けて 3,900 字 (1 シーン 148 字、直近の出荷は 213〜261 字) に潰れたが、上の
+    # ADVISORY は「accepted, length follows content」としか言わず、薄さを名指ししなかった。
+    # 較正 (出荷 75 話): 合計が帯に入っている回でも 33 シーンの 019 / 32 シーンの 022 は
+    # 1 シーン 155 字なので、合計も下回るときだけ名指しする (偽陽性 2 -> 0)。
+    n_scenes = sum(len(section.get("scenes", [])) for section in data["sections"])
+    if n_scenes and total_chars < CHAR_COUNT_MIN:
+        per_scene = total_chars / n_scenes
+        lo = int(_length_guidance_fields()["per_scene_lo"])
+        if per_scene < 0.8 * lo:
+            warnings.append(
+                f"ADVISORY: 1 シーン平均 {per_scene:.0f} 字は目安の下限 {lo} 字を大きく下回ります "
+                f"({n_scenes} シーン)。key_topics の事実が落ちていないか確認 (ある回: system prompt の"
+                "字数指示が古く 148 字/シーンに潰れた)"
+            )
 
     # Duration estimate (4.5 chars/sec + 0.8s pause per sentence)
     num_sentences = sum(
@@ -1333,8 +1657,15 @@ def generate_script(
     output_path: str,
     max_retries: int = MAX_RETRIES,
     debug: bool = False,
+    config: dict | None = None,
+    sentence_regen: bool = True,
+    regen_call_fn=None,
 ) -> tuple[dict, list[str]]:
     """Generate scene_definition with automatic retry on character count failure.
+
+    ある回: 決定論 lint (である調 / 比喩的な誇張 / forbidden_phrases) を保存前に回し、
+    引っかかった文だけを `sentence_regen` で書き直す (`sentence_regen=False` で抑止、
+    `regen_call_fn(prompt) -> str` を注入するとテストで LLM を差し替えられる)。
 
     Returns:
         (scene_def, warnings) - the best result and its warnings
@@ -1396,9 +1727,28 @@ def generate_script(
         # life/work schema to the `milestones` schema the template reads, before
         # validation / best-result tracking / save. Without this the template
         # silently fell back to its Laplace self-test.
-        n_tl = normalize_timeline_recap_scenes(scene_def)
+        n_tl = normalize_timeline_recap_scenes(scene_def, (config or {}).get("mathematician_ja"))
         if n_tl:
             print(f"  Normalized {n_tl} timeline_recap scene(s) -> milestones schema")
+        # ある回: formula_display の dict 形式で LLM が `tex` キーを書くと式が空になる
+        n_fd = normalize_formula_display_scenes(scene_def)
+        if n_fd:
+            print(f"  Normalized {n_fd} formula_display formula(s) -> latex key")
+
+        # ある回: section_type を書かない LLM 出力を section_id から補う (章ラベルが空になる)
+        n_sec = normalize_sections(scene_def)
+        if n_sec:
+            print(f"  Normalized {n_sec} section(s) -> section_type / label")
+
+        # Manim modes: a new template gives the LLM nothing to imitate and it
+        # invents 'default'. Fix what is
+        # unambiguous here; anything else is surfaced loudly now AND aborts the
+        # pre-visuals gate later, instead of raising at render minute 40.
+        n_modes, mode_errors = normalize_manim_modes(scene_def)
+        if n_modes:
+            print(f"  Normalized {n_modes} manim mode(s) -> template's only mode")
+        for _err in mode_errors:
+            print(f"  [MODE-ERROR] {_err}")
 
         # Cloud reading is gen_cloud_readings' job, not the LLM's: strip any
         # narration_speech_cloud the model emitted so its blanket は->わ over-
@@ -1408,8 +1758,28 @@ def generate_script(
         if n_cloud:
             print(f"  Stripped {n_cloud} LLM narration_speech_cloud (gen_cloud will regenerate)")
 
+        # ある回: 決定論 lint に引っかかった文だけを書き直してから validate する
+        # (validate / QA Gate 1 の同じ lint は網として残る)。
+        regen_warnings: list[str] = []
+        if sentence_regen:
+            from sentence_regen import regenerate_sentences, unresolved_warnings
+
+            _call = regen_call_fn or (
+                lambda prompt: call_llm(
+                    "あなたは日本語の台本校閲者です。指示された 1 文だけを JSON で返してください。",
+                    prompt,
+                    model,
+                    temperature,
+                    2000,
+                    debug=debug,
+                )
+            )
+            _report = regenerate_sentences(scene_def, config, _call)
+            regen_warnings = unresolved_warnings(_report)
+
         # Validate
         warnings, retry_needed = validate_scene_definition(scene_def)
+        warnings = regen_warnings + warnings
         current_chars = count_narration_chars(scene_def)
 
         print(f"  Chars: {current_chars} (target: {CHAR_COUNT_MIN}-{CHAR_COUNT_MAX})")
@@ -1459,6 +1829,11 @@ def main():
         help=f"claude/claude-sonnet/claude-opus or Gemini model name (default: {DEFAULT_MODEL})",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print prompts without calling API")
+    parser.add_argument(
+        "--no-sentence-regen",
+        action="store_true",
+        help="ある回: 決定論 lint (である調/比喩的誇張/forbidden_phrases) に引っかかった文の文単位再生成を抑止",
+    )
     parser.add_argument(
         "--temperature",
         type=float,
@@ -1582,6 +1957,8 @@ def main():
         output_path,
         max_retries=max_retries,
         debug=args.debug,
+        config=config,
+        sentence_regen=not args.no_sentence_regen,
     )
 
     # Save

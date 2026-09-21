@@ -28,6 +28,7 @@ import argparse
 import atexit
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,8 +36,27 @@ import threading
 import time
 from pathlib import Path
 
-import pipeline_log
-import pipeline_progress
+_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_DIR = os.path.join(os.path.dirname(_SRC_DIR), "scripts")
+
+
+def _ensure_import_paths() -> None:
+    """ (2026-09-19): `src/` と `scripts/` を**起動時に 1 回**だけ import path に足す。
+
+    以前は step ブロックの中で 9 か所が `sys.path.insert` していたので、その step を飛ばす
+    部分ビルドでは後続の import (`lint_image_borders` / `post_build_verify` / `review_reel`) が
+    `No module named` で落ちて silent skip になる型が繰り返し出た (visuals の白縁 lint は
+    images step の insert に相乗りしていた)。path は import の順序に依存させない。
+    """
+    for d in (_SCRIPTS_DIR, _SRC_DIR):
+        if d not in sys.path:
+            sys.path.insert(0, d)
+
+
+_ensure_import_paths()
+
+import pipeline_log  # noqa: E402
+import pipeline_progress  # noqa: E402
 
 # Ensure subprocesses use UTF-8 output (avoid cp932 crashes on Windows)
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -107,12 +127,58 @@ _DESCRIPTION_REQUIRED_SECTIONS = [
 ]
 
 
+def _write_final_srt(episode_dir: str, intro_pause: float) -> None:
+    """bgm の後に subtitles.srt を冒頭ポーズぶんずらした subtitles_final.srt を書く。
+
+    焼き込み字幕は映像ごとずれるので同期しているが、subtitles.srt は output_assembled の時刻の
+    ままで、最終動画に対して intro_pause 秒早かった。post_build_verify の check 12 が照合する。
+    """
+    src = os.path.join(episode_dir, "subtitles.srt")
+    if not os.path.exists(src):
+        print("  [WARN] subtitles.srt が無いので subtitles_final.srt を書けません")
+        return
+    try:
+        from subtitle_generator import FINAL_SRT_NAME, shift_srt
+
+        dst = os.path.join(episode_dir, FINAL_SRT_NAME)
+        n = shift_srt(src, dst, float(intro_pause))
+        print(f"  [OK] {FINAL_SRT_NAME}: {n} cues, +{float(intro_pause):.1f}s (冒頭ポーズぶん)")
+    except Exception as e:  # noqa: BLE001 - never let the srt copy kill a finished build
+        print(f"  [WARN] subtitles_final.srt を書けませんでした: {e}")
+
+
+def _endcard_args(bgm_config: dict, episode_dir: str) -> list[str]:
+    """bgm_mixer に渡す --endcard-image (無ければ空リスト)。
+
+    この解決はフル ビルドの経路にインラインで書かれていて、--rebuild-scene の
+    経路には無かった。bgm_mixer は endcard 未指定だと最終フレーム固定に
+    フォールバックするので、部分再ビルドすると **エンドカードが黙って消え、
+    最後のシーンが outro_hold 秒そのまま静止する** (ある回: closing の年表が
+    10 秒間ホールドされたまま出荷寸前だった)。両方の呼び出し元をここに通す。
+    """
+    endcard_image = bgm_config.get("endcard_image")
+    if not endcard_image:
+        return []
+    path = (
+        endcard_image if os.path.isabs(endcard_image) else os.path.join(episode_dir, endcard_image)
+    )
+    if not os.path.exists(path):
+        print(f"[WARN] endcard_image not found: {path} -- falling back to last-frame hold")
+        return []
+    return ["--endcard-image", path]
+
+
 def _probe_mp4_duration(path: str) -> float | None:
     """ffprobe で mp4 の duration を取得。読めない (moov atom 欠落等) なら None。
 
     output_final.mp4 の破損 (部分書き込み / moov 欠落) を verify 段で検出。
     bgm_mixer 側の atomic write が主防御だが、partial rebuild / 外部中断に備え
     pipeline 側でも独立に健全性を確認する layered defense。
+
+    (2026-09-19): ここは run_step を**意図して**通さない。値 (duration) を返す probe で
+    あって step ではなく、ffprobe は Claude を呼ばないので利用上限 sentinel も無関係。
+    pipeline.py で `sys.executable` を起動する呼び出しは全て sentinel 検査を通す (回帰
+ 6 が AST で固定)。
     """
     try:
         result = subprocess.run(
@@ -800,6 +866,110 @@ _PREFLIGHT_REQUIRED_MODULES = [
 ]
 
 
+def _preflight_scene_target(rebuild_scene, steps: list[str], scene_json: str) -> str | None:
+    """契約 preflight に渡す scene_json (既存ファイルを使わない回では None)。
+
+    **既に在る scene_definition を消費する回だけ**が対象。script ステップが走る回は
+    これから生成するので既存ファイルを見ても意味がない。
+
+    条件式を呼び出し側に直書きしていたら、`--rebuild-scene` と `--steps ...` の 2 経路で
+    gate が一度も走らない状態のまま回帰テストが通っていた (テストが AST の配線しか
+    見ておらず、**配線は在るのに常に None が渡る**ことを検出できなかった。ある時点 の
+    「引数を失った呼び出し」と同型)。判定を関数にすれば起動形態ごとに直接テストできる。
+
+    `--rebuild-scene` は `--steps` / `--skip-script` と排他なので steps は ALL_STEPS の
+    ままだが、実際に走るのは audio 以降で script は走らない。だから steps を見るだけでは
+    足りず、rebuild_scene を先に判定する。
+    """
+    if rebuild_scene:
+        return scene_json
+    if "script" in steps:
+        return None
+    return scene_json
+
+
+def missing_ken_burns_images(scene_def: dict, images_dir: str) -> tuple[list[str], list[str]]:
+    """images ステップ後の「PNG が欠けていないか」検査。(missing_scene_ids, expected_scene_ids) を返す。
+
+    ある回: ken_burns の scene は `visual.source` で既存ファイルを指すことがある (BnF の
+    細密画を手で合成した png)。旧実装は `<scene_id>.png` しか見なかったので、画像が
+    別名で在るのに MISSING と報告し、音声合成を終えた 30 分後にビルドを止めた。
+    期待するファイル名は image_generator / visual_generator と同じ規則で解決する
+    (`source` があればそれ、無ければ `<scene_id>.png`)。
+    """
+    expected = []  # (scene_id, expected basename without extension)
+    for sec in scene_def.get("sections", []):
+        for sc in sec.get("scenes", []):
+            v = sc.get("visual", {}) or {}
+            if v.get("type") == "ken_burns":
+                src = v.get("source") or f"{sc.get('scene_id')}.png"
+                expected.append((sc.get("scene_id"), os.path.splitext(os.path.basename(src))[0]))
+    existing = (
+        {
+            os.path.splitext(f)[0]
+            for f in os.listdir(images_dir)
+            if f.endswith(".png") and not f.startswith("wiki_")
+        }
+        if os.path.isdir(images_dir)
+        else set()
+    )
+    missing = [sid for sid, base in expected if base not in existing]
+    return missing, [sid for sid, _ in expected]
+
+
+def _preflight_scene_visual_contracts(scene_json: str) -> list[str]:
+    """起動直後に、いま作る回の scene_definition が images ステップで死なないか見る。
+
+    ある回は `ken_burns` のシーンに `source_prompt` を書き忘れ、**音声合成を終えた
+    30 分後の images ステップで**「1/12 ken_burns scenes missing PNG」で中断した。
+    scene_definition を読めば 1 秒で分かることに 30 分払っている。ここで fail-fast する。
+
+    **既存の png があれば prompt が無くても images は通る** (`image_generator` の
+    status="exists")。出荷済み 022_riemann の math1_03 がまさにそれで、prompt も
+    source も無いまま正常に出荷されている。だから prompt の有無だけを見ると
+    出荷済みを誤って止める。落ちるのは **prompt も source も既存 png も無い**
+    ときだけなので、三つ揃って初めて問題とする。
+    """
+    problems: list[str] = []
+    if not os.path.exists(scene_json):
+        return problems
+    try:
+        with open(scene_json, encoding="utf-8") as f:
+            scene_def = json.load(f)
+    except Exception:
+        return problems
+    images_dir = os.path.join(os.path.dirname(scene_json), "images")
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            sid = scene.get("scene_id", "?")
+            visual = scene.get("visual") or {}
+            if visual.get("type") == "ken_burns" and not (
+                visual.get("source_prompt")
+                or visual.get("source")
+                or os.path.exists(os.path.join(images_dir, f"{sid}.png"))
+            ):
+                problems.append(
+                    f"{sid}: ken_burns なのに source_prompt も source も既存 png も無い"
+                )
+            if isinstance(scene.get("pause_after"), str):
+                problems.append(f"{sid}: pause_after が文字列 -- audio が TypeError で落ちます")
+            # (c) timeline_recap に milestones はあるのに title / legend が無い:
+            # テンプレの fail-loud は render 時に raise して placeholder に落ちる。
+            # smoke section 32 には同じ検査があるが、pipeline の preflight には無く、
+            # closing_02 が **visuals を終えた 30 分後の Vision QA で** placeholder と
+            # 名指しされた。ここで止める (直すのは params に title を足すだけ)。
+            if visual.get("type") == "manim" and visual.get("template") == "timeline_recap":
+                params = visual.get("params") or {}
+                # 較正: legend の欠落は出荷 9 本 (042/046/048/052/058/059/062/064/066) にあり
+                # render は通る (テンプレが raise するのは title だけ)。止めるのは title のみ。
+                if params.get("milestones") and not params.get("title"):
+                    problems.append(
+                        f"{sid}: timeline_recap に milestones はあるのに title が無い "
+                        "-- render 時に raise して placeholder になります"
+                    )
+    return problems
+
+
 def _preflight_modules() -> list[str]:
     """Return list of missing-module diagnostic messages (empty if OK)."""
     missing = []
@@ -887,7 +1057,10 @@ def _env_or_dotenv(key: str) -> str | None:
 
 
 def run_preflight_checks(
-    steps: list[str], engine: str = "voicevox", skip_auth_probe: bool = False
+    steps: list[str],
+    engine: str = "voicevox",
+    skip_auth_probe: bool = False,
+    scene_json: str | None = None,
 ) -> None:
     """Run fail-fast environment checks; sys.exit(1) with clear guidance on failure.
 
@@ -895,6 +1068,8 @@ def run_preflight_checks(
     VOICEVOX (Cloud TTS is a remote REST API), so that check is skipped.
     `skip_auth_probe` skips the Claude CLI auth ping (offline / mechanical
     rebuild where a stale token is acceptable).
+    `scene_json` は **既にある scene_definition を使うとき** (--skip-script /
+    --rebuild-scene) だけ渡す。images ステップで死ぬ契約違反をここで落とすため。
     """
     print("=" * 60)
     print("  Preflight Checks")
@@ -928,9 +1103,31 @@ def run_preflight_checks(
             missing=missing,
             python_executable=sys.executable,
         )
-        pipeline_log.close()
-        sys.exit(1)
+        _abort("preflight", "preflight check failed")
     print("OK")
+
+    # (1b) scene_definition の視覚契約 — ある回: ken_burns に source_prompt が無いまま
+    # 走り、**音声合成を終えた 30 分後の images ステップで**中断した。読めば 1 秒で
+    # 分かることなので、ここで止める。`--skip-script` (既存 scene_definition を使う)
+    # のときだけ意味がある (script step はこれから生成するので対象外)。
+    if scene_json and os.path.exists(scene_json):
+        visual_problems = _preflight_scene_visual_contracts(scene_json)
+        if visual_problems:
+            print("  [1b/3] scene_definition の視覚契約... FAIL")
+            for m in visual_problems:
+                print(f"    - {m}")
+            print()
+            print("  このまま走ると images ステップ (音声合成の後) で中断します。")
+            print("  ken_burns のシーンには source_prompt を書いてください。")
+            print()
+            pipeline_log.emit(
+                pipeline_log.LEVEL_CRITICAL,
+                "preflight",
+                "scene_definition visual contract violated",
+                problems=visual_problems,
+            )
+            _abort("preflight", "preflight check failed")
+        print("  [1b/3] scene_definition の視覚契約... OK")
 
     # (2) Claude CLI auth — run whenever ANY Claude-dependent step will run
     # (not just "script"). A --steps qa/credits/visuals rebuild also calls Claude,
@@ -951,6 +1148,10 @@ def run_preflight_checks(
                 print("  OAuth セッションが失効している可能性が高いです。再認証してください:")
                 print("    claude setup-token   (1年有効な OAuth トークンを発行)")
                 print("  または ANTHROPIC_API_KEY を環境変数に設定。")
+            elif reason == "usage_limit":
+                print("  Claude の利用上限です (上の resets の時刻に戻ります)。上限が戻ってから")
+                print("  同じコマンドで再開してください。Claude を使わないステップだけなら")
+                print("  --skip-auth-probe を付けてください。")
             elif reason == "not_found":
                 print(
                     "  'claude' コマンドが PATH にありません。Claude Code CLI を確認してください。"
@@ -969,8 +1170,7 @@ def run_preflight_checks(
                 reason=reason,
                 detail=msg,
             )
-            pipeline_log.close()
-            sys.exit(1)
+            _abort("preflight", "preflight check failed")
         print(msg)
     else:
         print("  [2/3] Claude CLI auth... skipped (steps don't require it)")
@@ -990,8 +1190,7 @@ def run_preflight_checks(
                 "voicevox unreachable",
                 detail=msg,
             )
-            pipeline_log.close()
-            sys.exit(1)
+            _abort("preflight", "preflight check failed")
         print(msg)
     elif "audio" in steps and engine == "cloud":
         print("  [3/3] VOICEVOX server... skipped (engine=cloud, no local server)")
@@ -1012,18 +1211,13 @@ def run_preflight_checks(
             print("    Fix: .env に GOOGLE_TTS_API_KEY=... を設定")
             print("    (注意: Gemini/STT の GOOGLE_API_KEY とは別キー。取り違え注意)")
             pipeline_log.emit(pipeline_log.LEVEL_CRITICAL, "preflight", "cloud tts key missing")
-            pipeline_log.close()
-            sys.exit(1)
+            _abort("preflight", "preflight check failed")
         if not stt_key:
             print("OK — GOOGLE_TTS_API_KEY あり (但し GOOGLE_API_KEY 無し=STT 読みQAはスキップ)")
         else:
             print("OK (GOOGLE_TTS_API_KEY 合成 + GOOGLE_API_KEY STT)")
 
-    pipeline_log.step_end(
-        "preflight",
-        exit_code=0,
-        duration_ms=int((time.time() - preflight_start) * 1000),
-    )
+    _record_step_end("preflight", 0, preflight_start)
     print()
 
 
@@ -1062,7 +1256,6 @@ def _synthesis_forecast_gate(
     if args.dry_run_audio or args.force_regen_audio:
         return
     try:
-        sys.path.insert(0, src_dir)
         import audio_generator as _ag
 
         plan = _ag.plan_synthesis(
@@ -1085,6 +1278,15 @@ def _synthesis_forecast_gate(
         f"(キャッシュ一致 {plan['hits']} 文 / 既存キャッシュ {cached} 件、"
         f"影響 {len(plan['miss_scenes'])} scene)"
     )
+    if cached and plan["hits"] == 0 and total:
+        # ある回の真因はキャッシュキーの基が黙って変わっていたこと。
+        # 「既存キャッシュがあるのに 1 文も当たらない」はその一意な指紋なので、
+        # 割合の閾値より先にここで名指しする (engine/voice/rate の取り違えでも出る)。
+        print(
+            f"  [合成予告] 既存キャッシュ {cached} 件に **1 文も一致しません**。"
+            "キャッシュキーの基が変わった / engine・voice・rate が前回と違う "
+            "可能性があります (ある回の真因)。"
+        )
     if cached == 0 or misses == 0:
         return
 
@@ -1109,7 +1311,7 @@ def _synthesis_forecast_gate(
         return
     if not _confirm_continue("意図した全文再合成なら --allow-full-resynthesis を付けて再実行。"):
         print("Pipeline aborted (合成予告ゲート)。")
-        sys.exit(1)
+        _abort("audio", "synthesis forecast declined")
 
 
 def _run_pre_images_checks(
@@ -1121,14 +1323,11 @@ def _run_pre_images_checks(
     いなかった (2026-08-06 の再検証で判明。最初の棚卸しでは音声・visual 側だけを
     共有化し、**画像と字幕の側を取りこぼしていた**)。
     """
-    # misreading: subject-portrait use_reference gap check (before the paid Gemini run).
+    # An earlier episode: subject-portrait use_reference gap check (before the paid Gemini run).
     # If a real reference photo exists (config.wikimedia_photo_urls) but a subject
     # portrait ken_burns scene has use_reference unset, it is generated text-only,
     # which idealizes distinctive features. advisory.
     try:
-        _scripts_dir = os.path.join(src_dir, "..", "scripts")
-        if _scripts_dir not in sys.path:
-            sys.path.insert(0, _scripts_dir)
         from lint_portrait_reference import run_lint as _portrait_ref_run
 
         _pr = _portrait_ref_run(scene_json, config_path)
@@ -1146,6 +1345,108 @@ def _run_pre_images_checks(
         print(f"  [WARN] portrait-reference チェック skipped: {_e}")
 
 
+def _run_portrait_prompt_lint(episode_dir: str, _scene_def: dict, src_dir: str, args) -> bool:
+    """参照写真と source_prompt の外見矛盾を Gemini Vision で検査する (H2 → ある回で前倒し)。
+
+    ある回: config の subject_appearance に (写真を見ずに) 『顎髭なし』と書き、その文言が
+    scene prompt に焼かれ、画像 QA が 4 回落ちて 40 分を失った。この lint はそれを正しく
+    IDENTITY mismatch として検出していたが、**走るのは images ステップの末尾** = 音声合成の
+    30 分後だった。photos の直後 (audio の前) に呼び、人の誤記を最初の 1 分で止める。
+    返り値: 実行したか (images ステップ側は未実行のときだけ呼ぶ)。WARN のみ、build は止めない。
+    """
+    # ─── 強化 H2: portrait_prompt_lint pipeline 統合 ───────
+    # 強化 C standalone (scripts/portrait_prompt_lint.py) を
+    # images step 末尾で auto-gate。use_reference: true scene の
+    # source_prompt と reference 写真 (wiki_*.jpg) の特徴矛盾を Gemini
+    # Vision で catch。an earlier episode「kimono」prompt vs 全 wiki refs
+    # Western suit の mismatch を user 視聴前に検出する。
+    #
+    # 設計判断:
+    # - WARN-only (build halt しない、exit code は無視)
+    # - reference photo がない episode (古代人物) は自動 skip
+    # - --skip-portrait-lint で opt-out 可能
+    # - 失敗時 (Gemini env 未設定 / API timeout) は silent skip
+    if args.skip_portrait_lint:
+        return False
+    if True:
+        try:
+            # quick check: any use_reference + wiki_*.jpg?
+            _has_ref_scene = False
+            for _sec in _scene_def.get("sections", []):
+                for _sc in _sec.get("scenes", []):
+                    _v = _sc.get("visual", {})
+                    if _v.get("type") == "ken_burns" and _v.get("use_reference", True):
+                        _has_ref_scene = True
+                        break
+                if _has_ref_scene:
+                    break
+            _wiki_exists = any(
+                f.startswith("wiki_") and f.lower().endswith((".jpg", ".jpeg", ".png"))
+                for f in (
+                    os.listdir(os.path.join(episode_dir, "images"))
+                    if os.path.isdir(os.path.join(episode_dir, "images"))
+                    else []
+                )
+            )
+            if _has_ref_scene and _wiki_exists:
+                print("\n=== Step: portrait_prompt_lint (H2) ===")
+                _lint_cmd = [
+                    sys.executable,
+                    os.path.join(os.path.dirname(src_dir), "scripts", "portrait_prompt_lint.py"),
+                    episode_dir,
+                ]
+                _lint_result = subprocess.run(
+                    _lint_cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                # (2026-09-19): この呼び出しは run_step を通らない (stdout を正規表現で
+                # 読み、rc=2 に独自の意味があるため) ので、ある回の「子プロセスが返るたびに
+                # sentinel を見る」から漏れていた。同じ検査をここでも掛ける。
+                _abort_if_usage_limit(_lint_cmd)
+                # surface output to pipeline log
+                if _lint_result.stdout:
+                    print(_lint_result.stdout)
+                if _lint_result.stderr:
+                    print(f"[portrait_lint stderr] {_lint_result.stderr[:500]}")
+                # exit 2 = IDENTITY mismatch (顔の毛/頭髪/骨格 -- reference と矛盾、
+                # 本人の風貌が誤って伝わる shipped-defect risk); 1 = AGE-only
+                # (若年/晩年版、通常は意図的)。identity は最終 advisory roll-up に
+                # 上げて見落とし防止。WARN-only、build halt しない。
+                if _lint_result.returncode == 2:
+                    import re as _re
+
+                    _m = _re.search(r"IDENTITY_MISMATCHES:\s*(\d+)", _lint_result.stdout or "")
+                    _n_id = int(_m.group(1)) if _m else 1
+                    print(
+                        f"  [!] portrait_prompt_lint: IDENTITY mismatch x{_n_id} "
+                        "(顔の毛/頭髪/骨格が reference と矛盾) -- 本人の風貌が誤って"
+                        "伝わる。出荷前に必ず確認 (ある回 full beard vs 口ひげ)。"
+                    )
+                    try:
+                        pipeline_log.emit_stderr_warn_summary("portrait_identity_mismatch", _n_id)
+                    except Exception:
+                        pass
+                elif _lint_result.returncode == 1:
+                    print(
+                        "  [WARN] portrait_prompt_lint: 年齢帯のみの mismatch "
+                        "(若年/晩年版、通常は意図的)。identity 矛盾なし。"
+                    )
+            else:
+                if not _wiki_exists:
+                    print(
+                        "  [SKIP] portrait_prompt_lint: no wiki_*.jpg reference "
+                        "photos in episode (古代/近代以前 pattern)"
+                    )
+                else:
+                    print("  [SKIP] portrait_prompt_lint: no use_reference=true ken_burns scenes")
+        except Exception as _e:
+            print(f"  [WARN] portrait_prompt_lint skipped (env/api issue): {_e}")
+    return True
+
+
 def _run_post_images_border_lint(episode_dir: str, src_dir: str) -> None:
     """生成画像の白縁を実測する (の source 側)。両経路で共有する。"""
     # ─── ある回: 白縁検出 (安価な静的チェック、Vision QA とは別) ──────
@@ -1153,9 +1454,6 @@ def _run_post_images_border_lint(episode_dir: str, src_dir: str) -> None:
     # では消えきらず、最終動画で白帯になる。images
     # 直後に四辺の near-white strip を実測し、再描画/トリミングを促す (WARN-only)。
     try:
-        _scripts_dir = os.path.join(src_dir, "..", "scripts")
-        if _scripts_dir not in sys.path:
-            sys.path.insert(0, _scripts_dir)
         from lint_image_borders import run as _border_run
 
         _bw = _border_run(os.path.join(episode_dir, "images"))
@@ -1173,6 +1471,26 @@ def _run_post_images_border_lint(episode_dir: str, src_dir: str) -> None:
     except Exception as _e:
         print(f"  [WARN] 白縁チェック skipped: {_e}")
 
+    # ある回: AI が下隅に描き込む画家風署名の vision 検査 (advisory)。
+    # post_build_verify のコーナーシート目視は残る -- これはその前処理で、
+    # ある回で暗部の署名 1 件をシート目視で見落とし再ビルドが 1 周増えた
+    # 反省。Claude 1 呼び (Max 内コスト 0)、CLI 不可なら [SKIP]。
+    try:
+        from check_image_signatures import run as _sig_run
+
+        print("\n  [SIG] 署名コーナー vision チェック (advisory):")
+        _sig_found = _sig_run(os.path.join(episode_dir, "images"))
+        if _sig_found is None:
+            print("  [SIG][SKIP] Claude CLI 不可のため未実施 (シート目視で代替)")
+        elif _sig_found:
+            for _s in _sig_found:
+                print(f"  [SIG][WARN] {_s}: 署名らしき書き込み (クロップ前に目視確認)")
+            _advisory_warn_counts["image_signature_check"] = len(_sig_found)
+        else:
+            print("  [SIG][OK] 署名らしき書き込みなし")
+    except Exception as _e:
+        print(f"  [SIG][WARN] 署名チェック skipped: {_e}")
+
 
 def _run_image_qa_gate2(
     episode_dir: str, scene_json: str, src_dir: str, args, scenes: str | None = None
@@ -1185,7 +1503,8 @@ def _run_image_qa_gate2(
     いなかった。
     """
     # Runs AFTER image generation so freshly-produced images are evaluated.
-    # The prompt covers narration-image consistency plus the original time-place /
+    # The prompt covers narration-image consistency (主要人物の有無 /
+    # 性別 / 人数 / 活動・小道具 / 細部) plus the original time-place /
     # subject / atmosphere checks.
     if not ((args.qa or args.qa_quick) and not args.skip_qa and not args.skip_qa_image_narration):
         return
@@ -1206,18 +1525,50 @@ def _run_image_qa_gate2(
     pipeline_log.step_start("qa_image", command=" ".join(cmd))
     _qa_image_start = time.time()
     qa_image_exit = _run_subprocess_with_stderr_capture(cmd)
-    pipeline_log.step_end(
-        "qa_image",
-        exit_code=qa_image_exit,
-        duration_ms=int((time.time() - _qa_image_start) * 1000),
-    )
+    _record_step_end("qa_image", qa_image_exit, _qa_image_start)
     if qa_image_exit == 1:
         print(f"\n[WARN] Image QA found critical issues. Check: {qa_img_report}")
         if not _confirm_continue(
             "Re-run with --skip-qa-image-narration to skip Gate 2, or --skip-qa to skip all QA."
         ):
             print("Pipeline aborted (image QA critical).")
-            sys.exit(1)
+            _abort("images", "image QA gate 2 declined")
+
+
+def _run_subtitle_marker_check(scene_json: str) -> None:
+    """字幕を焼く前に、長い narration 段落から分割マーカー `|` が消えていないか見る。
+
+    ある回で narration を一括置換したとき、検索文字列がマーカーをまたいだ段落で
+    **`|` ごと落ちて 9 段落が丸裸になり**、字幕が 25 文字の自動分割になった
+    (数字と助数詞のあいだで切れる等)。既存の「字幕 25 文字」検査は**自動分割された
+    後**を見るので、この事故は素通りする -- 分割後は 25 文字以内に収まるからである。
+    見るべきは分割前の段落そのもの。**user が完成動画を見て気づいた**。
+
+    較正: 出荷済み 68 本で 6 ep / 28 段落。うち 24 段落は規約が定着する前の最初期 2 本
+    (009_seki / 010_gauss) なので、いま作る回では実質 0。advisory (ビルドは止めない)。
+    """
+    if not os.path.exists(scene_json):
+        return
+    try:
+        with open(scene_json, encoding="utf-8") as f:
+            scene_def = json.load(f)
+    except Exception:
+        return
+    bare = []
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            for i, para in enumerate(scene.get("narration") or []):
+                if "|" not in para and len(para) > 28:
+                    bare.append(f"{scene.get('scene_id', '?')}[{i}] ({len(para)}字) {para[:30]}")
+    if not bare:
+        return
+    print(f"  [字幕マーカー] {len(bare)} 段落に分割マーカー `|` がありません (advisory)")
+    for line in bare[:10]:
+        print(f"    {line}")
+    print(
+        "    -> このままだと 25 文字で自動分割され、意味の切れ目を無視した字幕になります。"
+        "意味的に自然な位置に `|` を置いてください。"
+    )
 
 
 def _run_font_coverage_check(scene_json: str, src_dir: str) -> None:
@@ -1279,6 +1630,77 @@ def _run_audio_pre_checks(scene_json: str, src_dir: str, tts_engine: str, args) 
             )
 
 
+_SENTENCE_WAV_RE = re.compile(r".+_\d{3}\.wav$")
+
+
+def _sentence_resynthesized_since_normalize(audio_dir: str, backup: str) -> bool:
+    """前回の正規化 (backup/.applied) より新しい **文 wav** があるか。scene 単位の連結 wav は
+    キャッシュ命中でも毎回書き直されるので見ない (cloud_speed_qa._backup_is_stale と同じ規則)。
+    marker が無い旧 backup は「分からない」ので True (従来どおり掛け直す側に倒す)。"""
+    marker = os.path.join(backup, ".applied")
+    if not os.path.exists(marker):
+        return True
+    m = os.path.getmtime(marker)
+    try:
+        names = os.listdir(audio_dir)
+    except OSError:
+        return False
+    for name in names:
+        if not _SENTENCE_WAV_RE.match(name):
+            continue
+        p = os.path.join(audio_dir, name)
+        if os.path.isfile(p) and os.path.getmtime(p) > m + 1.0:
+            return True
+    return False
+
+
+def should_auto_renormalize(
+    episode_dir: str,
+    allow_normalize: bool,
+    already_normalized: bool,
+    opt_out: bool = False,
+) -> bool:
+    """再合成した文の速度段差を、正規化済みの回では自動で均すか。
+
+    ある回は初回ビルドで `cloud_speed_qa --apply` を掛けたあと、読みの修正で 16 文を
+    再合成した。新しい wav だけが未正規化なので隣の文と -20% の段差が出て、検出は
+    したのに掛け直しは手作業 → subtitles 以降をもう一周 (1 時間) 回した。
+    **その回で一度 正規化すると決めた** (= audio/_prenorm_backup/ が在る) なら、検出器が
+    段差を報告した時点で掛け直すのが、その決定の自然な続きである。段差ゼロなら掛けない
+    (実測が段差なしなら正規化しない、の規則は保つ)。
+
+    掛けない条件: 部分再ビルド (allow_normalize=False: 他 scene の尺だけ動いて で
+    止まる) / このビルドで既に --normalize-cloud-speed が走った / --no-auto-renormalize /
+    backup が無い (= 未正規化の回。掛けるかどうかは operator の判断) / 判定 sidecar が無い。
+    """
+    if opt_out or not allow_normalize or already_normalized:
+        return False
+    backup = os.path.join(episode_dir, "audio", "_prenorm_backup")
+    if not os.path.isdir(backup):
+        return False
+    # ある回 (再検証で発覚): 段差が「残っている」だけでは掛け直さない。正規化しても残る段差
+    # (短い強調の一文の前後) は毎回検出され、そのたびに掛け直すと **一文も再合成していない
+    # audio ステップで音声が変わる**。掛け直すのは、前回の正規化より新しい文 wav がある =
+    # 実際に再合成した文があるときだけ。
+    if not _sentence_resynthesized_since_normalize(os.path.join(episode_dir, "audio"), backup):
+        return False
+    verdict_path = os.path.join(episode_dir, "_speed_qa_verdict.json")
+    try:
+        with open(verdict_path, encoding="utf-8") as f:
+            v = json.load(f)
+    except Exception:  # noqa: BLE001 - sidecar 無し/壊れ = 判定できないので掛けない
+        return False
+    jumps = int(v.get("adjacent_jumps", 0) or 0) + int(v.get("boundary_jumps", 0) or 0)
+    if jumps <= 0:
+        return False
+    print(
+        "\n[cloud_speed_normalize] この回は正規化済み (_prenorm_backup/ あり) ですが、"
+        f"再合成した文で段差 {jumps} 件を検出したので掛け直します "
+        f"(--no-auto-renormalize で抑止)。"
+    )
+    return True
+
+
 def _run_audio_post_checks(
     scene_json: str,
     episode_dir: str,
@@ -1338,8 +1760,26 @@ def _run_audio_post_checks(
     if os.path.exists(stt_script):
         stt_cmd = [sys.executable, stt_script, scene_json, "--audio-dir", audio_subdir]
         if scenes:
+            # ある回: --scenes つきの実行が既定の stt_qa_report.txt を **1 シーン分で
+            # 上書き**し、全編の書き起こしが消えていた。読みの記録として使うものなので、
+            # 部分実行は別名に落として全編版を残す。
             stt_cmd += ["--scenes", scenes]
+            safe = re.sub(r"[^0-9A-Za-z_.-]", "_", scenes)[:40]
+            stt_cmd += [
+                "--report",
+                os.path.join(episode_dir, f"stt_qa_report_{safe}.txt"),
+            ]
         run_step("stt_qa (Cloud read check)", stt_cmd, required=False)
+
+    # ある回: 期待かな (cloud 文) vs 実際かな (文 wav の STT) の差分。stt_qa は「指定した読みが
+    # 在るか」しか見ないので、指定していない語の誤読 (魚市場/食う者/種/獲る/型…) は見えなかった。
+    # advisory。wav の md5 でキャッシュするので、再合成していない文は API を呼ばない。
+    kana_script = os.path.join(os.path.dirname(src_dir), "scripts", "kana_reading_diff.py")
+    if os.path.exists(kana_script):
+        kana_cmd = [sys.executable, kana_script, scene_json, "--audio-dir", audio_subdir]
+        if scenes:
+            kana_cmd += ["--scenes", scenes]
+        run_step("kana_reading_diff (期待かな vs 実際かな)", kana_cmd, required=False)
 
     # detection (always-on advisory): surface abrupt articulation
     # jumps pre-publish (writes speed_qa_report.txt). Detection is free
@@ -1350,6 +1790,243 @@ def _run_audio_post_checks(
             [sys.executable, speed_script, scene_json, "--audio-dir", audio_subdir],
             required=False,
         )
+        if should_auto_renormalize(
+            episode_dir,
+            allow_normalize=allow_normalize,
+            already_normalized=bool(args.normalize_cloud_speed),
+            opt_out=bool(
+                args.no_auto_renormalize
+            ),  # 登録済みフラグは直接読む (getattr で隠さない)
+        ):
+            run_step(
+                "cloud_speed_normalize (再合成分の段差を均す)",
+                [
+                    sys.executable,
+                    speed_script,
+                    scene_json,
+                    "--audio-dir",
+                    audio_subdir,
+                    "--timing",
+                    timing_json,
+                    "--apply",
+                ],
+            )
+            run_step(
+                "speed_qa (正規化後の再測定)",
+                [sys.executable, speed_script, scene_json, "--audio-dir", audio_subdir],
+                required=False,
+            )
+
+
+# ─── (2026-09-19): full build と --rebuild-scene が共有する step の argv と締め ─────
+# それまで subtitles / assemble / credits / bgm の argv と最終サマリが main() と
+# _run_partial_rebuild() に逐語で 2 回書かれていた。argv は 1 か所で組み、締めも 1 つの helper で出す。
+
+
+def _subtitles_cmd(
+    src_dir: str, timing_json: str, episode_dir: str, scene_json: str, tts_engine: str
+) -> list[str]:
+    """subtitle_generator.py の argv。"""
+    cmd = [
+        sys.executable,
+        os.path.join(src_dir, "subtitle_generator.py"),
+        timing_json,
+        "--output-dir",
+        episode_dir,
+        "--scene-json",
+        scene_json,
+    ]
+    # Engine-aware subtitle timing: VOICEVOX-measured per-segment durations are
+    # only valid when VOICEVOX is the speaking engine. For Cloud episodes the audio
+    # is Google Cloud TTS reading text_clean (narration_speech_cloud), so querying
+    # VOICEVOX for the *display* text drifts the split (and re-appears only when
+    # the local VOICEVOX server happens to be up -> non-reproducible). Force the
+    # calibrated local mora estimate instead.
+    if tts_engine == "cloud":
+        cmd.append("--no-voicevox-timing")
+    return cmd
+
+
+def _assemble_cmd(
+    src_dir: str, scene_json: str, timing_json: str, episode_dir: str, no_subtitles: bool = False
+) -> list[str]:
+    """video_assembler.py の argv。"""
+    cmd = [
+        sys.executable,
+        os.path.join(src_dir, "video_assembler.py"),
+        scene_json,
+        timing_json,
+        "--output-dir",
+        episode_dir,
+        "--output-name",
+        OUTPUT_ASSEMBLED,
+    ]
+    if no_subtitles:
+        cmd.append("--no-subtitles")
+    return cmd
+
+
+def _credits_cmd(
+    src_dir: str, config_path: str, bgm_config: dict, skip_intro_check: bool = False
+) -> list[str]:
+    """credits_generator.py の argv。intro-pause は bgm_mixer と同じ既定 (1.0) でないと
+    YouTube の章がその分ずれる。"""
+    cmd = [sys.executable, os.path.join(src_dir, "credits_generator.py"), config_path]
+    intro_pause = bgm_config.get("intro_pause", 1.0)
+    if intro_pause > 0:
+        cmd.extend(["--intro-pause", str(intro_pause)])
+    if skip_intro_check:
+        cmd.append("--skip-intro-check")
+    return cmd
+
+
+def _bgm_cmd(src_dir: str, episode_dir: str, bgm_file: str, bgm_config: dict) -> list[str]:
+    """bgm_mixer.py の argv (config の BGM パラメータ + 任意のエンドカード)。"""
+    cmd = [
+        sys.executable,
+        os.path.join(src_dir, "bgm_mixer.py"),
+        os.path.join(episode_dir, OUTPUT_ASSEMBLED),
+        bgm_file,
+        "--output",
+        os.path.join(episode_dir, OUTPUT_FINAL),
+        "--intro-pause",
+        str(bgm_config.get("intro_pause", 1.0)),
+        "--outro-hold",
+        str(bgm_config.get("outro_hold", 10.0)),
+        "--outro-fade",
+        str(bgm_config.get("outro_fade", 3.0)),
+        "--bgm-volume",
+        str(bgm_config.get("volume_db", -20)),
+        "--bgm-fadein",
+        str(bgm_config.get("bgm_fadein", 2.0)),
+    ]
+    # Optional landscape endcard (replaces the last-frame freeze).
+    cmd.extend(_endcard_args(bgm_config, episode_dir))
+    return cmd
+
+
+def _run_bgm_step(
+    episode_dir: str, src_dir: str, bgm_file: str, bgm_config: dict, label: str = "bgm"
+) -> bool:
+    """BGM step (skip 条件 → bgm_mixer → subtitles_final.srt)。走ったら True。"""
+    if not bgm_file:
+        print("\n[SKIP] Skipping BGM (no bgm.file in episode_config.json)")
+        return False
+    if not os.path.exists(bgm_file):
+        print(f"\n[WARN] BGM file not found: {bgm_file}")
+        print("   Skipping BGM mixing.")
+        return False
+    if not os.path.exists(os.path.join(episode_dir, OUTPUT_ASSEMBLED)):
+        print(f"\n[WARN] {OUTPUT_ASSEMBLED} not found. Skipping BGM mixing.")
+        return False
+    run_step(label, _bgm_cmd(src_dir, episode_dir, bgm_file, bgm_config))
+    # ある回: subtitles.srt は intro_pause ぶん早いので、最終動画用の srt を書く。
+    _write_final_srt(episode_dir, bgm_config.get("intro_pause", 1.0))
+    return True
+
+
+def _print_build_summary(
+    title: str,
+    elapsed: float,
+    episode_dir: str,
+    verify_warnings: list,
+    *,
+    head_lines: tuple = (),
+    steps: list | None = None,
+) -> None:
+    """最終サマリの箱 (full build と partial rebuild で同じ)。
+
+    verify_outputs の警告と advisory の roll-up は**箱の中**に出す (: tail だけ読んで
+    見落とした)。`steps` を渡すと の「今回未実行のステップの advisory は再検証されて
+    いない」を出す (partial rebuild は steps_run を渡さないので出さない)。placeholder の
+    バナーは verify_warnings にあれば両経路で出す。
+    """
+    output_assembled = os.path.join(episode_dir, OUTPUT_ASSEMBLED)
+    output_final = os.path.join(episode_dir, OUTPUT_FINAL)
+
+    print(f"\n{'=' * 60}")
+    print(f"  {title}")
+    print(f"{'=' * 60}")
+    for line in head_lines:
+        print(f"  {line}")
+    print(f"  Total time: {elapsed:.1f}s ({elapsed / 60:.1f} min)")
+    for _line in _format_step_durations(_step_durations, elapsed):
+        print(f"  {_line}")
+    _logger = pipeline_log.get_logger()
+    if _logger is not None:
+        print(f"  Log:        {_logger.log_file}")
+
+    # Show final output. output_final.mp4 only exists when bgm step finished;
+    # if only assemble ran (or bgm was skipped), report the intermediate file.
+    if os.path.exists(output_final):
+        size_mb = os.path.getsize(output_final) / (1024 * 1024)
+        print(f"  Output:     {output_final} ({size_mb:.1f} MB)")
+    elif os.path.exists(output_assembled):
+        size_mb = os.path.getsize(output_assembled) / (1024 * 1024)
+        print(f"  Output:     {output_assembled} ({size_mb:.1f} MB) [bgm pending]")
+    else:
+        print("  Output:     not created (check step errors)")
+
+    # Surface unresolved verify_outputs warnings inside the summary box so a reader
+    # who scans only the tail cannot miss them (a description.txt stale-timestamp
+    # WARN once fired in 'Output Verification' but was overlooked by reading only
+    # 'Pipeline Complete'). The placeholder banner below still handles the CRITICAL
+    # case; this line covers every verification warning (incl. description drift).
+    if verify_warnings:
+        print(
+            f"  [!] {len(verify_warnings)} verification warning(s) above "
+            "-- review 'Output Verification' before publishing."
+        )
+    # advisory の roll-up。 の教訓は「検出済みの警告がサマリに集約されないと
+    # 読まれない」で、それは full build に限らない。
+    if _advisory_warn_counts:
+        print(
+            f"  [!] advisory warnings -- {_format_advisory_rollup()} "
+            "(review each step's output above)"
+        )
+    _advisory_rollup_state["shown"] = True
+
+    if steps is not None:
+        # a partial run does not re-run the advisory checks owned by the steps it
+        # skipped, so their last verdict is stale. Name them rather than let the (clean)
+        # summary imply everything was re-validated this run.
+        _skipped_advisory = [s for s in _ADVISORY_STEPS if s not in steps]
+        if _skipped_advisory:
+            print(
+                "  [i] 今回未実行のステップの advisory は再検証されていません: "
+                + ", ".join(f"{s} ({_ADVISORY_STEPS[s]})" for s in _skipped_advisory)
+            )
+
+    # mid-build Claude auth expiry -> some Claude QA was SKIPPED (not run
+    # silently). Surface prominently with resume guidance so it is unmissable.
+    if _auth_probe_warnings:
+        print(
+            f"  [!!] Claude auth 失効で {len(_auth_probe_warnings)} 件の QA を skip しました "
+            "-- 再認証 (claude setup-token) 後に該当ステップを再実行してください:"
+        )
+        for _w in _auth_probe_warnings:
+            print(f"       - {_w}")
+
+    print(f"{'=' * 60}")
+
+    # Prominent placeholder/missing-animation banner so a Manim render
+    # timeout/failure can NEVER silently ship in the final video (a past
+    # near-miss: math_07 gimbal_lock shipped as a title-card placeholder and was
+    # only caught by manual frame inspection). Reuses the gated G1 detection in
+    # verify_outputs (only fires when the visuals step ran this invocation).
+    placeholder_warn = next(
+        (w for w in verify_warnings if "fell back to" in w and "placeholder" in w),
+        None,
+    )
+    if placeholder_warn:
+        print(f"\n{'!' * 60}")
+        print("  [CRITICAL] PLACEHOLDER SCENE(S) IN THE FINAL VIDEO")
+        print(f"{'!' * 60}")
+        print(placeholder_warn.strip())
+        print("  *** The video shows a plain title-card instead of the animation")
+        print("  *** for the scene(s) above. Fix the Manim template (timeout/error),")
+        print("  *** then re-run --steps visuals,assemble,bgm before publishing.")
+        print(f"{'!' * 60}")
 
 
 def _run_partial_rebuild(
@@ -1384,10 +2061,10 @@ def _run_partial_rebuild(
     # Validate prerequisites
     if not os.path.exists(scene_json):
         print(f"[PARTIAL REBUILD] ERROR: scene_definition.json not found: {scene_json}")
-        sys.exit(1)
+        _abort("rebuild-scene", "partial rebuild aborted")
     if not os.path.exists(timing_json):
         print(f"[PARTIAL REBUILD] ERROR: timing.json not found: {timing_json}")
-        sys.exit(1)
+        _abort("rebuild-scene", "partial rebuild aborted")
 
     # Load scene_definition.json and find the target scene
     with open(scene_json, encoding="utf-8") as f:
@@ -1404,7 +2081,7 @@ def _run_partial_rebuild(
 
     if target_scene is None:
         print(f"[PARTIAL REBUILD] ERROR: Scene '{scene_id}' not found in scene_definition.json")
-        sys.exit(1)
+        _abort("rebuild-scene", "partial rebuild aborted")
 
     vtype = target_scene["visual"]["type"]
 
@@ -1437,9 +2114,7 @@ def _run_partial_rebuild(
     # 走るのが普通なので、ここが読み検査の最も要る場面。cloud_reading_lint の
     # 検査 (9) は narration だけ直して narration_speech_cloud が古いまま
     # (音声は編集前の語を喋り、字幕だけ新しくなる) を捕まえる。
-    if args is not None:
-        _run_audio_pre_checks(scene_json, src_dir, tts_engine, args)
-    sys.path.insert(0, src_dir)
+    _run_audio_pre_checks(scene_json, src_dir, tts_engine, args)
     import audio_generator
     from audio_generator import rebuild_single_scene_audio
 
@@ -1460,50 +2135,34 @@ def _run_partial_rebuild(
         tts_rate=tts_rate,
         force_regen=force_regen,
     )
-    pipeline_log.step_end(
-        "audio (partial rebuild)",
-        exit_code=0 if audio_ok else 1,
-        duration_ms=int((time.time() - _audio_start) * 1000),
-        scene_id=scene_id,
+    _record_step_end(
+        "audio (partial rebuild)", 0 if audio_ok else 1, _audio_start, scene_id=scene_id
     )
     if not audio_ok:
-        pipeline_log.close()
         print("[PARTIAL REBUILD] Audio regeneration failed. Aborting.")
-        sys.exit(1)
+        _abort("rebuild-scene", "partial rebuild aborted")
 
     # 合成した wav を実測する (STT はこのシーンだけ / 速度は episode 全体と比べる)。
-    if args is not None:
-        _run_audio_post_checks(
-            scene_json,
-            episode_dir,
-            timing_json,
-            src_dir,
-            tts_engine,
-            args,
-            scenes=scene_id,
-            allow_normalize=False,
-        )
+    _run_audio_post_checks(
+        scene_json,
+        episode_dir,
+        timing_json,
+        src_dir,
+        tts_engine,
+        args,
+        scenes=scene_id,
+        allow_normalize=False,
+    )
 
     # --- Step 2: Subtitle regeneration (full, since global timestamps changed) ---
     print("\n[PARTIAL REBUILD] Step 2/6: Subtitle regeneration (full)")
     # 字幕は**全編**焼き直すので、フォントが持たない漢字の検査も full build と同じく通す。
-    if args is not None:
-        _run_font_coverage_check(scene_json, src_dir)
-    cmd = [
-        sys.executable,
-        os.path.join(src_dir, "subtitle_generator.py"),
-        timing_json,
-        "--output-dir",
-        episode_dir,
-        "--scene-json",
-        scene_json,
-    ]
-    # Engine-aware: Cloud episodes must not use VOICEVOX segment timing (it
-    # measures the display text, not the Cloud-spoken text_clean). See the main
-    # subtitles step for the full rationale.
-    if tts_engine == "cloud":
-        cmd.append("--no-voicevox-timing")
-    run_step("subtitles (partial rebuild)", cmd)
+    _run_subtitle_marker_check(scene_json)
+    _run_font_coverage_check(scene_json, src_dir)
+    run_step(
+        "subtitles (partial rebuild)",
+        _subtitles_cmd(src_dir, timing_json, episode_dir, scene_json, tts_engine),
+    )
 
     # --- Step 3: Image regeneration (only for ken_burns scenes) ---
     if vtype == "ken_burns":
@@ -1511,8 +2170,7 @@ def _run_partial_rebuild(
         # 画像を作り直す以上、full build と同じ検査を通す。CLAUDE.md の
         # 「画像を再生成したら qa_image_checker を回す。勝手に QA を skip しない」は
         # この経路にも当てはまるのに、走っていなかった (2026-08-06 の再検証で判明)。
-        if args is not None:
-            _run_pre_images_checks(episode_dir, scene_json, config_path, src_dir)
+        _run_pre_images_checks(episode_dir, scene_json, config_path, src_dir)
         # Delete existing image to force regeneration
         images_dir = os.path.join(episode_dir, "images")
         for ext in (".png", ".jpg"):
@@ -1533,10 +2191,9 @@ def _run_partial_rebuild(
             config_path,
         ]
         run_step("images (partial rebuild)", cmd, required=False)
-        if args is not None:
-            _run_post_images_border_lint(episode_dir, src_dir)
-            # Gate 2 はそのシーンだけに絞る (13 枚へ vision を投げない)。
-            _run_image_qa_gate2(episode_dir, scene_json, src_dir, args, scenes=scene_id)
+        _run_post_images_border_lint(episode_dir, src_dir)
+        # Gate 2 はそのシーンだけに絞る (13 枚へ vision を投げない)。
+        _run_image_qa_gate2(episode_dir, scene_json, src_dir, args, scenes=scene_id)
     else:
         print(f"\n[PARTIAL REBUILD] Step 3/6: Image regeneration -- skipped ({vtype})")
 
@@ -1546,9 +2203,8 @@ def _run_partial_rebuild(
     # pitfalls に「将来課題」として載っていたが、実際には pre-visuals 検査群ごと
     # 抜けていた -- 経路ラベルの衝突も、空 params による別 ep データの描画も、
     # 地名カバレッジも、部分再ビルドでは誰も見ていなかった。
-    if args is not None:
-        _run_pre_visuals_checks(episode_dir, scene_json, config, args, src_dir)
-        _run_route_map_preflight(scene_json, args)
+    _run_pre_visuals_checks(episode_dir, scene_json, config, args, src_dir)
+    _run_route_map_preflight(scene_json, args)
 
     from visual_generator import rebuild_single_scene_visual
 
@@ -1562,122 +2218,57 @@ def _run_partial_rebuild(
         episode_dir,
         manim_templates_dir=manim_dir,
     )
-    pipeline_log.step_end(
-        "visual (partial rebuild)",
-        exit_code=0 if visual_ok else 1,
-        duration_ms=int((time.time() - _visual_start) * 1000),
-        scene_id=scene_id,
+    _record_step_end(
+        "visual (partial rebuild)", 0 if visual_ok else 1, _visual_start, scene_id=scene_id
     )
     if not visual_ok:
         pipeline_log.close()
         print("[PARTIAL REBUILD] Visual regeneration failed. Aborting.")
-        sys.exit(1)
+        _abort("rebuild-scene", "partial rebuild aborted")
 
     # レンダ後の検査。Vision QA はこのシーンだけに絞る (全 scene へ投げると
     # 部分再ビルドの速さが失われる)。白帯と bbox 衝突は決定論で速いので絞らない。
-    if args is not None:
-        _run_post_visual_lints(episode_dir, scene_json, src_dir, args, scenes=scene_id)
+    _run_post_visual_lints(episode_dir, scene_json, src_dir, args, scenes=scene_id)
 
     # --- Step 5: Video assembly (full, unavoidable) ---
     print("\n[PARTIAL REBUILD] Step 5/6: Video assembly (full)")
     # 1 シーンだけ再 render したのに、他の scene の尺が動いていないか。
     # audio も subtitles も回しているので Guard-B / B3 は自動的に skip される。
-    if args is not None:
-        _run_pre_assemble_guards(episode_dir, scene_json, timing_json, steps_run, args)
-    cmd = [
-        sys.executable,
-        os.path.join(src_dir, "video_assembler.py"),
-        scene_json,
-        timing_json,
-        "--output-dir",
-        episode_dir,
-        "--output-name",
-        OUTPUT_ASSEMBLED,
-    ]
-    run_step("assemble (partial rebuild)", cmd)
+    _run_pre_assemble_guards(episode_dir, scene_json, timing_json, steps_run, args)
+    run_step(
+        "assemble (partial rebuild)",
+        _assemble_cmd(src_dir, scene_json, timing_json, episode_dir),
+    )
 
     # --- Step 5.5: Credits ---
     print("\n[PARTIAL REBUILD] Step 5.5/6: Credits")
-    cmd = [
-        sys.executable,
-        os.path.join(src_dir, "credits_generator.py"),
-        config_path,
-    ]
-    # Default (1.0) must match bgm_mixer's default to keep chapters aligned.
-    intro_pause = bgm_config.get("intro_pause", 1.0)
-    if intro_pause > 0:
-        cmd.extend(["--intro-pause", str(intro_pause)])
-    if skip_intro_check:
-        cmd.append("--skip-intro-check")
-    run_step("credits (partial rebuild)", cmd, required=False)
+    run_step(
+        "credits (partial rebuild)",
+        _credits_cmd(src_dir, config_path, bgm_config, skip_intro_check),
+        required=False,
+    )
 
     # --- Step 6: BGM mixing (full, unavoidable) ---
-    output_assembled = os.path.join(episode_dir, OUTPUT_ASSEMBLED)
-    output_final = os.path.join(episode_dir, OUTPUT_FINAL)
-    if bgm_file and os.path.exists(bgm_file) and os.path.exists(output_assembled):
-        print("\n[PARTIAL REBUILD] Step 6/6: BGM mixing")
-        cmd = [
-            sys.executable,
-            os.path.join(src_dir, "bgm_mixer.py"),
-            output_assembled,
-            bgm_file,
-            "--output",
-            output_final,
-            "--intro-pause",
-            str(bgm_config.get("intro_pause", 1.0)),
-            "--outro-hold",
-            str(bgm_config.get("outro_hold", 10.0)),
-            "--outro-fade",
-            str(bgm_config.get("outro_fade", 3.0)),
-            "--bgm-volume",
-            str(bgm_config.get("volume_db", -20)),
-            "--bgm-fadein",
-            str(bgm_config.get("bgm_fadein", 2.0)),
-        ]
-        run_step("bgm (partial rebuild)", cmd)
-    else:
-        print(f"\n[PARTIAL REBUILD] Step 6/6: BGM — skipped (no BGM file or {OUTPUT_ASSEMBLED})")
+    print("\n[PARTIAL REBUILD] Step 6/6: BGM mixing")
+    _run_bgm_step(episode_dir, src_dir, bgm_file, bgm_config, label="bgm (partial rebuild)")
 
     # --- 出力検査 + レビューコピー + post_build_verify + レビューリール ---
     # full build と同じ締めを通す。ここが無かったので、部分再ビルドで作った
     # 出荷物は構造検査 11 件を一度も受けず、temp_videos のコピーも古いままだった。
     verify_warnings: list[str] = []
-    if args is not None:
-        verify_warnings, _ = _run_output_verification(
-            episode_dir, src_dir, config, args, steps_run, scene_json
-        )
+    verify_warnings, _ = _run_output_verification(
+        episode_dir, src_dir, config, args, steps_run, scene_json
+    )
 
     # --- Summary ---
     total_elapsed = time.time() - rebuild_start
-
-    print(f"\n{'=' * 60}")
-    print("  PARTIAL REBUILD Complete")
-    print(f"{'=' * 60}")
-    print(f"  Scene:      {scene_id}")
-    print(f"  Total time: {total_elapsed:.1f}s ({total_elapsed / 60:.1f} min)")
-
-    if os.path.exists(output_final):
-        size_mb = os.path.getsize(output_final) / (1024 * 1024)
-        print(f"  Output:     {output_final} ({size_mb:.1f} MB)")
-    elif os.path.exists(output_assembled):
-        size_mb = os.path.getsize(output_assembled) / (1024 * 1024)
-        print(f"  Output:     {output_assembled} ({size_mb:.1f} MB) [bgm pending]")
-
-    # advisory の roll-up を部分再ビルドでも出す。 の教訓は「検出済みの警告が
-    # サマリに集約されないと読まれない」で、それは full build に限らない。
-    if verify_warnings:
-        print(
-            f"  [!] {len(verify_warnings)} verification warning(s) above "
-            "-- review 'Output Verification' before publishing."
-        )
-    if _advisory_warn_counts:
-        print(
-            f"  [!] advisory warnings -- {_format_advisory_rollup()} "
-            "(review each step's output above)"
-        )
-    _advisory_rollup_state["shown"] = True
-
-    print(f"{'=' * 60}")
+    _print_build_summary(
+        "PARTIAL REBUILD Complete",
+        total_elapsed,
+        episode_dir,
+        verify_warnings,
+        head_lines=(f"Scene:      {scene_id}",),
+    )
 
     pipeline_log.emit(
         pipeline_log.LEVEL_INFO,
@@ -1760,6 +2351,60 @@ atexit.register(_flush_advisory_rollup_on_abort)
 # summary so the "QA silently skipped" case is unmissable.
 _auth_probe_warnings: list[str] = []
 
+# (2026-09-19): step ごとの所要時間を**順序つきで**持ち、最終サマリに出す。
+# `_pipeline_progress.json` も duration_sec を持つが毎 run 上書きされるので、フルビルドの後に
+# `--steps credits` を 1 回回すと「どの step が遅かったか」の根拠が消えていた。
+# JSONL は build ごとのファイル (既定 ON、`_default_log_file`) なので残る。
+_step_durations: list[tuple[str, float, int]] = []
+
+
+def _record_step_end(step: str, exit_code: int, start: float, **metadata) -> float:
+    """step_end を JSONL とサマリ用レジストリの**両方**に書く唯一の経路。戻り値は elapsed 秒。
+
+    `pipeline_log.step_end` を直接呼ぶと片方にしか残らないので、pipeline.py 内の呼び出しは
+    全部ここを通す。AST でそれを固定する回帰テストがある。
+    """
+    elapsed = time.time() - start
+    pipeline_log.step_end(step, exit_code=exit_code, duration_ms=int(elapsed * 1000), **metadata)
+    _step_durations.append((step, elapsed, exit_code))
+    return elapsed
+
+
+def _format_step_durations(durations: list, total: float | None = None) -> list[str]:
+    """所要時間の表 (遅い順)。全体に対する割合は `total` (壁時計) があれば出す。"""
+    if not durations:
+        return []
+    lines = ["Step times (slowest first):"]
+    rows = [(name, secs, code) for name, secs, code in durations]
+    if total and total > 0:
+        # step の外で使った時間 (in-process のゲート / post_build_verify / レビューリール) を
+        # 1 行にまとめる。出さないと合計が壁時計に届かず、読む側が数え直すことになる。
+        rest = total - sum(secs for _, secs, _ in durations)
+        if rest > 1.0:
+            rows.append(("(gates / verification)", rest, 0))
+    width = max(len(name) for name, _, _ in rows)
+    for name, secs, code in sorted(rows, key=lambda t: -t[1]):
+        share = f"  ({secs / total * 100:3.0f}%)" if total and total > 0 else ""
+        tag = "" if code == 0 else f"  [exit {code}]"
+        lines.append(f"  {name:<{width}}  {secs:8.1f}s{share}{tag}")
+    return lines
+
+
+def _default_log_file(episode_dir: str, args) -> Path | None:
+    """JSONL ログの出力先。`--no-log-file` で無効、`--log-file PATH` で指定、既定は
+    `<episode_dir>/logs/build_<YYYYmmdd_HHMMSS>.jsonl` (gitignore 済の `logs/`)。
+
+    D-1 では opt-in だったので `logs/` には 2026-05 の 1 話分しか無く、**どの step が遅いかの
+    根拠が残っていなかった** (Manim 並列レンダの評価に要る)。build ごとに 1 ファイルにするのは、
+    同じファイルへの append だと run の境界が ts でしか分からないから。
+    """
+    if getattr(args, "no_log_file", False):
+        return None
+    if getattr(args, "log_file", None):
+        return Path(args.log_file)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return Path(episode_dir) / "logs" / f"build_{stamp}.jsonl"
+
 
 def _reprobe_claude_mid_build(context: str, resume_hint: str, skip: bool) -> bool:
     """ mid-build auth re-probe before a late Claude-dependent QA step.
@@ -1776,11 +2421,18 @@ def _reprobe_claude_mid_build(context: str, resume_hint: str, skip: bool) -> boo
     ok, reason, msg = _preflight_claude_cli()
     if ok:
         return True
-    banner = (
-        f"Claude CLI auth 失効の可能性 ({reason}) -- {context} を skip します。\n"
-        f"    {msg}\n"
-        f"    再認証: claude setup-token  →  再開: {resume_hint}"
-    )
+    if reason == "usage_limit":
+        banner = (
+            f"Claude の利用上限 -- {context} を skip します。\n"
+            f"    {msg}\n"
+            f"    上限が戻ってから再開: {resume_hint}"
+        )
+    else:
+        banner = (
+            f"Claude CLI auth 失効の可能性 ({reason}) -- {context} を skip します。\n"
+            f"    {msg}\n"
+            f"    再認証: claude setup-token  →  再開: {resume_hint}"
+        )
     print(f"\n{'!' * 60}")
     print(f"  {banner}")
     print(f"{'!' * 60}\n")
@@ -1812,9 +2464,6 @@ def _review_snapshot(episode_dir: str, src_dir: str, enabled: bool = True) -> No
     if not enabled or not os.path.exists(os.path.join(episode_dir, OUTPUT_FINAL)):
         return
     try:
-        _sdir = os.path.join(os.path.dirname(src_dir), "scripts")
-        if _sdir not in sys.path:
-            sys.path.insert(0, _sdir)
         import review_reel as _rr
 
         _rr.snapshot(episode_dir)
@@ -1835,9 +2484,6 @@ def _review_reel_run(
     if not enabled:
         return
     try:
-        _sdir = os.path.join(os.path.dirname(src_dir), "scripts")
-        if _sdir not in sys.path:
-            sys.path.insert(0, _sdir)
         import review_reel as _rr
 
         print(f"\n{'=' * 60}")
@@ -1860,7 +2506,8 @@ def _review_reel_run(
 def _run_pre_visuals_checks(
     episode_dir: str, scene_json: str, config: dict, args, src_dir: str
 ) -> None:
-    """visuals をレンダする**前**に走る検査群 (/ ある回-063 /)。
+    """visuals をレンダする**前**に走る検査群 (Manim lint / 再利用テンプレの params と尺 /
+    年号・不一致・凡例整合 / 地名カバレッジ)。
 
     main() の中に 230 行のべた書きで並んでいたものを関数にした。**構造そのものが事故を
     生んでいた**のが理由で、scene_definition の読み込みが の abort ゲート
@@ -1963,7 +2610,7 @@ def _run_pre_visuals_checks(
         # the CHILD path -- the parent never demuxes its own stderr).
         _advisory_warn_counts["lint_b78_template_duration"] = len(_dur_viol)
 
-    # misreading: on-screen years that come from the SCENE (route_map route[].year /
+    # An earlier episode: on-screen years that come from the SCENE (route_map route[].year /
     # timeline_recap milestones) are invisible to the template-metadata lint
     # above, so an LLM-inferred year rode onto the map unchallenged.
     try:
@@ -1987,7 +2634,7 @@ def _run_pre_visuals_checks(
     # legend entry. The template drops dead legend entries and hides a
     # legend too small to distinguish anything, but it cannot invent the
     # NAME of a colour that is used -- that is an editorial call.
-    # misreading: the narration names something the assigned MODE does not
+    # An earlier episode: the narration names something the assigned MODE does not
     # draw (it said "四本の矢印" while the line chart was on screen).
     # Only the template knows what each mode puts up, so templates
     # declare it and this compares; templates without the declaration
@@ -2026,7 +2673,7 @@ def _run_pre_visuals_checks(
             )
         _advisory_warn_counts["lint_timeline_legend"] = len(_leg_viol)
 
-    # misreading: the route_map sibling of the check above. `legend_labels`
+    # An earlier episode: the route_map sibling of the check above. `legend_labels`
     # maps a category to ONE label, and nothing verified that the label
     # is true for every route in that category.
     # Route labels are short free-form Japanese, so this is an LLM
@@ -2101,7 +2748,78 @@ def _run_pre_visuals_checks(
             "or use --allow-empty-template-params for an intentional "
             "self-test render."
         )
-        sys.exit(1)
+        _abort("visuals", "pre-visuals check failed")
+
+    # An earlier episode: params.mode that is not a key of the template's SCENES. The an earlier episode
+    # fail-loud templates raise on unknown modes -- but only at render time,
+    # ~minute 40, and the scene then ships as a placeholder banner. A brand-new
+    # template gives the LLM nothing to imitate and it writes mode='default'
+    #. Abort HERE, before the render, with the
+    # valid-mode list. No escape flag: an invalid mode has no legitimate use --
+    # the render would raise anyway, this only moves the failure earlier.
+    try:
+        from qa_manim_consistency import check_invalid_manim_modes
+
+        # _manim_dir は の try 内で束縛されるため、 が落ちた回では
+        # 未定義になりうる。これは blocking gate なので (advisory と違い)
+        # 依存を持たず自前で導出する -- さもないと「 が壊れた回に限って
+        # gate が静かに死ぬ」という最悪の相関になる。
+        _mode_viol = check_invalid_manim_modes(_sd_b60, os.path.join(src_dir, "manim_templates"))
+    except Exception as _e:
+        _mode_viol = []
+        print(f"[MODE] invalid-mode preflight skipped: {_e}")
+    if _mode_viol:
+        for _v in _mode_viol:
+            print(
+                f"  [MODE] {_v['scene_id']} ({_v['template']}): mode={_v['mode']!r} は "
+                f"SCENES に無い (実在: {'/'.join(_v['valid'])})。narration に合う mode を "
+                f"visual.params.mode に設定してください"
+            )
+        pipeline_log.emit(
+            pipeline_log.LEVEL_CRITICAL,
+            "lint_invalid_manim_mode",
+            "invalid manim mode preflight aborted pipeline",
+            violation_count=len(_mode_viol),
+        )
+        pipeline_log.close()
+        print(
+            "\n[MODE] invalid manim mode(s) detected -- the render would raise "
+            "and ship a placeholder. Fix visual.params.mode before building."
+        )
+        _abort("visuals", "pre-visuals check failed")
+
+    # ある回: 同じ多mode テンプレを 2 シーン以上が mode 未指定で使う = 全部が同じ既定
+    # mode を描き、**画面が丸ごと重複する**。 は「mode 未指定」を WARN するが
+    # advisory (出荷 70 話に 69 件あり止められない)。この形に絞ると出荷 70 話で 0 件
+    # なので中断にできる。行き止まりにはならない -- 既定 mode を意図して複数シーンで
+    # 使いたければ、その mode 名を明示すれば通る。
+    try:
+        from qa_manim_consistency import check_duplicate_default_modes
+
+        _dup_mode = check_duplicate_default_modes(_sd_b60, os.path.join(src_dir, "manim_templates"))
+    except Exception as _e:
+        _dup_mode = []
+        print(f"[MODE] duplicate-default-mode preflight skipped: {_e}")
+    if _dup_mode:
+        for _v in _dup_mode:
+            print(
+                f"  [MODE] {_v['template']}: {len(_v['scene_ids'])} シーンが mode 未指定 "
+                f"({', '.join(_v['scene_ids'])}) -- 全部が同じ既定 mode を描きます。"
+                f"各シーンの narration に合う mode を選んでください (実在: {'/'.join(_v['modes'])})"
+            )
+        pipeline_log.emit(
+            pipeline_log.LEVEL_CRITICAL,
+            "lint_duplicate_default_manim_mode",
+            "duplicate default manim mode preflight aborted pipeline",
+            violation_count=len(_dup_mode),
+        )
+        pipeline_log.close()
+        print(
+            "\n[MODE] the same multi-mode template is used by several scenes with no "
+            "mode -- they would all render the SAME animation (an earlier episode shipped-adjacent "
+            "bug). Set visual.params.mode on each scene before building."
+        )
+        _abort("visuals", "pre-visuals check failed")
 
 
 def _run_route_map_preflight(scene_json: str, args) -> None:
@@ -2117,7 +2835,7 @@ def _run_route_map_preflight(scene_json: str, args) -> None:
     try:
         from visual_generator import route_map_preflight
 
-        # misreading: label-ownership and line-through-label findings come
+        # An earlier episode: label-ownership and line-through-label findings come
         # back here rather than in `_unresolved` -- they are advisory,
         # so they must reach the roll-up the reader actually scans
         # instead of scrolling past in the middle of the log.
@@ -2144,7 +2862,7 @@ def _run_route_map_preflight(scene_json: str, args) -> None:
                 "--allow-route-collision / --auto-fix-route-collisions / "
                 "--skip-route-preflight."
             )
-            sys.exit(1)
+            _abort("visuals", "route_map preflight failed")
         pipeline_log.emit(
             pipeline_log.LEVEL_WARNING
             if (_unresolved or _route_advisories)
@@ -2181,14 +2899,11 @@ def _run_post_visual_lints(
     # source 画像の白縁は ken_burns COVER 拡大でむしろ広がる。images step の白縁 lint は source のみ検査する
     # ため、レンダ動画フレームを直接測って assemble 前に捕捉する。
     try:
-        # scripts/ を sys.path に通してから import する。source 白縁チェック
-        # (images step) と対称。これが無いと、images step を経由しない部分
-        # リビルド (--steps visuals 等) で scripts/ が path に無く、
+        # scripts/ は起動時の `_ensure_import_paths()` が path に入れている。
+        # 以前はここで step ごとに insert していて、images step を経由しない部分
+        # リビルド (--steps visuals 等) では scripts/ が path に無く、
         # `No module named 'lint_image_borders'` で silent skip していた
         # (images step が先に走る full run では相乗りで動いていた)。
-        _scripts_dir = os.path.join(src_dir, "..", "scripts")
-        if _scripts_dir not in sys.path:
-            sys.path.insert(0, _scripts_dir)
         from lint_image_borders import run_video as _vborder
 
         _vw = _vborder(os.path.join(episode_dir, "visuals"))
@@ -2212,7 +2927,7 @@ def _run_post_visual_lints(
                 "白帯>=8% は ken_burns で消えません。source を --trim し visuals 再描画を推奨。"
             ):
                 print("Pipeline aborted (video border).")
-                sys.exit(1)
+                _abort("visuals", "post-visual lint declined")
 
     # Manim Vision QA (P5): 各 Manim/route_map/timeline フレームを Claude
     # Sonnet vision で「概念が伝わるか/無意味な動き/判別不能な形/ラベル衝突」
@@ -2236,7 +2951,7 @@ def _run_post_visual_lints(
                 vqa_cmd += ["--scenes", scenes]
             run_step("manim_vision_qa (Vision: 意味/動き/衝突)", vqa_cmd, required=False)
 
-    # misreading: deterministic text-collision preflight. manim_vision_qa (Sonnet
+    # An earlier episode: deterministic text-collision preflight. manim_vision_qa (Sonnet
     # vision) MISSED the gp_ap/curve label proximity -- the user found those by
     # eye. This complements it: it re-runs each Manim mode's construct() with a
     # no-render mock, captures Text/MathTex bounding boxes, and flags stacks that
@@ -2251,15 +2966,58 @@ def _run_post_visual_lints(
         )
 
 
+def _placeholder_scenes(episode_dir: str) -> list[str]:
+    """visuals/_fallback_scenes.json が名指しする「いまも placeholder のままの scene」。
+
+    `_clear_manim_fallback` が成功したレンダで entry を落とすので、この sidecar は
+    「最後のレンダが本物でなかった scene」だけを持つ (ある回で較正)。
+    """
+    sidecar = os.path.join(episode_dir, "visuals", "_fallback_scenes.json")
+    if not os.path.exists(sidecar):
+        return []
+    try:
+        with open(sidecar, encoding="utf-8") as f:
+            record = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(record, list):
+        return []
+    seen: list[str] = []
+    for r in record:
+        sid = str(r.get("scene_id", "")) if isinstance(r, dict) else ""
+        if sid and sid not in seen:
+            seen.append(sid)
+    return seen
+
+
 def _run_pre_assemble_guards(
     episode_dir: str, scene_json: str, timing_json: str, steps: list[str], args
 ) -> None:
     """assemble の**前**に走る 3 つの stale ゲート (/ Guard-B,B2 / Guard-B3)。
 
+    ある回追加: **placeholder ゲート**。timeline_recap の title 欠落で closing_02 が
+    placeholder に落ちたまま assemble (22 分) と bgm (9 分) に進み、Vision QA の advisory
+    だけが名指ししていた。placeholder が完成動画に入ってよいことは無いので、ここで止める
+    (escape `--allow-placeholder`)。
+
     `steps` はこの実行で走った (走る) ステップ名。部分再ビルドは audio も
     subtitles も回すので Guard-B / B3 は自動的に skip され、 だけが効く
     (= 1 シーンだけ再 render したのに他の scene の尺が動いていないか)。
+
     """
+    placeholders = _placeholder_scenes(episode_dir)
+    if placeholders and not args.allow_placeholder:  # 登録済みフラグは直接読む
+        print("\n[PLACEHOLDER] assemble preflight: placeholder のままの scene があります")
+        for sid in placeholders:
+            print(f"  - {sid}: visuals/{sid}.mp4 は text_overlay placeholder (最後のレンダが失敗)")
+        print(
+            "\n  この状態で assemble すると placeholder が完成動画に入ります。\n"
+            "  対処: visuals ステップのログでその scene の raise / timeout を読み、直してから\n"
+            "  `--steps visuals,assemble,...` で再 render してください。\n"
+            "  意図的に進める場合のみ `--allow-placeholder` を付与。"
+        )
+        _abort("assemble", "pre-assemble guard failed")
+
     # stale-visual preflight。timing 刷新後に再 render されなかった
     # visual を尺照合で検出し、新音声 + 旧尺 visual の silent desync を fail
     # fast で止める。
@@ -2280,7 +3038,7 @@ def _run_pre_assemble_guards(
                 "から assemble してください。\n"
                 "  意図的に旧 visual で進める場合のみ `--allow-stale-visuals` を付与。"
             )
-            sys.exit(1)
+            _abort("assemble", "pre-assemble guard failed")
 
     # Guard-B: subtitle-stale preflight。narration 編集後に
     # subtitles を再生成せず assemble すると字幕(旧)/音声(新)が desync する
@@ -2300,7 +3058,7 @@ def _run_pre_assemble_guards(
                 "含めて再実行。\n"
                 "  意図的に旧字幕で進める場合のみ `--allow-stale-subtitles` を付与。"
             )
-            sys.exit(1)
+            _abort("assemble", "pre-assemble guard failed")
 
     # Guard-B3: 字幕の**本文**は timing.json 由来なので、subtitles を再生成
     # しても直らない。直るのは audio を回したときだけ。したがって上の
@@ -2319,7 +3077,7 @@ def _run_pre_assemble_guards(
                 "  対処: `--steps audio,subtitles,assemble,bgm` のように audio から再実行。\n"
                 "  意図的に旧字幕で進める場合のみ `--allow-stale-subtitles` を付与。"
             )
-            sys.exit(1)
+            _abort("assemble", "pre-assemble guard failed")
 
 
 def _run_output_verification(
@@ -2366,12 +3124,10 @@ def _run_output_verification(
     post_build_warnings = 0
     if _final_ready and not args.skip_post_build_verify:
         try:
-            # scripts/ is only put on sys.path inside particular step blocks, so a run
-            # that skipped those would fail this import and degrade to a printed note --
-            # the same silent-disable this block exists to prevent.
-            _sdir = os.path.join(os.path.dirname(src_dir), "scripts")
-            if _sdir not in sys.path:
-                sys.path.insert(0, _sdir)
+            # scripts/ is on sys.path from startup. It used
+            # to be inserted only inside particular step blocks, so a run that skipped
+            # those failed this import and degraded to a printed note -- the same
+            # silent-disable this block exists to prevent.
             import post_build_verify as _pbv
 
             _subject = config.get("mathematician_ja") or config.get("mathematician") or "(unknown)"
@@ -2393,6 +3149,13 @@ def _run_output_verification(
                     for _k, _v in _res.items():
                         if _k != "status":
                             print(f"        {_k}: {_v}")
+                elif _st == "OK" and _res.get("note"):
+                    # ある回: OK でも読むべき注記 (check 13「文 wav 62 本が出荷物より新しい」) は
+                    # CLI だけでなくここにも出す (「走る」と「読まれる」は別)。
+                    print(f"        note: {_res['note']}")
+                elif _st == "SKIP" and _res.get("reason"):
+                    # 「検査していない」理由 (engine=cloud / VOICEVOX 無応答) を名指しする。
+                    print(f"        reason: {_res['reason']}")
             # The "go and look at these" lines come from the same helper the CLI
             # uses. Printing only the statuses here left the corner sheet's path
             # unmentioned in exactly the run where it is produced.
@@ -2423,6 +3186,59 @@ def _tally_advisory_warning(event: dict) -> None:
                 _advisory_warn_counts[event.get("step", "?")] = wc
     except Exception:
         pass
+
+
+def _clear_usage_limit_sentinel() -> None:
+    """ある回: 前回の上限 sentinel が残っていると最初の子プロセスで止まるので起動時に消す。"""
+    try:
+        from claude_backend import clear_usage_limit
+
+        clear_usage_limit(os.path.dirname(src_dir_of_pipeline()))
+    except Exception as e:  # noqa: BLE001
+        print(f"  [!] usage-limit sentinel を消せませんでした: {e}")
+
+
+def src_dir_of_pipeline() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _abort_if_usage_limit(cmd) -> None:
+    """ある回: 子プロセスが Claude の利用上限に当たっていたら、その場で止める。
+
+    Gate 2 が上限で「全 scene 失敗」と出て abort した回は、上限だと分かるまで一往復
+    かかった。各 wrapper が書く sentinel をここで読み、再開時刻を名指しして止める。
+    残りの Claude 依存ステップを回しても全部失敗するだけなので待たない。
+    """
+    try:
+        from claude_backend import USAGE_LIMIT_SENTINEL, read_usage_limit, usage_limit_message
+
+        info = read_usage_limit(os.path.dirname(src_dir_of_pipeline()))
+    except Exception:  # noqa: BLE001 - the guard must never break a build by itself
+        return
+    if not info:
+        return
+    step = os.path.basename(str(cmd[1])) if isinstance(cmd, list | tuple) and len(cmd) > 1 else "?"
+    print(f"\n{'!' * 60}")
+    print(f"  [USAGE-LIMIT] {usage_limit_message(info)}")
+    print(f"    検出: {info.get('context')} / {info.get('at')} / step {step}")
+    print(f"    応答: {str(info.get('snippet', ''))[:160]}")
+    print(f"    sentinel: {USAGE_LIMIT_SENTINEL} (次回起動時に自動で消えます)")
+    print(
+        "    再開: 同じコマンドに --steps <このステップ以降> を付ける (完了済みのステップは飛ばす)"
+    )
+    print(f"{'!' * 60}\n")
+    try:
+        pipeline_log.emit(
+            pipeline_log.LEVEL_CRITICAL,
+            "usage_limit",
+            "claude usage limit reached",
+            resets=info.get("resets"),
+            context=info.get("context"),
+            step=step,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    _abort(step, "claude usage limit reached")
 
 
 def _run_subprocess_with_stderr_capture(cmd: list[str]) -> int:
@@ -2484,6 +3300,7 @@ def _run_subprocess_with_stderr_capture(cmd: list[str]) -> int:
             proc.wait()
         if drainer is not None:
             drainer.join(timeout=2.0)
+    _abort_if_usage_limit(cmd)
     return proc.returncode
 
 
@@ -2508,6 +3325,33 @@ def _confirm_continue(noninteractive_hint: str) -> bool:
         return False
 
 
+def _abort(step: str, reason: str = "", code: int = 1) -> None:
+    """ (2026-09-19): 中断経路を 1 本にする。
+
+    それまで `sys.exit(1)` が 33 か所にあり、作法が 4 種に割れていた: print だけ /
+    print + `pipeline_log.emit` + `close` / `_confirm_continue` の後 / `pipeline_progress.finish`。
+    その結果、**`pipeline_progress.finish("failed")` を呼ぶ中断は 2 か所だけ**で、他は atexit の
+    finalizer が "interrupted" (=何が起きたか分からない) を書き、JSONL には中断の理由が残らなかった。
+    ここは (1) CRITICAL を 1 行 emit し (2) progress を "failed" にし (3) log を閉じて (4) exit する。
+    stdout の文言は各 site が既に出しているので、ここでは出さない (回帰が文言を assert している)。
+    """
+    try:
+        pipeline_log.emit(
+            pipeline_log.LEVEL_CRITICAL, step, f"pipeline aborted: {reason or step}", exit_code=code
+        )
+    except Exception:  # noqa: BLE001 - 中断処理自身でビルドを壊さない
+        pass
+    try:
+        pipeline_progress.finish("failed")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        pipeline_log.close()
+    except Exception:  # noqa: BLE001
+        pass
+    sys.exit(code)
+
+
 def run_step(step_name: str, cmd: list[str], required: bool = True) -> bool:
     """Run a pipeline step as subprocess. Returns True on success."""
     print(f"\n{'=' * 60}")
@@ -2519,16 +3363,14 @@ def run_step(step_name: str, cmd: list[str], required: bool = True) -> bool:
     pipeline_progress.start_step(step_name)
     start = time.time()
     exit_code = _run_subprocess_with_stderr_capture(cmd)
-    elapsed = time.time() - start
-    pipeline_log.step_end(step_name, exit_code=exit_code, duration_ms=int(elapsed * 1000))
+    elapsed = _record_step_end(step_name, exit_code, start)
     pipeline_progress.end_step(step_name, exit_code, elapsed)
 
     if exit_code != 0:
         print(f"\n[FAIL] Step '{step_name}' failed (exit code {exit_code}, {elapsed:.1f}s)")
         if required:
             print("Pipeline aborted.")
-            pipeline_progress.finish("failed")
-            sys.exit(1)
+            _abort(step_name, f"exit code {exit_code}")
         return False
 
     print(f"\n[OK] Step '{step_name}' complete ({elapsed:.1f}s)")
@@ -2574,6 +3416,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model", default="claude", help="Model for script generation (default: claude)"
+    )
+    parser.add_argument(
+        "--no-sentence-regen",
+        action="store_true",
+        help="ある回: script step の文単位再生成 (である調/比喩的誇張/forbidden_phrases) を抑止",
     )
     parser.add_argument(
         "--no-subtitles", action="store_true", help="Skip subtitle overlay in final video"
@@ -2670,6 +3517,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "re-synth cannot converge). Off by default -- detection is always-on "
         "(advisory speed_qa_report.txt); this opt-in applies the fix. "
         "Cloud-only; inert for voicevox. Undo with cloud_speed_qa.py --restore.",
+    )
+    parser.add_argument(
+        "--no-auto-renormalize",
+        action="store_true",
+        help="ある回: 正規化済みの回 (audio/_prenorm_backup/ あり) で再合成後に速度段差が"
+        "出たとき、自動で cloud_speed_qa --apply を掛け直すのを抑止する。",
     )
     parser.add_argument(
         "--skip-fact-check",
@@ -2776,6 +3629,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--skip-thumbnail", action="store_true", help="Skip thumbnail generation")
     parser.add_argument(
+        "--allow-placeholder",
+        action="store_true",
+        help="an earlier episode: skip the assemble placeholder preflight (a scene whose last Manim "
+        "render fell back to a text_overlay placeholder). Use only intentionally.",
+    )
+    parser.add_argument(
         "--allow-stale-visuals",
         action="store_true",
         help="skip the assemble stale-visual preflight (visual mp4 尺 vs "
@@ -2806,7 +3665,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="D1+ Phase 1: write structured JSON line events to PATH "
         "(in addition to stdout text). One JSON object per line with fields "
         "ts/step/level/episode_id/scene_id/msg/metadata. Severity levels: "
-        "critical/warning/info. Default: disabled (no JSONL output, baseline parity).",
+        "critical/warning/info. Default: episodes/XXX/logs/build_<ts>.jsonl "
+        "(one file per build, so step durations survive later partial runs).",
+    )
+    parser.add_argument(
+        "--no-log-file",
+        action="store_true",
+        help="disable the structured JSONL log (takes precedence over --log-file).",
     )
     parser.add_argument(
         "--no-keep-awake",
@@ -2839,7 +3704,260 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_fact_check_gate(config: dict, episode_dir: str, args) -> None:
+    """ pre-script fact check (config 段階の事実検証)。CRITICAL / 非許容 WARNING で中断。
+
+    (2026-09-19): main() に inline だった 75 行を他の `_run_*` ゲートと同じ形に。
+    """
+    try:
+        from pre_script_fact_check import (
+            print_pre_script_fact_check_report,
+            run_pre_script_fact_check,
+            save_report,
+        )
+
+        print("\nPre-script fact check on episode_config.json")
+        _report = run_pre_script_fact_check(
+            episode_config=config,
+            episode_dir=episode_dir,
+            use_references=not args.skip_reference_check,
+        )
+        print_pre_script_fact_check_report(_report)
+        save_report(_report, episode_dir)
+        _sev = _report.get("severity_counts", {})
+        _crit = _sev.get("critical", 0)
+        _warn = _sev.get("warning", 0)
+        if _crit > 0:
+            pipeline_log.emit(
+                pipeline_log.LEVEL_CRITICAL,
+                "lint_b17",
+                "pre-script fact check critical",
+                critical=_crit,
+                warning=_warn,
+            )
+            print(
+                "CRITICAL detected -- aborting before script "
+                "step. Fix episode_config.json and re-run."
+            )
+            _abort("fact_check", "pre-script fact check failed")
+        if _warn > 0 and not args.fact_check_allow_warn:
+            pipeline_log.emit(
+                pipeline_log.LEVEL_WARNING,
+                "lint_b17",
+                "pre-script fact check warning (blocking)",
+                critical=_crit,
+                warning=_warn,
+            )
+            print(
+                "WARNING detected -- aborting before script "
+                "step. Use --fact-check-allow-warn to continue."
+            )
+            _abort("fact_check", "pre-script fact check failed")
+        if _warn > 0:
+            pipeline_log.emit(
+                pipeline_log.LEVEL_WARNING,
+                "lint_b17",
+                "pre-script fact check warning (non-blocking)",
+                critical=_crit,
+                warning=_warn,
+            )
+        else:
+            pipeline_log.emit(
+                pipeline_log.LEVEL_INFO,
+                "lint_b17",
+                "pre-script fact check ok",
+                critical=_crit,
+                warning=_warn,
+            )
+        print("OK (no blocking issues)")
+    except SystemExit:
+        raise
+    except Exception as _e:
+        pipeline_log.emit(
+            pipeline_log.LEVEL_WARNING,
+            "lint_b17",
+            "pre-script fact check skipped (exception)",
+            error=f"{type(_e).__name__}: {_e}",
+        )
+        print(f"pre-script fact check skipped due to error: {_e}")
+
+
+def _run_script_qa_gate1(
+    scene_json: str, episode_dir: str, src_dir: str, config_path: str, args
+) -> None:
+    """QA Gate 1 (script QA agents) + `--qa-retry`。要求されていなければ何もしない。
+
+    (2026-09-19): main() に inline だった 130 行を他の `_run_*` ゲートと同じ形に。
+    """
+    qa_requested = (args.qa or args.qa_quick) and not args.skip_qa and not args.skip_qa_script_only
+    if not (qa_requested and os.path.exists(scene_json)):
+        return
+    print(f"\n{'=' * 60}")
+    print("  QA Gate 1: Script Quality Check")
+    print(f"{'=' * 60}")
+
+    qa_cmd = [
+        sys.executable,
+        os.path.join(src_dir, "qa_checker.py"),
+        scene_json,
+        "--gate",
+        "script",
+    ]
+
+    if args.qa_quick:
+        qa_cmd.append("--quick")
+
+    if args.qa_agents:
+        qa_cmd.extend(["--agents", args.qa_agents])
+
+    if args.use_gemini_fact:
+        qa_cmd.append("--use-gemini-fact")
+
+    qa_report_path = os.path.join(episode_dir, "qa_report_script.json")
+    qa_cmd.extend(["--output", qa_report_path])
+
+    print(f"  Command: {' '.join(qa_cmd)}\n")
+
+    pipeline_log.step_start("qa_script", command=" ".join(qa_cmd))
+    qa_start = time.time()
+    qa_exit = _run_subprocess_with_stderr_capture(qa_cmd)
+    qa_elapsed = _record_step_end("qa_script", qa_exit, qa_start)
+
+    if qa_exit == 1:
+        print(f"\n[FAIL] QA FAILED ({qa_elapsed:.0f}s). Critical issues found.")
+        print(f"   Report: {qa_report_path}")
+        # Ask user whether to continue (non-interactive runs abort cleanly)
+        if not _confirm_continue(
+            "Fix scene_definition.json then re-run, or re-run with --skip-qa to bypass."
+        ):
+            print("Pipeline aborted (QA critical).")
+            _abort("qa_gate1", "script QA gate declined")
+    elif qa_exit == 2:  # ERROR
+        print(f"\n[ERROR] QA ERROR ({qa_elapsed:.0f}s). Some agents failed.")
+        print(f"   Report: {qa_report_path}")
+        print("   Continuing pipeline (QA errors are non-blocking)...")
+    else:
+        # Check report for warnings (WARN status returns exit code 0)
+        qa_has_warnings = False
+        qa_fact_layer_present = True  # default True → old reports don't false-warn
+        if os.path.exists(qa_report_path):
+            try:
+                with open(qa_report_path, encoding="utf-8") as f:
+                    qa_data_check = json.load(f)
+                warn_count = qa_data_check.get("summary", {}).get("warning", 0)
+                if warn_count > 0:
+                    qa_has_warnings = True
+                # did the factual-verification layer actually run?
+                qa_fact_layer_present = qa_data_check.get("fact_layer_present", True)
+            except (json.JSONDecodeError, FileNotFoundError):
+                pass
+
+        # surface a fact-layer gap even on PASS. An earlier episode ran only
+        # content/consistency (fact absent) and factual errors slipped through
+        # silently. This makes the absence loud in the pipeline output.
+        if not qa_fact_layer_present:
+            print(f"\n{'!' * 60}")
+            print("  [WARN] QA: 事実検証層 (FactChecker) が未実行です")
+            print(f"{'!' * 60}")
+            print("   この QA run は fact/fact_grounding を含みません。外部事実の正誤・")
+            print("   cross-episode 矛盾は未検証です。--qa-agents に fact を含めて再実行する")
+            print("   か、verified_facts / key_episodes を独立 verify してください。")
+            print(f"   Report: {qa_report_path}")
+            print(f"{'!' * 60}")
+
+        if qa_has_warnings:
+            print(f"\n[WARN] QA WARN ({qa_elapsed:.0f}s) -- {warn_count} warning(s) found.")
+            print(f"   Report: {qa_report_path}")
+            if args.qa_allow_warn:
+                print("   --qa-allow-warn set → continuing pipeline (WARN are advisory).")
+            elif not args.qa_retry:
+                print("\n   Review the report, fix scene_definition.json, then re-run with:")
+                print(f"   python src/pipeline.py {args.config_json} --skip-script")
+                print("\n   To continue without fixing, re-run with --skip-qa")
+                print("   To continue accepting warnings, re-run with --qa-allow-warn")
+                _abort("qa_gate1", "script QA gate declined")
+        else:
+            print(f"\n[OK] QA passed ({qa_elapsed:.0f}s)")
+            if os.path.exists(qa_report_path):
+                print(f"   Report: {qa_report_path}")
+
+    # ─── QA Retry: Re-generate with feedback if issues found ─────
+    if args.qa_retry and os.path.exists(qa_report_path):
+        # Check if there are actionable issues (warning or critical)
+        try:
+            with open(qa_report_path, encoding="utf-8") as f:
+                qa_data = json.load(f)
+
+            actionable = 0
+            for agent_result in qa_data.get("agents", {}).values():
+                for issue in agent_result.get("issues", []):
+                    if issue.get("severity") in ("warning", "critical"):
+                        actionable += 1
+
+            if actionable > 0:
+                print(f"\n  {actionable} actionable issues found → starting QA retry...")
+
+                # Import and run QA retry
+                from qa_retry import run_qa_retry
+
+                retry_result = run_qa_retry(
+                    scene_json=scene_json,
+                    config_json=config_path,
+                    qa_report_path=qa_report_path,
+                    src_dir=src_dir,
+                    model=args.model,
+                    quick=args.qa_quick,
+                    use_gemini_fact=args.use_gemini_fact,
+                    max_diff_rate=args.qa_max_diff,
+                )
+
+                if retry_result["action"] == "rejected":
+                    print("\n  v2 rejected. v1 retained for manual review.")
+                    print("  Pipeline continues with v1.")
+            else:
+                print("\n  No actionable issues → QA retry skipped")
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            print(f"\n  [WARN] Could not read QA report for retry: {e}")
+
+
+def _run_thumbnail_step(
+    episode_dir: str, src_dir: str, config_path: str, config: dict, args
+) -> None:
+    """Thumbnail 生成 + の thumbnail Vision QA。person 画像が無ければ skip。
+
+    (2026-09-19): main() に inline だった 30 行を他の `_run_*` step と同じ形に。
+    """
+    images_dir = os.path.join(episode_dir, "images")
+    default_source = os.path.join(images_dir, "person_01.png")
+    if os.path.exists(default_source) or config.get("thumbnail", {}).get("source_image"):
+        cmd = [
+            sys.executable,
+            os.path.join(src_dir, "thumbnail_generator.py"),
+            config_path,
+            "--output-dir",
+            episode_dir,
+        ]
+        run_step("thumbnail", cmd, required=False)
+
+        # Thumbnail Vision QA — verify generated
+        # thumbnails are single-person portraits (not group_scene /
+        # landscape / abstract). Skippable with --skip-qa.
+        thumbnails_dir = os.path.join(episode_dir, "thumbnails")
+        if not args.skip_qa and os.path.isdir(thumbnails_dir):
+            vision_qa_script = os.path.join(src_dir, "qa_thumbnail_vision.py")
+            if os.path.exists(vision_qa_script):
+                vision_cmd = [
+                    sys.executable,
+                    vision_qa_script,
+                    config_path,
+                ]
+                run_step("thumbnail_vision_qa", vision_cmd, required=False)
+    else:
+        print("\n[SKIP] Skipping thumbnail (no person image yet)")
+
+
 def main():
+    _clear_usage_limit_sentinel()
     # Line-buffer stdout/stderr so a long run's log is monitorable in real time
     # even when redirected to a file. Without this, block-buffering makes the log
     # look frozen for minutes (observed when tailing pipeline_log during a build).
@@ -2884,7 +4002,7 @@ def main():
             conflicting.append("--skip-manim")
         if conflicting:
             print(f"ERROR: --rebuild-scene cannot be combined with: {', '.join(conflicting)}")
-            sys.exit(1)
+            _abort("args", "invalid arguments")
 
     # Resolve paths
     config_path = os.path.abspath(args.config_json)
@@ -2901,7 +4019,7 @@ def main():
         for s in steps:
             if s not in ALL_STEPS:
                 print(f"ERROR: Unknown step '{s}'. Available: {', '.join(ALL_STEPS)}")
-                sys.exit(1)
+                _abort("args", "invalid arguments")
     else:
         steps = list(ALL_STEPS)
         if args.skip_script:
@@ -2922,15 +4040,17 @@ def main():
     # Verify config exists
     if not os.path.exists(config_path):
         print(f"ERROR: Config not found: {config_path}")
-        sys.exit(1)
+        _abort("args", "invalid arguments")
 
-    # ─── Structured JSONL logger init ──────────
+    # ─── Structured JSONL logger init ──
     # Initialized BEFORE preflight so startup failures (Claude CLI
     # 401 / system-Python module miss / VOICEVOX down) surface as critical
     # JSONL events rather than just stdout text.
     episode_id = os.path.basename(episode_dir.rstrip(os.sep)) or "unknown"
-    log_file_path = Path(args.log_file) if args.log_file else None
+    log_file_path = _default_log_file(episode_dir, args)
     pipeline_log.init_logger(log_file_path, episode_id)
+    if log_file_path is not None:
+        print(f"[LOG] structured JSONL: {log_file_path} (--no-log-file で無効化)")
     # Signal to subprocess children (advisory checks) that they run under the
     # pipeline, so their emit_stderr_warn_summary() fires for the final-summary
     # roll-up even when structured logging (--log-file) is disabled (the default).
@@ -2969,7 +4089,15 @@ def main():
     preflight_steps = (
         ["audio", "visuals", "assemble", "credits", "bgm"] if args.rebuild_scene else steps
     )
-    run_preflight_checks(preflight_steps, engine=tts_engine, skip_auth_probe=args.skip_auth_probe)
+    # scene_json は「これから生成する」場合に渡さない (script step が上書きするので
+    # 既存ファイルを見ても意味がない)。既存を使う経路だけ契約を見る。
+    preflight_scene_json = _preflight_scene_target(args.rebuild_scene, steps, scene_json)
+    run_preflight_checks(
+        preflight_steps,
+        engine=tts_engine,
+        skip_auth_probe=args.skip_auth_probe,
+        scene_json=preflight_scene_json,
+    )
 
     # ─── Validate config ─────────────────────────────────────────────────
     from config_validator import print_validation_result, validate_config
@@ -2979,7 +4107,7 @@ def main():
     if not val_ok:
         print("\nPipeline aborted due to config validation errors.")
         print("Fix the errors above and re-run.")
-        sys.exit(1)
+        _abort("args", "invalid arguments")
 
     bgm_config = config.get("bgm", {})
     bgm_file = args.bgm_file or bgm_config.get("file", "")
@@ -3080,79 +4208,7 @@ def main():
     # E: Wikidata cross-check (Phase 3, not yet wired)
     # default: any CRITICAL or WARNING aborts; --fact-check-allow-warn relaxes
     if "script" in steps and not args.skip_fact_check:
-        try:
-            from pre_script_fact_check import (
-                print_pre_script_fact_check_report,
-                run_pre_script_fact_check,
-                save_report,
-            )
-
-            print("\nPre-script fact check on episode_config.json")
-            _report = run_pre_script_fact_check(
-                episode_config=config,
-                episode_dir=episode_dir,
-                use_references=not args.skip_reference_check,
-            )
-            print_pre_script_fact_check_report(_report)
-            save_report(_report, episode_dir)
-            _sev = _report.get("severity_counts", {})
-            _crit = _sev.get("critical", 0)
-            _warn = _sev.get("warning", 0)
-            if _crit > 0:
-                pipeline_log.emit(
-                    pipeline_log.LEVEL_CRITICAL,
-                    "lint_b17",
-                    "pre-script fact check critical",
-                    critical=_crit,
-                    warning=_warn,
-                )
-                pipeline_log.close()
-                print(
-                    "CRITICAL detected -- aborting before script "
-                    "step. Fix episode_config.json and re-run."
-                )
-                sys.exit(1)
-            if _warn > 0 and not args.fact_check_allow_warn:
-                pipeline_log.emit(
-                    pipeline_log.LEVEL_WARNING,
-                    "lint_b17",
-                    "pre-script fact check warning (blocking)",
-                    critical=_crit,
-                    warning=_warn,
-                )
-                pipeline_log.close()
-                print(
-                    "WARNING detected -- aborting before script "
-                    "step. Use --fact-check-allow-warn to continue."
-                )
-                sys.exit(1)
-            if _warn > 0:
-                pipeline_log.emit(
-                    pipeline_log.LEVEL_WARNING,
-                    "lint_b17",
-                    "pre-script fact check warning (non-blocking)",
-                    critical=_crit,
-                    warning=_warn,
-                )
-            else:
-                pipeline_log.emit(
-                    pipeline_log.LEVEL_INFO,
-                    "lint_b17",
-                    "pre-script fact check ok",
-                    critical=_crit,
-                    warning=_warn,
-                )
-            print("OK (no blocking issues)")
-        except SystemExit:
-            raise
-        except Exception as _e:
-            pipeline_log.emit(
-                pipeline_log.LEVEL_WARNING,
-                "lint_b17",
-                "pre-script fact check skipped (exception)",
-                error=f"{type(_e).__name__}: {_e}",
-            )
-            print(f"pre-script fact check skipped due to error: {_e}")
+        _run_fact_check_gate(config, episode_dir, args)
 
     # ─── Step 1: Script generation ───────────────────────────────────────
     if "script" in steps:
@@ -3167,145 +4223,42 @@ def main():
             "--manim-templates",
             os.path.join(src_dir, "manim_templates"),
         ]
+        if args.no_sentence_regen:
+            cmd.append("--no-sentence-regen")
         run_step("script", cmd)
     else:
         if not os.path.exists(scene_json):
             print(f"ERROR: scene_definition.json not found: {scene_json}")
             print("Run without --skip-script or create it manually.")
-            sys.exit(1)
+            _abort("script", "script step failed")
         print(f"\n[SKIP] Skipping script generation (using existing {scene_json})")
 
     # ─── QA Gate 1: Script QA (optional) ─────────────────────────────────
-    qa_requested = (args.qa or args.qa_quick) and not args.skip_qa and not args.skip_qa_script_only
-    if qa_requested and os.path.exists(scene_json):
-        print(f"\n{'=' * 60}")
-        print("  QA Gate 1: Script Quality Check")
-        print(f"{'=' * 60}")
+    _run_script_qa_gate1(scene_json, episode_dir, src_dir, config_path, args)
 
-        qa_cmd = [
+    # ─── Step 1.5: Wikimedia photo fetch + 参照写真と prompt の外見照合 ───
+    # 参照写真の取得は音声に依存しない。ここで取り、portrait_prompt_lint を先に走らせると、
+    # 「顎髭なし」のような外見の誤記を 30 分の音声合成より前に名指しできる。
+    _portrait_lint_ran = False
+    if "photos" in steps:
+        cmd = [
             sys.executable,
-            os.path.join(src_dir, "qa_checker.py"),
+            os.path.join(src_dir, "wikimedia_fetcher.py"),
+            config_path,
+            "--scene-json",
             scene_json,
-            "--gate",
-            "script",
+            "--max-photos",
+            "3",
         ]
+        run_step("photos", cmd, required=False)
+        if os.path.exists(scene_json):
+            with open(scene_json, encoding="utf-8") as _f:
+                _sd_for_lint = json.load(_f)
+            _portrait_lint_ran = _run_portrait_prompt_lint(episode_dir, _sd_for_lint, src_dir, args)
 
-        if args.qa_quick:
-            qa_cmd.append("--quick")
-
-        if args.qa_agents:
-            qa_cmd.extend(["--agents", args.qa_agents])
-
-        if args.use_gemini_fact:
-            qa_cmd.append("--use-gemini-fact")
-
-        qa_report_path = os.path.join(episode_dir, "qa_report_script.json")
-        qa_cmd.extend(["--output", qa_report_path])
-
-        print(f"  Command: {' '.join(qa_cmd)}\n")
-
-        pipeline_log.step_start("qa_script", command=" ".join(qa_cmd))
-        qa_start = time.time()
-        qa_exit = _run_subprocess_with_stderr_capture(qa_cmd)
-        qa_elapsed = time.time() - qa_start
-        pipeline_log.step_end("qa_script", exit_code=qa_exit, duration_ms=int(qa_elapsed * 1000))
-
-        if qa_exit == 1:
-            print(f"\n[FAIL] QA FAILED ({qa_elapsed:.0f}s). Critical issues found.")
-            print(f"   Report: {qa_report_path}")
-            # Ask user whether to continue (non-interactive runs abort cleanly)
-            if not _confirm_continue(
-                "Fix scene_definition.json then re-run, or re-run with --skip-qa to bypass."
-            ):
-                print("Pipeline aborted (QA critical).")
-                sys.exit(1)
-        elif qa_exit == 2:  # ERROR
-            print(f"\n[ERROR] QA ERROR ({qa_elapsed:.0f}s). Some agents failed.")
-            print(f"   Report: {qa_report_path}")
-            print("   Continuing pipeline (QA errors are non-blocking)...")
-        else:
-            # Check report for warnings (WARN status returns exit code 0)
-            qa_has_warnings = False
-            qa_fact_layer_present = True  # default True → old reports don't false-warn
-            if os.path.exists(qa_report_path):
-                try:
-                    with open(qa_report_path, encoding="utf-8") as f:
-                        qa_data_check = json.load(f)
-                    warn_count = qa_data_check.get("summary", {}).get("warning", 0)
-                    if warn_count > 0:
-                        qa_has_warnings = True
-                    # did the factual-verification layer actually run?
-                    qa_fact_layer_present = qa_data_check.get("fact_layer_present", True)
-                except (json.JSONDecodeError, FileNotFoundError):
-                    pass
-
-            # surface a fact-layer gap even on PASS. An earlier episode ran only
-            # content/consistency (fact absent) and factual errors slipped through
-            # silently. This makes the absence loud in the pipeline output.
-            if not qa_fact_layer_present:
-                print(f"\n{'!' * 60}")
-                print("  [WARN] QA: 事実検証層 (FactChecker) が未実行です")
-                print(f"{'!' * 60}")
-                print("   この QA run は fact/fact_grounding を含みません。外部事実の正誤・")
-                print("   cross-episode 矛盾は未検証です。--qa-agents に fact を含めて再実行する")
-                print("   か、verified_facts / key_episodes を独立 verify してください。")
-                print(f"   Report: {qa_report_path}")
-                print(f"{'!' * 60}")
-
-            if qa_has_warnings:
-                print(f"\n[WARN] QA WARN ({qa_elapsed:.0f}s) -- {warn_count} warning(s) found.")
-                print(f"   Report: {qa_report_path}")
-                if args.qa_allow_warn:
-                    print("   --qa-allow-warn set → continuing pipeline (WARN are advisory).")
-                elif not args.qa_retry:
-                    print("\n   Review the report, fix scene_definition.json, then re-run with:")
-                    print(f"   python src/pipeline.py {args.config_json} --skip-script")
-                    print("\n   To continue without fixing, re-run with --skip-qa")
-                    print("   To continue accepting warnings, re-run with --qa-allow-warn")
-                    sys.exit(1)
-            else:
-                print(f"\n[OK] QA passed ({qa_elapsed:.0f}s)")
-                if os.path.exists(qa_report_path):
-                    print(f"   Report: {qa_report_path}")
-
-        # ─── QA Retry: Re-generate with feedback if issues found ─────
-        if args.qa_retry and os.path.exists(qa_report_path):
-            # Check if there are actionable issues (warning or critical)
-            try:
-                with open(qa_report_path, encoding="utf-8") as f:
-                    qa_data = json.load(f)
-
-                actionable = 0
-                for agent_result in qa_data.get("agents", {}).values():
-                    for issue in agent_result.get("issues", []):
-                        if issue.get("severity") in ("warning", "critical"):
-                            actionable += 1
-
-                if actionable > 0:
-                    print(f"\n  {actionable} actionable issues found → starting QA retry...")
-
-                    # Import and run QA retry
-                    sys.path.insert(0, src_dir)
-                    from qa_retry import run_qa_retry
-
-                    retry_result = run_qa_retry(
-                        scene_json=scene_json,
-                        config_json=config_path,
-                        qa_report_path=qa_report_path,
-                        src_dir=src_dir,
-                        model=args.model,
-                        quick=args.qa_quick,
-                        use_gemini_fact=args.use_gemini_fact,
-                        max_diff_rate=args.qa_max_diff,
-                    )
-
-                    if retry_result["action"] == "rejected":
-                        print("\n  v2 rejected. v1 retained for manual review.")
-                        print("  Pipeline continues with v1.")
-                else:
-                    print("\n  No actionable issues → QA retry skipped")
-            except (json.JSONDecodeError, FileNotFoundError) as e:
-                print(f"\n  [WARN] Could not read QA report for retry: {e}")
+    # ─── ある回: route_map の衝突は台本ができた時点で分かる (audio の 20 分後ではなく) ───
+    if "script" in steps and os.path.exists(scene_json):
+        _run_route_map_preflight(scene_json, args)
 
     # ─── Step 2: Audio generation ────────────────────────────────────────
     if "audio" in steps:
@@ -3356,6 +4309,7 @@ def main():
 
     # ─── Font coverage check (before subtitles) ─────────────────────────
     if "subtitles" in steps:
+        _run_subtitle_marker_check(scene_json)
         _run_font_coverage_check(scene_json, src_dir)
 
     # ─── Step 3: Subtitle generation ─────────────────────────────────────
@@ -3363,38 +4317,10 @@ def main():
         if not os.path.exists(timing_json):
             print("\n[WARN] timing.json not found. Skipping subtitles.")
         else:
-            cmd = [
-                sys.executable,
-                os.path.join(src_dir, "subtitle_generator.py"),
-                timing_json,
-                "--output-dir",
-                episode_dir,
-                "--scene-json",
-                scene_json,
-            ]
-            # Engine-aware subtitle timing: VOICEVOX-measured per-segment
-            # durations are only valid when VOICEVOX is the speaking engine. For
-            # Cloud episodes the audio is Google Cloud TTS reading text_clean
-            # (narration_speech_cloud), so querying VOICEVOX for the *display*
-            # text drifts the split (and re-appears only when the local VOICEVOX
-            # server happens to be up -> non-reproducible). Force the calibrated
-            # local mora estimate instead.
-            if tts_engine == "cloud":
-                cmd.append("--no-voicevox-timing")
-            run_step("subtitles", cmd)
-
-    # ─── Step 3.5: Wikimedia photo fetch ─────────────────────────────────
-    if "photos" in steps:
-        cmd = [
-            sys.executable,
-            os.path.join(src_dir, "wikimedia_fetcher.py"),
-            config_path,
-            "--scene-json",
-            scene_json,
-            "--max-photos",
-            "3",
-        ]
-        run_step("photos", cmd, required=False)
+            run_step(
+                "subtitles",
+                _subtitles_cmd(src_dir, timing_json, episode_dir, scene_json, tts_engine),
+            )
 
     # ─── Step 4: Image generation ────────────────────────────────────────
     if "images" in steps:
@@ -3419,22 +4345,8 @@ def main():
         try:
             with open(scene_json, encoding="utf-8") as f:
                 _scene_def = json.load(f)
-            expected_ids = []
-            for _sec in _scene_def.get("sections", []):
-                for _sc in _sec.get("scenes", []):
-                    if _sc.get("visual", {}).get("type") == "ken_burns":
-                        expected_ids.append(_sc.get("scene_id"))
             images_dir = os.path.join(episode_dir, "images")
-            existing = (
-                set(
-                    os.path.splitext(f)[0]
-                    for f in os.listdir(images_dir)
-                    if f.endswith(".png") and not f.startswith("wiki_")
-                )
-                if os.path.isdir(images_dir)
-                else set()
-            )
-            missing = [sid for sid in expected_ids if sid not in existing]
+            missing, expected_ids = missing_ken_burns_images(_scene_def, images_dir)
             if missing:
                 print(
                     f"\n[ERROR] Image generation incomplete: "
@@ -3448,7 +4360,7 @@ def main():
                     "resolving image generation failure (network, "
                     "API quota, etc.)."
                 )
-                sys.exit(1)
+                _abort("images", "images missing")
             print(
                 f"  [OK] Image count check: {len(expected_ids)} ken_burns scenes, all PNG present"
             )
@@ -3459,133 +4371,21 @@ def main():
 
         _run_post_images_border_lint(episode_dir, src_dir)
 
-        # ─── 強化 H2: portrait_prompt_lint pipeline 統合 ───────
-        # 強化 C standalone (scripts/portrait_prompt_lint.py) を
-        # images step 末尾で auto-gate。use_reference: true scene の
-        # source_prompt と reference 写真 (wiki_*.jpg) の特徴矛盾を Gemini
-        # Vision で catch。an earlier episode「kimono」prompt vs 全 wiki refs
-        # Western suit の mismatch を user 視聴前に検出する。
-        #
-        # 設計判断:
-        # - WARN-only (build halt しない、exit code は無視)
-        # - reference photo がない episode (古代人物) は自動 skip
-        # - --skip-portrait-lint で opt-out 可能
-        # - 失敗時 (Gemini env 未設定 / API timeout) は silent skip
-        if not args.skip_portrait_lint:
-            try:
-                # quick check: any use_reference + wiki_*.jpg?
-                _has_ref_scene = False
-                for _sec in _scene_def.get("sections", []):
-                    for _sc in _sec.get("scenes", []):
-                        _v = _sc.get("visual", {})
-                        if _v.get("type") == "ken_burns" and _v.get("use_reference", True):
-                            _has_ref_scene = True
-                            break
-                    if _has_ref_scene:
-                        break
-                _wiki_exists = any(
-                    f.startswith("wiki_") and f.lower().endswith((".jpg", ".jpeg", ".png"))
-                    for f in (
-                        os.listdir(os.path.join(episode_dir, "images"))
-                        if os.path.isdir(os.path.join(episode_dir, "images"))
-                        else []
-                    )
-                )
-                if _has_ref_scene and _wiki_exists:
-                    print("\n=== Step: portrait_prompt_lint (H2) ===")
-                    _lint_cmd = [
-                        sys.executable,
-                        os.path.join(
-                            os.path.dirname(src_dir), "scripts", "portrait_prompt_lint.py"
-                        ),
-                        episode_dir,
-                    ]
-                    _lint_result = subprocess.run(
-                        _lint_cmd,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
-                    # surface output to pipeline log
-                    if _lint_result.stdout:
-                        print(_lint_result.stdout)
-                    if _lint_result.stderr:
-                        print(f"[portrait_lint stderr] {_lint_result.stderr[:500]}")
-                    # exit 2 = IDENTITY mismatch (顔の毛/頭髪/骨格 -- reference と矛盾、
-                    # 本人の風貌が誤って伝わる shipped-defect risk); 1 = AGE-only
-                    # (若年/晩年版、通常は意図的)。identity は最終 advisory roll-up に
-                    # 上げて見落とし防止。WARN-only、build halt しない。
-                    if _lint_result.returncode == 2:
-                        import re as _re
-
-                        _m = _re.search(r"IDENTITY_MISMATCHES:\s*(\d+)", _lint_result.stdout or "")
-                        _n_id = int(_m.group(1)) if _m else 1
-                        print(
-                            f"  [!] portrait_prompt_lint: IDENTITY mismatch x{_n_id} "
-                            "(顔の毛/頭髪/骨格が reference と矛盾) -- 本人の風貌が誤って"
-                            "伝わる。出荷前に必ず確認 (ある回 full beard vs 口ひげ)。"
-                        )
-                        try:
-                            pipeline_log.emit_stderr_warn_summary(
-                                "portrait_identity_mismatch", _n_id
-                            )
-                        except Exception:
-                            pass
-                    elif _lint_result.returncode == 1:
-                        print(
-                            "  [WARN] portrait_prompt_lint: 年齢帯のみの mismatch "
-                            "(若年/晩年版、通常は意図的)。identity 矛盾なし。"
-                        )
-                else:
-                    if not _wiki_exists:
-                        print(
-                            "  [SKIP] portrait_prompt_lint: no wiki_*.jpg reference "
-                            "photos in episode (古代/近代以前 pattern)"
-                        )
-                    else:
-                        print(
-                            "  [SKIP] portrait_prompt_lint: no use_reference=true ken_burns scenes"
-                        )
-            except Exception as _e:
-                print(f"  [WARN] portrait_prompt_lint skipped (env/api issue): {_e}")
+        _portrait_lint_ran = _portrait_lint_ran or _run_portrait_prompt_lint(
+            episode_dir, _scene_def, src_dir, args
+        )
 
     # ─── QA Gate 2: Image Quality Check ─────
     # Runs AFTER image generation so freshly-produced images are evaluated.
-    # The prompt covers narration-image consistency plus the original time-place /
+    # The prompt covers narration-image consistency (主要人物の有無 /
+    # 性別 / 人数 / 活動・小道具 / 細部) plus the original time-place /
     # subject / atmosphere checks.
     if "images" in steps:
         _run_image_qa_gate2(episode_dir, scene_json, src_dir, args)
 
     # ─── Step 4.5: Thumbnail generation ──────────────────────────────────
     if "thumbnail" in steps:
-        images_dir = os.path.join(episode_dir, "images")
-        default_source = os.path.join(images_dir, "person_01.png")
-        if os.path.exists(default_source) or config.get("thumbnail", {}).get("source_image"):
-            cmd = [
-                sys.executable,
-                os.path.join(src_dir, "thumbnail_generator.py"),
-                config_path,
-                "--output-dir",
-                episode_dir,
-            ]
-            run_step("thumbnail", cmd, required=False)
-
-            # Thumbnail Vision QA — verify generated
-            # thumbnails are single-person portraits (not group_scene /
-            # landscape / abstract). Skippable with --skip-qa.
-            thumbnails_dir = os.path.join(episode_dir, "thumbnails")
-            if not args.skip_qa and os.path.isdir(thumbnails_dir):
-                vision_qa_script = os.path.join(src_dir, "qa_thumbnail_vision.py")
-                if os.path.exists(vision_qa_script):
-                    vision_cmd = [
-                        sys.executable,
-                        vision_qa_script,
-                        config_path,
-                    ]
-                    run_step("thumbnail_vision_qa", vision_cmd, required=False)
-        else:
-            print("\n[SKIP] Skipping thumbnail (no person image yet)")
+        _run_thumbnail_step(episode_dir, src_dir, config_path, config, args)
 
     # ─── Step 5: Visual generation ───────────────────────────────────────
     if "visuals" in steps:
@@ -3622,97 +4422,24 @@ def main():
         else:
             _run_pre_assemble_guards(episode_dir, scene_json, timing_json, steps, args)
 
-            cmd = [
-                sys.executable,
-                os.path.join(src_dir, "video_assembler.py"),
-                scene_json,
-                timing_json,
-                "--output-dir",
-                episode_dir,
-                "--output-name",
-                OUTPUT_ASSEMBLED,
-            ]
-            if args.no_subtitles:
-                cmd.append("--no-subtitles")
-            run_step("assemble", cmd)
+            run_step(
+                "assemble",
+                _assemble_cmd(
+                    src_dir, scene_json, timing_json, episode_dir, no_subtitles=args.no_subtitles
+                ),
+            )
 
     # ─── Step 7: Credits / Description ───────────────────────────────────
     if "credits" in steps:
-        cmd = [
-            sys.executable,
-            os.path.join(src_dir, "credits_generator.py"),
-            config_path,
-        ]
-        # Pass intro-pause for chapter timestamp offset.
-        # Default (1.0) must match bgm_mixer's default below, otherwise
-        # YouTube chapters will be misaligned by the intro-pause duration.
-        intro_pause = bgm_config.get("intro_pause", 1.0)
-        if intro_pause > 0:
-            cmd.extend(["--intro-pause", str(intro_pause)])
-        if args.skip_intro_check:
-            cmd.append("--skip-intro-check")
-        run_step("credits", cmd, required=False)
+        run_step(
+            "credits",
+            _credits_cmd(src_dir, config_path, bgm_config, args.skip_intro_check),
+            required=False,
+        )
 
     # ─── Step 8: BGM mixing ──────────────────────────────────────────────
     if "bgm" in steps:
-        if not bgm_file:
-            print("\n[SKIP] Skipping BGM (no bgm.file in episode_config.json)")
-        elif not os.path.exists(bgm_file):
-            print(f"\n[WARN] BGM file not found: {bgm_file}")
-            print("   Skipping BGM mixing.")
-        else:
-            output_assembled = os.path.join(episode_dir, OUTPUT_ASSEMBLED)
-            output_final = os.path.join(episode_dir, OUTPUT_FINAL)
-            if not os.path.exists(output_assembled):
-                print(f"\n[WARN] {OUTPUT_ASSEMBLED} not found. Skipping BGM mixing.")
-            else:
-                cmd = [
-                    sys.executable,
-                    os.path.join(src_dir, "bgm_mixer.py"),
-                    output_assembled,
-                    bgm_file,
-                    "--output",
-                    output_final,
-                ]
-                # Pass BGM parameters from config
-                intro_pause = bgm_config.get("intro_pause", 1.0)
-                outro_hold = bgm_config.get("outro_hold", 10.0)
-                outro_fade = bgm_config.get("outro_fade", 3.0)
-                volume_db = bgm_config.get("volume_db", -20)
-                bgm_fadein = bgm_config.get("bgm_fadein", 2.0)
-
-                cmd.extend(
-                    [
-                        "--intro-pause",
-                        str(intro_pause),
-                        "--outro-hold",
-                        str(outro_hold),
-                        "--outro-fade",
-                        str(outro_fade),
-                        "--bgm-volume",
-                        str(volume_db),
-                        "--bgm-fadein",
-                        str(bgm_fadein),
-                    ]
-                )
-
-                # Optional landscape endcard (replaces the last-frame freeze)
-                endcard_image = bgm_config.get("endcard_image")
-                if endcard_image:
-                    endcard_path = (
-                        endcard_image
-                        if os.path.isabs(endcard_image)
-                        else os.path.join(episode_dir, endcard_image)
-                    )
-                    if os.path.exists(endcard_path):
-                        cmd.extend(["--endcard-image", endcard_path])
-                    else:
-                        print(
-                            f"[WARN] endcard_image not found: {endcard_path}"
-                            " — falling back to last-frame hold"
-                        )
-
-                run_step("bgm", cmd)
+        _run_bgm_step(episode_dir, src_dir, bgm_file, bgm_config)
 
     # ─── Output verification ────────────────────────────────
     # post_build_verify の件数はヘルパー内で `_advisory_warn_counts` に積まれ、
@@ -3723,83 +4450,9 @@ def main():
 
     # ─── Summary ─────────────────────────────────────────────────────────
     total_elapsed = time.time() - pipeline_start
-    output_assembled = os.path.join(episode_dir, OUTPUT_ASSEMBLED)
-    output_final = os.path.join(episode_dir, OUTPUT_FINAL)
-
-    print(f"\n{'=' * 60}")
-    print("  Pipeline Complete")
-    print(f"{'=' * 60}")
-    print(f"  Total time: {total_elapsed:.1f}s ({total_elapsed / 60:.1f} min)")
-
-    # Show final output. output_final.mp4 only exists when bgm step finished;
-    # if only assemble ran (or bgm was skipped), report the intermediate file.
-    if os.path.exists(output_final):
-        size_mb = os.path.getsize(output_final) / (1024 * 1024)
-        print(f"  Output:     {output_final} ({size_mb:.1f} MB)")
-    elif os.path.exists(output_assembled):
-        size_mb = os.path.getsize(output_assembled) / (1024 * 1024)
-        print(f"  Output:     {output_assembled} ({size_mb:.1f} MB) [bgm pending]")
-    else:
-        print("  Output:     not created (check step errors)")
-
-    # Surface unresolved verify_outputs warnings inside the summary box so a reader
-    # who scans only the tail cannot miss them (a description.txt stale-timestamp
-    # WARN once fired in 'Output Verification' but was overlooked by reading only
-    # 'Pipeline Complete'). The placeholder banner below still handles the CRITICAL
-    # case; this line covers every verification warning (incl. description drift).
-    if verify_warnings:
-        print(
-            f"  [!] {len(verify_warnings)} verification warning(s) above "
-            "-- review 'Output Verification' before publishing."
-        )
-
-    if _advisory_warn_counts:
-        print(
-            f"  [!] advisory warnings -- {_format_advisory_rollup()} "
-            "(review each step's output above)"
-        )
-    _advisory_rollup_state["shown"] = True
-
-    # a partial rebuild does not re-run the advisory checks owned by the steps it
-    # skipped, so their last verdict is stale. Name them rather than let the (clean)
-    # summary imply everything was re-validated this run.
-    _skipped_advisory = [s for s in _ADVISORY_STEPS if s not in steps]
-    if _skipped_advisory:
-        print(
-            "  [i] 今回未実行のステップの advisory は再検証されていません: "
-            + ", ".join(f"{s} ({_ADVISORY_STEPS[s]})" for s in _skipped_advisory)
-        )
-
-    # mid-build Claude auth expiry -> some Claude QA was SKIPPED (not run
-    # silently). Surface prominently with resume guidance so it is unmissable.
-    if _auth_probe_warnings:
-        print(
-            f"  [!!] Claude auth 失効で {len(_auth_probe_warnings)} 件の QA を skip しました "
-            "-- 再認証 (claude setup-token) 後に該当ステップを再実行してください:"
-        )
-        for _w in _auth_probe_warnings:
-            print(f"       - {_w}")
-
-    print(f"{'=' * 60}")
-
-    # Prominent placeholder/missing-animation banner so a Manim render
-    # timeout/failure can NEVER silently ship in the final video (a past
-    # near-miss: math_07 gimbal_lock shipped as a title-card placeholder and was
-    # only caught by manual frame inspection). Reuses the gated G1 detection in
-    # verify_outputs (only fires when the visuals step ran this invocation).
-    placeholder_warn = next(
-        (w for w in verify_warnings if "fell back to" in w and "placeholder" in w),
-        None,
+    _print_build_summary(
+        "Pipeline Complete", total_elapsed, episode_dir, verify_warnings, steps=steps
     )
-    if placeholder_warn:
-        print(f"\n{'!' * 60}")
-        print("  [CRITICAL] PLACEHOLDER SCENE(S) IN THE FINAL VIDEO")
-        print(f"{'!' * 60}")
-        print(placeholder_warn.strip())
-        print("  *** The video shows a plain title-card instead of the animation")
-        print("  *** for the scene(s) above. Fix the Manim template (timeout/error),")
-        print("  *** then re-run --steps visuals,assemble,bgm before publishing.")
-        print(f"{'!' * 60}")
 
     # ─── pipeline_end event + logger close ─────────────
     _pipeline_end_level = pipeline_log.LEVEL_WARNING if verify_warnings else pipeline_log.LEVEL_INFO

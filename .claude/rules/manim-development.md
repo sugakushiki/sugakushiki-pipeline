@@ -28,7 +28,7 @@ paths:
    }
    ```
 
-8. **`LINT_VISUAL_ELEMENTS` metadata**: mode 別に「その mode が画面に出すもの」を宣言する。`qa_manim_consistency.check_narration_names_absent_visual()` が pipeline visuals step で読み、**ナレーションが画面にないものを名指ししていたら WARN** する。
+8. **`LINT_VISUAL_ELEMENTS` metadata**: **新規テンプレ (2026-09-01 以降に追加、未コミット含む) は smoke section 37 が宣言と `style.pace()` の使用を必須にする (FAIL)。** mode 別に「その mode が画面に出すもの」を宣言する。`qa_manim_consistency.check_narration_names_absent_visual()` が pipeline visuals step で読み、**ナレーションが画面にないものを名指ししていたら WARN** する。
 
    ```python
    LINT_VISUAL_ELEMENTS = {
@@ -40,6 +40,8 @@ paths:
    ある回は `converge` (折れ線) を出しながらナレーションが「二つの状態と、そのあいだの四本の矢印があります」と語り、**user が完成動画を見て「矢印が画面上になく理解が難しい」と指摘した**。矢印は同じテンプレの別 mode にある。params も座標も正しいので既存の決定論チェックは全部素通りし、Manim Vision QA も当該 scene は「0 issues」で通した (同 QA は別 scene の同型ミスは拾ったので、非決定的)。
 
    **画面に何があるかを知っているのはテンプレートだけ**なので、テンプレートに宣言させて narration と突き合わせる。宣言の無いテンプレは skip されるので既存 170 本は無影響。照合語は「絵を約束する語」だけ (矢印/等高線/折れ線/棒グラフ/縦軸/横軸/年表/ます目/格子/座標)。
+
+9. **FadeIn と Indicate を同じ play (AnimationGroup) に入れない**: Indicate は begin() 時のオブジェクト状態を「復元先」として記録するため、同じ play 内の FadeIn と組むと**透明状態へ復元されて対象が最終フレームで消える**。FadeIn → Indicate は**別々の play** に分ける (fixed_point_map の `_pulse` ヘルパー参照)。smoke test section 31 が AST で検出する
 
 ## カラーパレット
 

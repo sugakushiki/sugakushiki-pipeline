@@ -25,7 +25,6 @@ Usage:
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -40,84 +39,37 @@ _TEMPLATE_ALLOW = {"timeline_recap", "route_map"}
 
 
 def _call_claude_cli(prompt: str, debug: bool = False) -> str | None:
-    """Call Claude Code CLI with a text prompt (which may reference media file paths).
+    """Claude Code CLI に text prompt を渡す (フレーム画像はパスで参照)。
 
-    qa_image_checker.py と同一の file-based I/O パターン (os.system + temp file)。
-    Windows で subprocess.run/Popen は日本語クラッシュを起こすため使わない。Claude Code は Read tool でファイルを直接読む。
-    Max subscription 配下で追加コストなし。
-
-    Returns response text, or None on failure.
+    (2026-09-19): 実装は claude_backend.call_claude_text (6 本の同じ wrapper を 1 つに)。
     """
-    tmp_dir = tempfile.gettempdir()
-    prompt_path = os.path.join(tmp_dir, "_tmp_manim_vqa_prompt.txt")
-    output_path = os.path.join(tmp_dir, "_tmp_manim_vqa_output.txt")
-    error_path = os.path.join(tmp_dir, "_tmp_manim_vqa_error.txt")
+    _src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from claude_backend import call_claude_text
 
-    try:
-        with open(prompt_path, "w", encoding="utf-8-sig") as f:
-            f.write(prompt)
-
-        for p in [output_path, error_path]:
-            if os.path.exists(p):
-                os.remove(p)
-
-        cmd = (
-            f'type "{prompt_path}" | claude -p --output-format text '
-            f'--allowedTools Read,Bash > "{output_path}" 2> "{error_path}"'
-        )
-
-        if debug:
-            print(f"    [DEBUG] Prompt: {len(prompt)} chars")
-            print(f"    [DEBUG] Command: {cmd[:120]}...")
-
-        exit_code = os.system(cmd)
-
-        if exit_code != 0:
-            if debug and os.path.exists(error_path):
-                with open(error_path, encoding="utf-8", errors="replace") as f:
-                    print(f"    [DEBUG] stderr: {f.read().strip()[:200]}")
-            return None
-
-        if not os.path.exists(output_path):
-            return None
-
-        with open(output_path, encoding="utf-8", errors="replace") as f:
-            return f.read().strip()
-
-    except Exception as e:
-        if debug:
-            print(f"    [DEBUG] _call_claude_cli error: {e}")
-        return None
-    finally:
-        for p in [prompt_path, output_path, error_path]:
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except OSError:
-                pass
+    return call_claude_text(prompt, context="manim_vision_qa", prefix="manim_vqa", debug=debug)
 
 
 def _extract_json(text: str) -> dict | None:
-    """Extract JSON object from response text (handles ```json blocks)."""
-    text = text.strip()
-    if "```" in text:
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # 末尾に散文が付く場合に備え、最初の JSON オブジェクトを貪欲でなく拾う
-        m = re.search(r"\{.*\}", text, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except json.JSONDecodeError:
-                return None
-        return None
+    """Claude の応答から JSON を取り出す。実装は claude_backend.try_extract_json
+    (複数 ```json ブロックの後方優先・制御文字許容・修復まで通る)。"""
+    _src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from claude_backend import try_extract_json
+
+    return try_extract_json(text)
 
 
-def _extract_frame(video_path: str, out_png: str, sseof: float = -3.0) -> bool:
+# 末尾からのオフセット。-3.0 だと余韻 (coda 2〜3 秒) の**始点**に当たり、段階 reveal の
+# 最後の要素が FadeIn の途中 (半透明) で写る。ある回の年表は最後の点 (1382 年)
+# が「極端に薄い」「無い」と 3 回続けて指摘され、最終フレームを見ると描けていた。
+# 余韻の中 (-1.0) を代表フレームにする。
+_FRAME_SSEOF = -1.0
+
+
+def _extract_frame(video_path: str, out_png: str, sseof: float = _FRAME_SSEOF) -> bool:
     """終盤フレームを1枚 ffmpeg で PNG 抽出する。
 
     -sseof <負値> で末尾からのオフセットを指定 (段階 reveal は終盤に完成形が

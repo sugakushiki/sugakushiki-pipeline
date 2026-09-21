@@ -34,9 +34,12 @@ from __future__ import annotations
 import os
 import subprocess
 
-# The long-lived integration branch (memory: project_trunk_branch -- origin/main
-# is far behind and diffing against it produces a useless wall of changes).
-DEFAULT_TRUNK = "refactor/m1-quality-improvements"
+# The long-lived integration branch. 2026-09-20: `main` was 449 commits behind and
+# was fast-forwarded to the tip, and day-to-day work moved to `develop`; `main` is
+# now the stable branch that `develop` merges into at milestones. Before that the
+# trunk was `refactor/m1-quality-improvements` (a 5-month-old branch name that no
+# longer described what it held -- 75 episodes and the whole pipeline).
+DEFAULT_TRUNK = "develop"
 
 # What counts as "work that would be lost", split by tracked vs untracked rather
 # than by directory.
@@ -231,6 +234,42 @@ def scan_worktrees(
     return findings
 
 
+STABLE_BRANCH = "main"
+
+
+def check_editing_on_stable(repo_root: str = ".", run_git=None) -> list[dict]:
+    """Report edits made on the stable branch instead of the trunk.
+
+    2026-09-20: `main` is the stable branch and `develop` is where work happens;
+    `main` only ever moves by fast-forward from `develop` at a milestone. Nothing
+    stopped an edit from landing on `main` directly, and the rule lived only in
+    prose -- the same
+    "written down, never enforced" shape that let a stale trunk sit for five months.
+
+    Deliberately narrow: it fires only when the branch is the stable one AND the
+    working tree has changes. A clean checkout of `main` is the normal way to read
+    the published copy, so warning there would be noise a reader learns to skip.
+    """
+    git = run_git or _run_git
+    branch = git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root).strip()
+    if branch != STABLE_BRANCH:
+        return []
+    dirty = [ln for ln in git(["status", "--porcelain"], repo_root).splitlines() if ln.strip()]
+    if not dirty:
+        return []
+    return [
+        {
+            "kind": "editing_on_stable",
+            "branch": branch,
+            "changes": len(dirty),
+            "summary": (
+                f"{branch} ブランチの上で {len(dirty)} 件の変更を編集しています "
+                f"({DEFAULT_TRUNK} で作業し、{branch} は区切りで早送りする運用)"
+            ),
+        }
+    ]
+
+
 def check_eol_flips(repo_root: str = ".", run_git=None) -> list[dict]:
     """Find tracked files whose working-tree line endings differ from the index.
 
@@ -254,7 +293,15 @@ def check_eol_flips(repo_root: str = ".", run_git=None) -> list[dict]:
             continue
         i_eol = fields[0].removeprefix("i/")
         w_eol = fields[1].removeprefix("w/")
+        attrs = " ".join(fields[2:])
         path = path.strip()
+        # 2026-09-20: `.gitattributes` が eol を宣言しているファイル (現状 *.py と *.md) は
+        # git が clean filter で正規化して比較するので、worktree が CRLF でも
+        # `git diff` は空で commit しても何も変わらない (実測)。ここで警告すると
+        # **嘘を言う** ことになり、健全なリポで鳴る警告は読み飛ばす習慣を作る。
+        # 宣言の無いもの (episodes/ の生成物) だけが本当に全行 diff になる。
+        if "eol=" in attrs:
+            continue
         if i_eol in ("lf", "crlf") and w_eol in ("lf", "crlf") and i_eol != w_eol:
             findings.append(
                 {
@@ -279,6 +326,7 @@ def format_report(findings: list[dict]) -> str:
     wt = [f for f in findings if f["kind"] == "worktree"]
     eol = [f for f in findings if f["kind"] == "eol_flip"]
     trunk_missing = [f for f in findings if f["kind"] == "trunk_missing"]
+    on_stable = [f for f in findings if f["kind"] == "editing_on_stable"]
     lines = []
     # Rendered first, and deliberately not as a WARN among the others: it says the
     # worktree half of this report is not a result at all. A finding kind with no
@@ -309,9 +357,21 @@ def format_report(findings: list[dict]) -> str:
             'io.open(p, "rb") / "wb" のバイト単位で扱ってください '
             "(テキストモードは LF を CRLF に変換します)"
         )
+    if on_stable:
+        for f in on_stable:
+            lines.append(f"  WARN: {f['summary']}")
+        lines.append(
+            f"    -> `git switch {DEFAULT_TRUNK}` してから commit してください "
+            f"({STABLE_BRANCH} は `git push origin {DEFAULT_TRUNK}:{STABLE_BRANCH}` "
+            f"で区切りに進めます)"
+        )
     return "\n".join(lines)
 
 
 def run_all(repo_root: str = ".", trunk: str = DEFAULT_TRUNK, run_git=None) -> list[dict]:
-    """Both checks, in one list. This is what callers wire up."""
-    return scan_worktrees(repo_root, trunk, run_git) + check_eol_flips(repo_root, run_git)
+    """すべての検査を 1 つのリストに。これが呼び出し側の入口。"""
+    return (
+        scan_worktrees(repo_root, trunk, run_git)
+        + check_eol_flips(repo_root, run_git)
+        + check_editing_on_stable(repo_root, run_git)
+    )

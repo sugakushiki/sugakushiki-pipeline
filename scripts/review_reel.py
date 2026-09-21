@@ -821,8 +821,7 @@ def run(
     # 変更があると言いながら**動画が baseline のときと 1 バイトも変わっていない** =
     # 直したものが出荷物に届いていない (assemble / bgm を回していない)。
     # ここでリールを作ると、古い映像を切り出して「これが修正結果です」と差し出すことに
-    # なる
-    # が防ぐはずの事故そのもの。**作らずに、何を回せばよいかを言う。**
+    # なる。**作らずに、何を回せばよいかを言う。**
     result["video_rebuilt"] = True
     base_fp = base.get("video_fingerprint") or ""
     if d["changed"] and base_fp and base_fp == _file_fingerprint(vid):

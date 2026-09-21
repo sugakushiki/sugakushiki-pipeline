@@ -353,7 +353,7 @@ def check_manim_y_clearance() -> tuple[int, int, list[str]]:
     import re
 
     # y < -2.0 リテラルにマッチ (規約下限 -2.0 未満 = 字幕帯に侵入)。
-    # misreading: 旧パターンは -2.[1-9] 始まりで -2.01〜-2.09 (例: -2.05) を取りこぼし、
+    # ある回: 旧パターンは -2.[1-9] 始まりで -2.01〜-2.09 (例: -2.05) を取りこぼし、
     # gp_ap の formula y=-2.05 が smoke を素通りし、出荷後にユーザーが字幕近接を目視した。
     # -2.0[1-9] を先頭に加えて境界直下も検出する。
     Y_VIOLATION_RE = re.compile(
@@ -1259,7 +1259,9 @@ def missing_required_phrases(required: list[str], narration: list[str]) -> list[
     """Which of `required` never appear in the narration. Pure, so it is testable
     without an episode on disk (the point of this check is that it RUNS)."""
     body = "\n".join(t for t in narration if isinstance(t, str))
-    return [p for p in required if p and p not in body]
+    # ある回: 空白の有無 (12 人 / 12人) で偽警告を出さない。
+    body_n = re.sub(r"[\s\u3000]+", "", body)
+    return [p for p in required if p and re.sub(r"[\s\u3000]+", "", p) not in body_n]
 
 
 _AVOID_MARKERS = ("使わない", "使用しない", "使わず", "避ける", "書かない", "用いない")
@@ -1375,7 +1377,7 @@ def check_misreading_context() -> list:
     """The 里 rule must stay context-dependent (VOICEVOX path).
 
     ("里", "り") is an unconditional substring rule, so it also rewrote 里親 to
-    り親
+    り親 (an earlier episode shipped that way). The regex layer makes the rule fire only
     after a numeral. Nothing else pins that: revert it and every episode still
     builds, the audio just goes wrong again where only a listener would notice.
 
@@ -1459,6 +1461,157 @@ def template_mode_names(template: str) -> set | None:
     return None
 
 
+# (2026-09-19): この日付以降に git へ追加されたテンプレは両方必須。較正: 2026-09-01 以降の
+# 11 本 は 11/11 が宣言と pace を持つ = 0 件。それ以前の 186 本は据え置き。
+TEMPLATE_CONTRACT_SINCE = "2026-09-01"
+
+
+def template_added_dates(templates_dir: Path | None = None) -> dict[str, str] | None:
+    """{basename: 追加日 (YYYY-MM-DD)} を git log 1 回で得る。git が使えなければ None。"""
+    templates_dir = templates_dir or MANIM_TEMPLATES
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            [
+                "git",
+                "log",
+                "--diff-filter=A",
+                "--format=%ad",
+                "--date=short",
+                "--name-only",
+                "--",
+                str(templates_dir),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(ROOT),
+            timeout=60,
+        )
+    except Exception:  # noqa: BLE001 - git 不在 / worktree 外では判定しない
+        return None
+    if out.returncode != 0:
+        return None
+    dates: dict[str, str] = {}
+    current = ""
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", line):
+            current = line
+        elif line and current:
+            # 同じファイルが複数回 "追加" されることは稀 (消して戻した場合)。最初の追加日 = 最古を採る
+            name = Path(line).name
+            dates[name] = min(dates.get(name, current), current)
+    return dates
+
+
+def template_contract_problems(path: Path) -> list[str]:
+    """1 テンプレが欠く契約 (LINT_VISUAL_ELEMENTS の宣言 / pace の使用)。"""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, OSError):
+        return ["読めない"]
+    has_lve = any(
+        isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "LINT_VISUAL_ELEMENTS" for t in n.targets)
+        for n in tree.body
+    )
+    uses_pace = any(
+        isinstance(n, ast.Call)
+        and (
+            (isinstance(n.func, ast.Name) and n.func.id == "pace")
+            or (isinstance(n.func, ast.Attribute) and n.func.attr == "pace")
+        )
+        for n in ast.walk(tree)
+    )
+    missing = []
+    if not has_lve:
+        missing.append("LINT_VISUAL_ELEMENTS の宣言が無い (ある回の画面不一致 lint が効かない)")
+    if not uses_pace:
+        missing.append("style.pace() を使っていない (ある回: 手書きの尺配分は末尾が切り詰められる)")
+    return missing
+
+
+def check_new_template_contracts(
+    templates_dir: Path | None = None,
+    added: dict[str, str] | None = None,
+    since: str = TEMPLATE_CONTRACT_SINCE,
+) -> tuple[list[str], str]:
+    """(問題の一覧, 注記)。`added` を渡さなければ git から追加日を取る。判定できなければ空 + 注記。"""
+    templates_dir = templates_dir or MANIM_TEMPLATES
+    if added is None:
+        added = template_added_dates(templates_dir)
+    if added is None:
+        return [], "git から追加日を取れないので判定していません (worktree 外?)"
+    problems = []
+    for tmpl in sorted(templates_dir.glob("*.py")):
+        if tmpl.name in ("style.py", "__init__.py"):
+            continue
+        date = added.get(tmpl.name)
+        if date is None:
+            # git がまだ知らない = 未コミット = いま書いているテンプレ。新規として検査する
+            # (追加日で線を引くだけだと、smoke を回す典型的な場面 = コミット前 が対象外になる)。
+            date = "未コミット"
+        elif date < since:
+            continue
+        for m in template_contract_problems(tmpl):
+            problems.append(f"{tmpl.name} (追加 {date}): {m}")
+    return problems, ""
+
+
+def check_fadein_indicate_shared_play() -> list:
+    """FadeIn(X) and Indicate(X) on the SAME mobject inside one self.play.
+
+    Indicate is a there-and-back transform: it records the mobject's state at
+    begin() as the restore target. When it shares a play call (via one
+    AnimationGroup) with the FadeIn that introduces the same mobject, the state
+    it records is the TRANSPARENT pre-fade one -- the object animates and then
+    ends invisible. An earlier episode's first render lost the max-gap line, both limit
+    markers and both fixed-point dots this way; every final frame simply lacked
+    its key object, which no layout lint can see (a bbox that is not there
+    cannot collide). The fix is two separate play calls (see fixed_point_map's
+    _pulse helper). Calibration: current templates 0 hits after an earlier episode fix;
+    the pre-fix pattern fires (mutation-tested in).
+    """
+    problems = []
+    for tmpl in sorted(MANIM_TEMPLATES.glob("*.py")):
+        try:
+            tree = ast.parse(tmpl.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and func.attr == "play"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "self"
+            ):
+                continue
+            faded: set[str] = set()
+            indicated: set[str] = set()
+            for sub in ast.walk(node):
+                if not (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)):
+                    continue
+                if sub.func.id not in ("FadeIn", "Indicate") or not sub.args:
+                    continue
+                target = sub.args[0]
+                if not isinstance(target, ast.Name):
+                    continue
+                (faded if sub.func.id == "FadeIn" else indicated).add(target.id)
+            for name in sorted(faded & indicated):
+                problems.append(
+                    f"{tmpl.name}:{node.lineno}: FadeIn({name}) と Indicate({name}) が"
+                    f"同じ self.play に同居 -- Indicate が透明状態を復元先に記録し、"
+                    f"対象が最終的に不可視になる。play を分けること"
+                )
+    return problems
+
+
 def check_manim_mode_exists() -> list:
     """`visual.params.mode` that is not a key of the template's SCENES.
 
@@ -1506,7 +1659,7 @@ def check_reuse_template_required_params() -> list:
     timeline_recap raises at render time when `milestones` is supplied without
     `title` (its fallback title names Laplace, so omitting it would put another
     person on screen). That guard works, but it only speaks after the visuals
-    step
+    step (an earlier episode spent a 26-minute build to learn it). The requirement is
     declared in the template as a raise; read it back out and check the configs
     up front so the same mistake costs a second instead.
     """
@@ -1667,6 +1820,10 @@ def _current_state_docs() -> list:
     skill = ROOT / ".claude" / "skills" / "qa-tools" / "SKILL.md"
     if skill.exists():
         docs.append(skill)
+    # 2026-09-20: 手順書 (`.claude/commands/*.md`) も「いまどう動かすか」を述べる doc。
+    # session-wrapup が「ep 引数が要るため対象外の 4 本」と書いたまま実体が 5 本になっていて、
+    # 走らせる人が読む場所なのに誰も照合していなかった。
+    docs.extend(sorted((ROOT / ".claude" / "commands").glob("*.md")))
     return [d for d in docs if d.is_file()]
 
 
@@ -1686,6 +1843,12 @@ _COUNTED_CLAIMS: list = [
         "cloud_reading_lint",
         re.compile(r"(\d+)\s*系統"),
         lambda: _module_collection_size("cloud_reading_lint", "_CATEGORY_TAG"),
+    ),
+    (
+        "回帰スイートで ep 引数が要る本数",
+        "ep 引数",
+        re.compile(r"(\d+)\s*本"),
+        lambda: _module_collection_size("run_regression", "NEEDS_EPISODE_ARG"),
     ),
 ]
 
@@ -1746,6 +1909,12 @@ def check_stated_counts() -> list:
     for label, hint, pattern, resolver in _COUNTED_CLAIMS:
         try:
             actual = resolver()
+        except FileNotFoundError as e:
+            # 実体の module がこのツリーに無い (回帰スイートの runner は private repo 専用で
+            # 公開ツリーには来ない)。section 23 と同じ区別: 「無い」は skip、「有るのに
+            # 壊れている」は失敗。v0.4.0 の公開ツリーで smoke test がここで赤になっていた。
+            print(f"  NOTE: {label} は照合していません (module がこのツリーに無い: {e})")
+            continue
         except Exception as e:
             problems.append(f"{label} の実体を数えられません: {e}")
             continue
@@ -1933,9 +2102,9 @@ def check_regression_suite_manifest() -> list:
     (`check_*.py`) から外れていたことが、誰も気づかなかった一因だった。
 
     ここで検査するのは**中身ではなく所在**。回帰テストを走らせるのは
- (session-wrapup) の役目で、smoke test は
-    「suite から漏れているものが無いか」だけを 1 秒で見る。全部走らせると
- 単体 191 秒が pre-pipeline ゲートに乗ってしまう。
+    runner (session-wrapup が呼ぶ) の役目で、smoke test は
+    「suite から漏れているものが無いか」だけを 1 秒で見る。回帰スイートは
+    コード変更のゲートであって、ビルドのゲートではない。
 
     ここは **private repo 専用の検査**。回帰スイート (`scripts/check_*.py`) と
  はどちらも公開 WHITELIST に載せていないので、公開リポには
@@ -1956,7 +2125,221 @@ def check_regression_suite_manifest() -> list:
     return find_unwired(str(ROOT / "scripts"))
 
 
-def main() -> int:
+def check_scene_definition_contracts() -> tuple[list, list, list]:
+    """ある回: scene_definition の「ビルドを止めた/出荷物を壊した」3 系統を静的に見る。
+
+    どれも実際に起きたことだけを見る。較正は出荷済み 68 本:
+
+      (a) ken_burns なのに source_prompt も source も **既存 png も** 無い -> 0 件。
+          ある回でシーンを分割したとき、元が Manim だったので継承する image prompt が
+          無いまま ken_burns にしてしまい、**音声合成を終えた 30 分後に images ステップで
+          ビルドが中断した**。scene_definition を見れば 1 秒で分かる。
+          **png の有無を条件に入れるのが要**: `image_generator` は既存 png があれば
+          status="exists" で通すので、prompt の有無だけを見ると出荷済みの
+          022_riemann/math1_03 (prompt も source も無いが png はある) を誤検出する。
+          実データで検証済 — その png を隠すと発火し、戻すと沈黙する。
+      (b) 数値であるべきフィールドが文字列 -> 0 件。ある回で新設シーンに
+          `"pause_after": "0.5"` と書き、audio が `float + str` の TypeError で落ちた。
+          既存が全て float なので、文字列は書き間違い以外にありえない。
+      (c) timeline_recap に milestones はあるのに title か legend が無い -> 0 件。
+          の raise は **milestones の欠落しか見ない**ので、title を渡し忘れると
+          **既定の「ラプラスの歩んだ時間」が別の回のタイトルとして出荷される**
+          (legend も既定はラプラスの 天体力学/確率論)。ある回で実際に踏みかけた。
+    """
+    missing_prompt, wrong_type, tl_partial = [], [], []
+    numeric_fields = ("pause_after",)
+    for cfg_path in sorted(EPISODES.glob("*/scene_definition.json")):
+        ep = cfg_path.parent.name
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                scene_def = json.load(f)
+        except Exception:
+            continue
+        for section in scene_def.get("sections", []):
+            for scene in section.get("scenes", []):
+                sid = scene.get("scene_id", "?")
+                visual = scene.get("visual") or {}
+                if visual.get("type") == "ken_burns" and not (
+                    visual.get("source_prompt")
+                    or visual.get("source")
+                    or (cfg_path.parent / "images" / f"{sid}.png").exists()
+                ):
+                    missing_prompt.append(
+                        f"{ep}/{sid}: ken_burns に source_prompt も source も既存 png も無い"
+                    )
+                for key in numeric_fields:
+                    if isinstance(scene.get(key), str):
+                        wrong_type.append(
+                            f"{ep}/{sid}: {key} が文字列 ({scene[key]!r}) -- 数値で書く"
+                        )
+                if visual.get("template") == "timeline_recap":
+                    params = visual.get("params") or {}
+                    if params.get("milestones"):
+                        absent = [k for k in ("title", "legend") if k not in params]
+                        if absent:
+                            tl_partial.append(
+                                f"{ep}/{sid}: milestones はあるが {'/'.join(absent)} が無い "
+                                "-- 既定のラプラス版が出ます"
+                            )
+    return missing_prompt, wrong_type, tl_partial
+
+
+# ある回: scene notes が「意図的」と言う再掲は重複に数えない (sentence_regen と同じ判定語)
+_INTENT_NOTE_RE = re.compile(r"意図的|リフレイン|反復|体言止め|である調の例外|ですます調の例外")
+
+
+def check_duplicate_sentences() -> list:
+    """ある回: 同一エピソード内で **完全に同じ文** が 2 回以上出ていないか。
+
+    ある回の closing は person パートの 2 文をほぼそのまま再演し、さらに
+    「本当の始まりは、仙台の大学の食堂でした。」を closing_01 と closing_02 で
+    **完全に重複**させていた。**user が通し視聴で「同じ文の繰り返しが多すぎる」と
+    指摘して初めて分かった** ── 締めの回収が引用の寄せ集めになっていた。
+
+    較正: 出荷済み 68 本で 8 ep / 9 組。閾値も除外も要らない程度に静か。advisory。
+    完全一致だけを見る (言い換えの重複は機械では「意図的な呼応」と区別できない)。
+
+    ある回追加: scene notes に「意図的 / リフレイン / 反復 / 体言止め」と書いた scene の文は
+    数えない (題名の一文のリフレインと本人の言葉の再掲で 2 組増え、回帰の上限を 12→13 に
+    上げていた。上限を上げるほど本物の重複を見逃すので、意図を書いた再掲は除外して上限を戻す)。
+    判定語は sentence_regen._INTENT_NOTE_RE と同じ。
+    """
+    out = []
+    for cfg_path in sorted(EPISODES.glob("*/scene_definition.json")):
+        ep = cfg_path.parent.name
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                scene_def = json.load(f)
+        except Exception:
+            continue
+        seen = {}
+        for section in scene_def.get("sections", []):
+            for scene in section.get("scenes", []):
+                sid = scene.get("scene_id", "?")
+                notes = scene.get("notes")
+                if isinstance(notes, list):
+                    notes = " ".join(str(x) for x in notes)
+                intentional = bool(notes and _INTENT_NOTE_RE.search(str(notes)))
+                for para in scene.get("narration") or []:
+                    for sent in re.split(r"(?<=。)", para.replace("|", "")):
+                        sent = sent.strip()
+                        if len(sent) < 12:
+                            continue
+                        if sent in seen and seen[sent][0] != sid:
+                            if not (intentional or seen[sent][1]):
+                                out.append(
+                                    f"{ep}: {seen[sent][0]} と {sid} に同一文 -- {sent[:38]}"
+                                )
+                            seen[sent] = (sid, intentional)
+                        else:
+                            seen.setdefault(sent, (sid, intentional))
+    return out
+
+
+def check_reference_production_memos() -> list:
+    """`references` に残った**私宛ての作業指示**。section 26 の兄弟。
+
+    ある回は van der Pol 1927 の注記に「script 作成前に原文で再確認すること。」と
+    書いたまま出荷直前まで行った。references は credits_generator が description.txt の
+    【主要参考文献】へそのまま複写するので、**視聴者向けの文章に制作メモが混ざる**。
+    section 26 が拾うのは `**` のような記法だけで、日本語の命令形は素通りしていた。
+
+    較正 (2026-08-25、出荷 69 話): 発火 3 件 / 3 話 (040/049/050 の「書誌は
+    publication 前に再確認」)。**いずれも実際に公開文へ漏れている**ので偽陽性ではない。
+    過去 ep は user 判断なしに直さない。
+    """
+    pat = re.compile(r"(すること。|要確認|要検証|TODO|再確認|確認のこと|未確認のまま)")
+    out = []
+    for cfg_path in sorted(EPISODES.glob("*/episode_config.json")):
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            continue
+        for i, ref in enumerate(cfg.get("references") or []):
+            if not isinstance(ref, str):
+                continue
+            m = pat.search(ref)
+            if m:
+                j = m.start()
+                out.append(
+                    f"{cfg_path.parent.name} references[{i}]: ...{ref[max(0, j - 30) : j + 26]}..."
+                )
+    return out
+
+
+def check_description_entities() -> list:
+    """description.txt に残った HTML 実体参照と重複語。
+
+    ある回は Commons の `Artist` が `by Elliott &amp; Fry, ...` と**最初から "by " で
+    始まり実体参照を含む**ため、`f"{title} by {author}"` が **`by by Elliott &amp; Fry`**
+    を公開クレジットに出した。帰属表示は文字どおりの正確さが要る唯一の場所なので
+    FAIL 扱いにする (根治は `wikimedia_fetcher._clean_author`)。
+
+    較正 (2026-08-25、出荷 69 話): 修正後の発火 0 件。
+    """
+    ent = re.compile(r"&(amp|lt|gt|quot|nbsp|#[0-9]+);|\bby by\b")
+    out = []
+    for desc in sorted(EPISODES.glob("*/description.txt")):
+        try:
+            text = desc.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in ent.finditer(text):
+            j = m.start()
+            out.append(f"{desc.parent.name}: 「{m.group()}」 ...{text[max(0, j - 30) : j + 24]}...")
+    return out
+
+
+def check_glasses_prop_prompts() -> list:
+    """静物として「置かれた眼鏡」を指示している source_prompt。
+
+    生成モデルは眼鏡のフレームを安定して描けない。ある回 `math_06` は**片方のツルが
+    空中で途切れ、もう一方がレンズを横切って机に浮く**絵になり user の目で見つかった
+    (「これは頻発している」)。**掛けている眼鏡より置かれた眼鏡のほうが壊れやすい** --
+    顔という支えが無く、ツルの折れ角とヒンジをモデルが自力で決めることになるため。
+
+    **人物が掛けている眼鏡は対象外** (似顔の要件になることが多い)。素の
+    `spectacles|glasses` で引くと出荷 69 話で 68 件出てその大半が肖像だった。静置の
+    述語との共起に絞ると **11 件 / 10 話**まで落ち、全件が静物の小道具 = 偽陽性 0
+    (2026-08-25 較正)。否定形を書いた prompt は除外する。
+    """
+    prop = re.compile(
+        r"(eyeglasses|spectacles|reading glasses|pair of glasses)"
+        r"[^.,;]{0,40}?\b(resting|rests|placed|lying|lies|folded|left|set down|perched on the)\b"
+        r"|(a pair of [^.,;]{0,30}?(spectacles|glasses))(?=[.,;])",
+        re.I,
+    )
+    neg = re.compile(r"\bno (eyeglasses|spectacles|glasses)\b", re.I)
+    out = []
+    for sd_path in sorted(EPISODES.glob("*/scene_definition.json")):
+        try:
+            with open(sd_path, encoding="utf-8") as f:
+                sd = json.load(f)
+        except Exception:
+            continue
+        for sec in sd.get("sections", []):
+            for sc in sec.get("scenes", []):
+                text = (sc.get("visual") or {}).get("source_prompt") or ""
+                if not text or neg.search(text):
+                    continue
+                m = prop.search(text)
+                if m:
+                    j = m.start()
+                    out.append(
+                        f"{sd_path.parent.name} {sc.get('scene_id', '?')}: "
+                        f"...{text[max(0, j - 24) : j + 44]}..."
+                    )
+    return out
+
+
+def main(only: list[str] | None = None, list_only: bool = False) -> int:
+    """ (2026-09-20): section を登録テーブルにして `--section` で 1 つだけ走らせられる。
+
+    smoke は 1 回 4 分かかる。1 セクションだけ直したいときも全部走るので、反復のたびに
+    4 分待っていた (2026-09-19 のリファクタの波では 8 回通しで回した)。`only` を渡すと
+    その section だけを走らせる。**渡さなければ出力はバイト単位で従来どおり**。
+    """
     # Findings quote the offending source text, which routinely contains characters
     # the Windows console codepage cannot encode (em dash, rare kanji, the CJK block
     # boundaries this file's own regexes name). Without this the smoke test dies
@@ -1973,395 +2356,568 @@ def main() -> int:
 
     overall_fail = 0
 
-    _section("1. Imports")
-    ok, fail, errors = check_imports()
-    if fail:
-        print(f"  FAIL: {fail} module(s) failed to import ({ok} OK)")
-        for err in errors:
-            print(f"    {err}")
-        overall_fail += fail
-    else:
-        print(f"  OK: {ok} module(s) imported cleanly")
+    def _sec_1() -> None:
+        nonlocal overall_fail
+        ok, fail, errors = check_imports()
+        if fail:
+            print(f"  FAIL: {fail} module(s) failed to import ({ok} OK)")
+            for err in errors:
+                print(f"    {err}")
+            overall_fail += fail
+        else:
+            print(f"  OK: {ok} module(s) imported cleanly")
 
-    _section("2. Episode configs")
-    ok, fail, errors = check_episode_configs()
-    if fail:
-        print(f"  FAIL: {fail} config(s) invalid ({ok} OK)")
-        for err in errors:
-            print(f"    {err}")
-        overall_fail += fail
-    else:
-        print(f"  OK: {ok} episode_config.json validated")
+    def _sec_2() -> None:
+        nonlocal overall_fail
+        ok, fail, errors = check_episode_configs()
+        if fail:
+            print(f"  FAIL: {fail} config(s) invalid ({ok} OK)")
+            for err in errors:
+                print(f"    {err}")
+            overall_fail += fail
+        else:
+            print(f"  OK: {ok} episode_config.json validated")
 
-    _section("3. Manim templates")
-    total, fail, errors, info = check_manim_templates()
-    if fail:
-        print(f"  FAIL: {fail} template issue(s) ({total} discovered)")
-        for err in errors:
-            print(f"    {err}")
-        overall_fail += fail
-    else:
-        print(f"  OK: {total} templates discovered")
-        print(
-            f"    SCENES dict: {info['with_scenes']}/{total}"
-            f"    LINT_FACTUAL_CLAIMS: {info['with_lint_metadata']}/{total}"
-        )
+    def _sec_3() -> None:
+        nonlocal overall_fail
+        total, fail, errors, info = check_manim_templates()
+        if fail:
+            print(f"  FAIL: {fail} template issue(s) ({total} discovered)")
+            for err in errors:
+                print(f"    {err}")
+            overall_fail += fail
+        else:
+            print(f"  OK: {total} templates discovered")
+            print(
+                f"    SCENES dict: {info['with_scenes']}/{total}"
+                f"    LINT_FACTUAL_CLAIMS: {info['with_lint_metadata']}/{total}"
+            )
 
-    _section("4. MathTex Japanese lint")
-    scanned, fail, warnings = check_mathtex_japanese()
-    if fail:
-        print(f"  FAIL: {fail} MathTex Japanese issue(s) ({scanned} files scanned)")
-        for w in warnings:
-            print(f"    {w}")
-        overall_fail += fail
-    else:
-        print(f"  OK: {scanned} templates scanned, no Japanese in MathTex")
+    def _sec_4() -> None:
+        nonlocal overall_fail
+        scanned, fail, warnings = check_mathtex_japanese()
+        if fail:
+            print(f"  FAIL: {fail} MathTex Japanese issue(s) ({scanned} files scanned)")
+            for w in warnings:
+                print(f"    {w}")
+            overall_fail += fail
+        else:
+            print(f"  OK: {scanned} templates scanned, no Japanese in MathTex")
 
-    _section("5. Thumbnail source_image consistency")
-    scanned, fail, warnings = check_thumbnail_source_image()
-    if fail:
-        print(f"  WARN: {fail} mismatch(es) ({scanned} episodes with scene_def scanned)")
-        for w in warnings:
-            print(f"    {w}")
-        # silent fallback 候補 = WARN (overall_fail にカウントせず、可視化のみ)
-    else:
-        print(f"  OK: {scanned} episodes, thumbnail.source_image consistent with scene_def")
+    def _sec_5() -> None:
+        nonlocal overall_fail
+        scanned, fail, warnings = check_thumbnail_source_image()
+        if fail:
+            print(f"  WARN: {fail} mismatch(es) ({scanned} episodes with scene_def scanned)")
+            for w in warnings:
+                print(f"    {w}")
+            # silent fallback 候補 = WARN (overall_fail にカウントせず、可視化のみ)
+        else:
+            print(f"  OK: {scanned} episodes, thumbnail.source_image consistent with scene_def")
 
-    _section("6. Manim Y-clearance lint")
-    scanned, fail, warnings = check_manim_y_clearance()
-    if fail:
-        print(f"  WARN: {fail} Y-clearance violation(s) ({scanned} templates scanned)")
-        for w in warnings:
-            print(f"    {w}")
-        # 字幕領域被り = WARN (overall_fail にカウントせず、可視化のみ)
-    else:
-        print(f"  OK: {scanned} templates scanned, no Y<-2.0 violations")
+    def _sec_6() -> None:
+        nonlocal overall_fail
+        scanned, fail, warnings = check_manim_y_clearance()
+        if fail:
+            print(f"  WARN: {fail} Y-clearance violation(s) ({scanned} templates scanned)")
+            for w in warnings:
+                print(f"    {w}")
+            # 字幕領域被り = WARN (overall_fail にカウントせず、可視化のみ)
+        else:
+            print(f"  OK: {scanned} templates scanned, no Y<-2.0 violations")
 
-    _section("7. Manim 末尾静止 lint")
-    scanned, fail, warnings = check_static_tail()
-    if fail:
-        print(f"  WARN: {fail} 末尾静止 anti-pattern ({scanned} templates scanned)")
-        for w in warnings:
-            print(f"    {w}")
-        # 長時間静止 = WARN (overall_fail にカウントせず、可視化のみ。
-        # 連続モーション/トレーサー/段階リビール + coda に分配して解消する)
-    else:
-        print(f"  OK: {scanned} templates scanned, no static-tail anti-pattern")
+    def _sec_7() -> None:
+        nonlocal overall_fail
+        scanned, fail, warnings = check_static_tail()
+        if fail:
+            print(f"  WARN: {fail} 末尾静止 anti-pattern ({scanned} templates scanned)")
+            for w in warnings:
+                print(f"    {w}")
+            # 長時間静止 = WARN (overall_fail にカウントせず、可視化のみ。
+            # 連続モーション/トレーサー/段階リビール + coda に分配して解消する)
+        else:
+            print(f"  OK: {scanned} templates scanned, no static-tail anti-pattern")
 
-    _section("8. Pipeline step self-test")
-    tested, fail, errors = check_pipeline_step_selftest()
-    if fail:
-        print(f"  FAIL: {fail} step self-test error(s) ({tested} steps exercised)")
-        for err in errors:
-            print(f"    {err}")
-        # 制御フロー regression = FAIL
-        overall_fail += fail
-    else:
-        print(f"  OK: {tested} step path(s) exercised, no control-flow errors")
+    def _sec_8() -> None:
+        nonlocal overall_fail
+        tested, fail, errors = check_pipeline_step_selftest()
+        if fail:
+            print(f"  FAIL: {fail} step self-test error(s) ({tested} steps exercised)")
+            for err in errors:
+                print(f"    {err}")
+            # 制御フロー regression = FAIL
+            overall_fail += fail
+        else:
+            print(f"  OK: {tested} step path(s) exercised, no control-flow errors")
 
-    _section("9. Reusable template hardcode")
-    info_count, warn, warnings = check_reusable_template_hardcode()
-    if warn:
-        print(f"  WARN: {warn} reused template(s) hardcode ep-specific data (not parameterized)")
-        for w in warnings:
-            print(f"    {w}")
-        # 汎用テンプレに ep 固有 hardcode = WARN (overall_fail にカウントせず可視化のみ。
-        # timeline_recap のように visual.params 駆動へ移す)
-    else:
-        print(
-            f"  OK: no non-parameterized reuse hazard "
-            f"({info_count} INFO review candidate(s); "
-            f"run scripts/lint_template_hardcoded_claims.py for detail)"
-        )
+    def _sec_9() -> None:
+        nonlocal overall_fail
+        info_count, warn, warnings = check_reusable_template_hardcode()
+        if warn:
+            print(
+                f"  WARN: {warn} reused template(s) hardcode ep-specific data (not parameterized)"
+            )
+            for w in warnings:
+                print(f"    {w}")
+            # 汎用テンプレに ep 固有 hardcode = WARN (overall_fail にカウントせず可視化のみ。
+            # timeline_recap のように visual.params 駆動へ移す)
+        else:
+            print(
+                f"  OK: no non-parameterized reuse hazard "
+                f"({info_count} INFO review candidate(s); "
+                f"run scripts/lint_template_hardcoded_claims.py for detail)"
+            )
 
-    _section("10. Subtitle timing weighting (mora vs char-count)")
-    checks, fail, errors = check_subtitle_timing_weighting()
-    if fail:
-        print(f"  FAIL: {fail} subtitle-timing issue(s) ({checks} checks)")
-        for err in errors:
-            print(f"    {err}")
-        # 字幕タイミングが char-count へ revert = FAIL
-        overall_fail += fail
-    else:
-        print(f"  OK: {checks} checks, subtitle timing uses spoken-duration weighting")
+    def _sec_10() -> None:
+        nonlocal overall_fail
+        checks, fail, errors = check_subtitle_timing_weighting()
+        if fail:
+            print(f"  FAIL: {fail} subtitle-timing issue(s) ({checks} checks)")
+            for err in errors:
+                print(f"    {err}")
+            # 字幕タイミングが char-count へ revert = FAIL
+            overall_fail += fail
+        else:
+            print(f"  OK: {checks} checks, subtitle timing uses spoken-duration weighting")
 
-    _section("11. BGM .part container-format guard")
-    checks, fail, errors = check_bgm_part_format()
-    if fail:
-        print(f"  FAIL: {fail} bgm format issue(s) ({checks} checks)")
-        for err in errors:
-            print(f"    {err}")
-        # *.part に -f 無し = FAIL
-        overall_fail += fail
-    else:
-        print(f"  OK: bgm_mixer forces -f for *.part write ({checks} check)")
+    def _sec_11() -> None:
+        nonlocal overall_fail
+        checks, fail, errors = check_bgm_part_format()
+        if fail:
+            print(f"  FAIL: {fail} bgm format issue(s) ({checks} checks)")
+            for err in errors:
+                print(f"    {err}")
+            # *.part に -f 無し = FAIL
+            overall_fail += fail
+        else:
+            print(f"  OK: bgm_mixer forces -f for *.part write ({checks} check)")
 
-    _section("12. Ambiguous power-tower prose (an earlier episode Gauss)")
-    _, warn, warnings = check_tower_exponent_prose()
-    if warn:
-        print(f"  WARN: {warn} ambiguous power-tower prose finding(s) (advisory)")
-        for w in warnings:
-            print(f"    {w}")
-        print(
-            "    -> parenthesize (2の(2のk乗)乗), add an explicit 2nd 乗 in "
-            "narration_speech, AND show the formula on screen"
-        )
-        # advisory only; does not block a build
-    else:
-        print("  OK: no ambiguous power-tower prose (A no B no C jou = A^(B^C))")
+    def _sec_12() -> None:
+        _, warn, warnings = check_tower_exponent_prose()
+        if warn:
+            print(f"  WARN: {warn} ambiguous power-tower prose finding(s) (advisory)")
+            for w in warnings:
+                print(f"    {w}")
+            print(
+                "    -> parenthesize (2の(2のk乗)乗), add an explicit 2nd 乗 in "
+                "narration_speech, AND show the formula on screen"
+            )
+            # advisory only; does not block a build
+        else:
+            print("  OK: no ambiguous power-tower prose (A no B no C jou = A^(B^C))")
 
-    _section("13. text_overlay 生キャレット")
-    scanned, warn, warnings = check_text_overlay_caret()
-    if warn:
-        print(f"  WARN: {warn} 生キャレット ({scanned} text_overlay フィールド走査)")
-        for w in warnings:
-            print(f"    {w}")
-        print("    -> main/sub を $...$ で囲み matplotlib mathtext で上付き表示 (ある回 x^3)")
-    else:
-        print(f"  OK: text_overlay に生キャレットなし ({scanned} フィールド)")
+    def _sec_13() -> None:
+        scanned, warn, warnings = check_text_overlay_caret()
+        if warn:
+            print(f"  WARN: {warn} 生キャレット ({scanned} text_overlay フィールド走査)")
+            for w in warnings:
+                print(f"    {w}")
+            print("    -> main/sub を $...$ で囲み matplotlib mathtext で上付き表示 (ある回 x^3)")
+        else:
+            print(f"  OK: text_overlay に生キャレットなし ({scanned} フィールド)")
 
-    _section("14. 参考文献の刊行年")
-    scanned, warn, warnings = check_reference_years()
-    if warn:
-        print(f"  WARN: {warn} 文献に刊行年なし ({scanned} 走査)")
-        for w in warnings:
-            print(f"    {w}")
-        print("    -> 書籍/論文の参考文献に刊行年を補う (ある回 Hald。advisory)")
-    else:
-        print(f"  OK: 書籍/論文型の参考文献は刊行年あり ({scanned} 走査)")
+    def _sec_14() -> None:
+        scanned, warn, warnings = check_reference_years()
+        if warn:
+            print(f"  WARN: {warn} 文献に刊行年なし ({scanned} 走査)")
+            for w in warnings:
+                print(f"    {w}")
+            print("    -> 書籍/論文の参考文献に刊行年を補う (ある回 Hald。advisory)")
+        else:
+            print(f"  OK: 書籍/論文型の参考文献は刊行年あり ({scanned} 走査)")
 
-    _section("15. 最上級/初出クレーム")
-    n_sup, _, sup_findings = check_superlative_claims()
-    if n_sup:
-        print(f"  INFO: {n_sup} 件の primacy 主張 — 一次資料で厳密 verify 推奨 (advisory)")
-        for fdg in sup_findings:
-            print(f"    {fdg}")
-        print(
-            "    -> 人類初/世界初 は『遭遇の初出』(Heron 型) を取りこぼしやすい。"
-            "『実際に〜した最初』等の精密化を検討 (ある回複素数)"
-        )
-    else:
-        print("  OK: 人類初/世界初 系の primacy 主張なし")
+    def _sec_15() -> None:
+        n_sup, _, sup_findings = check_superlative_claims()
+        if n_sup:
+            print(f"  INFO: {n_sup} 件の primacy 主張 — 一次資料で厳密 verify 推奨 (advisory)")
+            for fdg in sup_findings:
+                print(f"    {fdg}")
+            print(
+                "    -> 人類初/世界初 は『遭遇の初出』(Heron 型) を取りこぼしやすい。"
+                "『実際に〜した最初』等の精密化を検討 (ある回複素数)"
+            )
+        else:
+            print("  OK: 人類初/世界初 系の primacy 主張なし")
 
-    _section("16. 参考文献の重複")
-    scanned, warn, warnings = check_reference_duplicates()
-    if warn:
-        print(f"  WARN: {warn} 件の重複タイトル ({scanned} 走査)")
-        for w in warnings:
-            print(f"    {w}")
-        print("    -> 表記差 (ダッシュ/コロン/巻号) で同一文献が二重登録。1 件に統合 (ある回 Falbo)")
-    else:
-        print(f"  OK: 引用タイトルの重複なし ({scanned} 走査)")
+    def _sec_16() -> None:
+        scanned, warn, warnings = check_reference_duplicates()
+        if warn:
+            print(f"  WARN: {warn} 件の重複タイトル ({scanned} 走査)")
+            for w in warnings:
+                print(f"    {w}")
+            print(
+                "    -> 表記差 (ダッシュ/コロン/巻号) で同一文献が二重登録。1 件に統合 (ある回 Falbo)"
+            )
+        else:
+            print(f"  OK: 引用タイトルの重複なし ({scanned} 走査)")
 
-    _section("17. quote オーバーレイの二重括弧")
-    scanned, warn, warnings = check_quote_overlay_brackets()
-    if warn:
-        print(f"  WARN: {warn} 件の quote main にリテラル「」 ({scanned} quote scene 走査)")
-        for w in warnings:
-            print(f"    {w}")
-        print("    -> content.main は括弧なし本文だけに。装飾「」は自動描画")
-    else:
-        print(f"  OK: quote オーバーレイに二重括弧なし ({scanned} quote scene)")
+    def _sec_17() -> None:
+        scanned, warn, warnings = check_quote_overlay_brackets()
+        if warn:
+            print(f"  WARN: {warn} 件の quote main にリテラル「」 ({scanned} quote scene 走査)")
+            for w in warnings:
+                print(f"    {w}")
+            print("    -> content.main は括弧なし本文だけに。装飾「」は自動描画")
+        else:
+            print(f"  OK: quote オーバーレイに二重括弧なし ({scanned} quote scene)")
 
-    _section("18. 禁止表現の user-facing 漏れ")
-    scanned, warn, warnings = check_forbidden_phrases()
-    if warn:
-        print(f"  WARN: {warn} 件の禁止表現混入 ({scanned} ep with forbidden_phrases 走査)")
-        for w in warnings:
-            print(f"    {w}")
-        print("    -> config.forbidden_phrases の error-debt 表現が user-facing に漏れた。言い換え")
-    else:
-        print(f"  OK: 禁止表現の user-facing 漏れなし ({scanned} ep with forbidden_phrases)")
+    def _sec_18() -> None:
+        scanned, warn, warnings = check_forbidden_phrases()
+        if warn:
+            print(f"  WARN: {warn} 件の禁止表現混入 ({scanned} ep with forbidden_phrases 走査)")
+            for w in warnings:
+                print(f"    {w}")
+            print(
+                "    -> config.forbidden_phrases の error-debt 表現が user-facing に漏れた。言い換え"
+            )
+        else:
+            print(f"  OK: 禁止表現の user-facing 漏れなし ({scanned} ep with forbidden_phrases)")
 
-    _section("18b. 企画で決めた必須語が本編に無い")
-    scanned, warn, warnings = check_required_phrases()
-    if warn:
-        print(f"  WARN: {warn} 件の必須語が未出現 ({scanned} ep with required_phrases 走査)")
-        for w in warnings:
-            print(f"    {w}")
-        print("    -> config.required_phrases で決めた語が narration に書かれていない")
-    else:
-        print(f"  OK: 必須語はすべて本編にある ({scanned} ep with required_phrases)")
+    def _sec_18b() -> None:
+        scanned, warn, warnings = check_required_phrases()
+        if warn:
+            print(f"  WARN: {warn} 件の必須語が未出現 ({scanned} ep with required_phrases 走査)")
+            for w in warnings:
+                print(f"    {w}")
+            print("    -> config.required_phrases で決めた語が narration に書かれていない")
+        else:
+            print(f"  OK: 必須語はすべて本編にある ({scanned} ep with required_phrases)")
 
-    _section("18d. 『使わない』と書いた語が生成に効いていない")
-    scanned, warn, warnings = check_avoid_words_enforced()
-    if warn:
-        print(f"  WARN: {warn} 件 ({scanned} ep with pronunciation_high_risk 走査)")
-        for w in warnings:
-            print(f"    {w}")
-        print("    -> pronunciation_high_risk は読み辞書。避けたい語は forbidden_phrases に入れる")
-    else:
-        print(f"  OK: 避ける指定はすべて forbidden_phrases にある ({scanned} ep)")
+    def _sec_18d() -> None:
+        scanned, warn, warnings = check_avoid_words_enforced()
+        if warn:
+            print(f"  WARN: {warn} 件 ({scanned} ep with pronunciation_high_risk 走査)")
+            for w in warnings:
+                print(f"    {w}")
+            print(
+                "    -> pronunciation_high_risk は読み辞書。避けたい語は forbidden_phrases に入れる"
+            )
+        else:
+            print(f"  OK: 避ける指定はすべて forbidden_phrases にある ({scanned} ep)")
 
-    _section("18c. 概要欄に編集用マークアップ/内部メモ")
-    scanned, warn, warnings = check_description_markup()
-    if warn:
-        print(f"  WARN: {warn} 件の強調記法 ({scanned} 本の description.txt 走査)")
-        for w in warnings:
-            print(f"    {w}")
-        print("    -> YouTube は ** を太字にせず記号のまま出す。内部メモの混入も疑うこと")
-    else:
-        print(f"  OK: 概要欄に編集用マークアップなし ({scanned} 本)")
+    def _sec_18c() -> None:
+        scanned, warn, warnings = check_description_markup()
+        if warn:
+            print(f"  WARN: {warn} 件の強調記法 ({scanned} 本の description.txt 走査)")
+            for w in warnings:
+                print(f"    {w}")
+            print("    -> YouTube は ** を太字にせず記号のまま出す。内部メモの混入も疑うこと")
+        else:
+            print(f"  OK: 概要欄に編集用マークアップなし ({scanned} 本)")
 
-    _section("19. Manim 1ファイル1クラス (ある回 regression)")
-    scanned, new_v, legacy_v = check_manim_single_class()
-    if new_v:
-        print(f"  FAIL: {len(new_v)} 新規 multi-class template(s) ({scanned} 走査)")
-        for m in new_v:
-            print(f"    {m}")
-        # 非grandfather の複数 Sceneクラス = FAIL。visual_generator が先頭クラス
-        # 固定 render するので非先頭モードが silent 誤レンダ。
-        overall_fail += len(new_v)
-    if legacy_v:
-        print(
-            f"  WARN: {len(legacy_v)} 既存 multi-class template(s) "
-            f"(grandfathered tech debt; 再利用時に単一クラスへ移行)"
-        )
-        for m in legacy_v:
-            print(f"    {m}")
-    if not new_v and not legacy_v:
-        print(f"  OK: {scanned} templates scanned, all single Scene class")
+    def _sec_19() -> None:
+        nonlocal overall_fail
+        scanned, new_v, legacy_v = check_manim_single_class()
+        if new_v:
+            print(f"  FAIL: {len(new_v)} 新規 multi-class template(s) ({scanned} 走査)")
+            for m in new_v:
+                print(f"    {m}")
+            # 非grandfather の複数 Sceneクラス = FAIL。visual_generator が先頭クラス
+            # 固定 render するので非先頭モードが silent 誤レンダ。
+            overall_fail += len(new_v)
+        if legacy_v:
+            print(
+                f"  WARN: {len(legacy_v)} 既存 multi-class template(s) "
+                f"(grandfathered tech debt; 再利用時に単一クラスへ移行)"
+            )
+            for m in legacy_v:
+                print(f"    {m}")
+        if not new_v and not legacy_v:
+            print(f"  OK: {scanned} templates scanned, all single Scene class")
 
-    _section("20. Console encoding guard (cp932 crash on the warning path)")
-    scanned, enc_v = check_console_encoding_guard()
-    if enc_v:
-        print(f"  FAIL: {len(enc_v)} entry point(s) can crash while reporting ({scanned} 走査)")
-        for m in enc_v:
-            print(f"    {m}")
-        print(
-            '    対処: main() 冒頭で sys.stdout.reconfigure(encoding="utf-8") '
-            "(ASCII 代替が使える文字なら置換でもよい)"
-        )
-        overall_fail += len(enc_v)
-    else:
-        print(f"  OK: {scanned} entry points scanned, none can crash on non-cp932 output")
+    def _sec_20() -> None:
+        nonlocal overall_fail
+        scanned, enc_v = check_console_encoding_guard()
+        if enc_v:
+            print(f"  FAIL: {len(enc_v)} entry point(s) can crash while reporting ({scanned} 走査)")
+            for m in enc_v:
+                print(f"    {m}")
+            print(
+                '    対処: main() 冒頭で sys.stdout.reconfigure(encoding="utf-8") '
+                "(ASCII 代替が使える文字なら置換でもよい)"
+            )
+            overall_fail += len(enc_v)
+        else:
+            print(f"  OK: {scanned} entry points scanned, none can crash on non-cp932 output")
 
-    _section("21. route_map 凡例色の識別可能性")
-    pal_v = check_route_palette()
-    if pal_v:
-        print(f"  FAIL: {len(pal_v)} 組の凡例色が識別できません")
-        for m in pal_v:
-            print(f"    {m}")
-        print(
-            "    対処: src/visual_generator.py の _ROUTE_CATEGORY_COLORS を離す "
-            "(RGB 距離 >= 60)。凡例は絵柄を読み解く鍵なので、同じに見える 2 色は"
-            "凡例を無意味にします"
-        )
-        overall_fail += len(pal_v)
-    else:
-        print("  OK: 全カテゴリ対と背景が RGB 距離 >= 60")
+    def _sec_21() -> None:
+        nonlocal overall_fail
+        pal_v = check_route_palette()
+        if pal_v:
+            print(f"  FAIL: {len(pal_v)} 組の凡例色が識別できません")
+            for m in pal_v:
+                print(f"    {m}")
+            print(
+                "    対処: src/visual_generator.py の _ROUTE_CATEGORY_COLORS を離す "
+                "(RGB 距離 >= 60)。凡例は絵柄を読み解く鍵なので、同じに見える 2 色は"
+                "凡例を無意味にします"
+            )
+            overall_fail += len(pal_v)
+        else:
+            print("  OK: 全カテゴリ対と背景が RGB 距離 >= 60")
 
-    _section("22b. 文脈依存の読み規則 (里)")
-    mis_v = check_misreading_context()
-    if mis_v:
-        print(f"  FAIL: {len(mis_v)} 件")
-        for m in mis_v:
-            print(f"    {m}")
-        print(
-            "    対処: src/audio_generator.py の _MISREADING_REGEX_RULES を確認。"
-            "無条件の (surface, reading) に戻すと語中の 1 文字漢字を誤爆します"
-        )
-        overall_fail += len(mis_v)
-    else:
-        print("  OK: 里 は数詞直後のみ変換 (里親/郷里/里子 は不変)")
+    def _sec_22b() -> None:
+        nonlocal overall_fail
+        mis_v = check_misreading_context()
+        if mis_v:
+            print(f"  FAIL: {len(mis_v)} 件")
+            for m in mis_v:
+                print(f"    {m}")
+            print(
+                "    対処: src/audio_generator.py の _MISREADING_REGEX_RULES を確認。"
+                "無条件の (surface, reading) に戻すと語中の 1 文字漢字を誤爆します"
+            )
+            overall_fail += len(mis_v)
+        else:
+            print("  OK: 里 は数詞直後のみ変換 (里親/郷里/里子 は不変)")
 
-    # Advisory, never counted into overall_fail: a session that is still running
-    # legitimately has uncommitted work. The point is that the state is VISIBLE
-    # before someone declares parallel work merged.
-    _section("22. 取り残された作業 / 行末の反転 (ある回 merge)")
-    health_v = check_repo_health()
-    if health_v:
-        for block in health_v:
-            print(block)
-    else:
-        print("  OK: 未コミットの取り残しなし / 行末の反転なし")
+    def _sec_22() -> None:
+        health_v = check_repo_health()
+        if health_v:
+            for block in health_v:
+                print(block)
+        else:
+            print("  OK: 未コミットの取り残しなし / 行末の反転なし")
 
-    # 所在だけを見る 1 秒の検査。実行は session-wrapup の run_regression.py が担う。
-    # ここで fail にするのは「テストが赤」ではなく「テストが suite の外にある」場合で、
-    # 後者は放置すると赤に気づけなくなる (2026-08-06 に 25 日間の見逃しとして実際に発生)。
-    _section("23. 回帰スイートからの漏れ (2026-08-06)")
-    manifest_v = check_regression_suite_manifest()
-    if manifest_v:
-        print(f"  FAIL: {len(manifest_v)} 件が run_regression.py の探索から漏れています")
-        for m in manifest_v:
-            print(f"    {m}")
-        print("    対処: scripts/check_<name>.py に改名する (glob 探索なので登録は不要)")
-        overall_fail += len(manifest_v)
-    else:
-        print("  OK: 回帰テストは全て scripts/check_*.py 配下 (run_regression.py が拾える)")
+    def _sec_23() -> None:
+        nonlocal overall_fail
+        manifest_v = check_regression_suite_manifest()
+        if manifest_v:
+            print(f"  FAIL: {len(manifest_v)} 件が run_regression.py の探索から漏れています")
+            for m in manifest_v:
+                print(f"    {m}")
+            print("    対処: scripts/check_<name>.py に改名する (glob 探索なので登録は不要)")
+            overall_fail += len(manifest_v)
+        else:
+            print("  OK: 回帰テストは全て scripts/check_*.py 配下 (run_regression.py が拾える)")
 
-    # 存在しない mode は render を止めない -- 既定の分岐に落ちて別の絵が黙って出る。
-    # 遡及走査で出荷済み 2 本が既に該当していた (023 / 033) ので FAIL 扱いにする。
-    _section("24. 実在しない Manim mode")
-    mode_v = check_manim_mode_exists()
-    if mode_v:
-        print(f"  FAIL: {len(mode_v)} 件の mode が SCENES に存在しません")
-        for m in mode_v:
-            print(f"    {m}")
-        print("    対処: scene_definition の params.mode をテンプレの SCENES のキーに直す")
-        overall_fail += len(mode_v)
-    else:
-        print("  OK: 全 scene の params.mode が SCENES に存在する")
+    def _sec_24() -> None:
+        nonlocal overall_fail
+        mode_v = check_manim_mode_exists()
+        if mode_v:
+            print(f"  FAIL: {len(mode_v)} 件の mode が SCENES に存在しません")
+            for m in mode_v:
+                print(f"    {m}")
+            print("    対処: scene_definition の params.mode をテンプレの SCENES のキーに直す")
+            overall_fail += len(mode_v)
+        else:
+            print("  OK: 全 scene の params.mode が SCENES に存在する")
 
-    _section("25. 再利用テンプレの必須 params 欠落")
-    reuse_v = check_reuse_template_required_params()
-    if reuse_v:
-        print(f"  FAIL: {len(reuse_v)} 件がレンダ時に raise します")
-        for m in reuse_v:
-            print(f"    {m}")
-        overall_fail += len(reuse_v)
-    else:
-        print("  OK: 再利用テンプレの必須 params は揃っている")
+    def _sec_25() -> None:
+        nonlocal overall_fail
+        reuse_v = check_reuse_template_required_params()
+        if reuse_v:
+            print(f"  FAIL: {len(reuse_v)} 件がレンダ時に raise します")
+            for m in reuse_v:
+                print(f"    {m}")
+            overall_fail += len(reuse_v)
+        else:
+            print("  OK: 再利用テンプレの必須 params は揃っている")
 
-    _section("26. references の編集用マークアップ")
-    refmk_v = check_reference_markup()
-    if refmk_v:
-        print(f"  FAIL: {len(refmk_v)} 件の references に強調記法が残っています")
-        for m in refmk_v:
-            print(f"    {m}")
-        overall_fail += len(refmk_v)
-    else:
-        print("  OK: references に編集用マークアップなし")
+    def _sec_26() -> None:
+        nonlocal overall_fail
+        refmk_v = check_reference_markup()
+        if refmk_v:
+            print(f"  FAIL: {len(refmk_v)} 件の references に強調記法が残っています")
+            for m in refmk_v:
+                print(f"    {m}")
+            overall_fail += len(refmk_v)
+        else:
+            print("  OK: references に編集用マークアップなし")
 
-    _section("27. argparse の登録漏れ (2026-08-13)")
-    argp_v = check_argparse_registration()
-    if argp_v:
-        print(f"  FAIL: {len(argp_v)} 件が実行時に AttributeError になります")
-        for m in argp_v:
-            print(f"    {m}")
-        overall_fail += len(argp_v)
-    else:
-        print("  OK: 参照される args 属性は全て add_argument に在る")
+    def _sec_27() -> None:
+        nonlocal overall_fail
+        argp_v = check_argparse_registration()
+        if argp_v:
+            print(f"  FAIL: {len(argp_v)} 件が実行時に AttributeError になります")
+            for m in argp_v:
+                print(f"    {m}")
+            overall_fail += len(argp_v)
+        else:
+            print("  OK: 参照される args 属性は全て add_argument に在る")
 
-    _section("28. doc が書いた件数と実体の一致 (2026-08-13)")
-    pbv_v = check_stated_counts()
-    if pbv_v:
-        print(f"  FAIL: {len(pbv_v)} 件の doc が実体と違う数を名乗っています")
-        for m in pbv_v:
-            print(f"    {m}")
-        overall_fail += len(pbv_v)
-    else:
-        print("  OK: 検査数を名乗る doc は全て実体と一致")
+    def _sec_28() -> None:
+        nonlocal overall_fail
+        pbv_v = check_stated_counts()
+        if pbv_v:
+            print(f"  FAIL: {len(pbv_v)} 件の doc が実体と違う数を名乗っています")
+            for m in pbv_v:
+                print(f"    {m}")
+            overall_fail += len(pbv_v)
+        else:
+            print("  OK: 検査数を名乗る doc は全て実体と一致")
 
-    _section("29. README のリポジトリ構造 (2026-08-13)")
-    tree_v = check_readme_structure()
-    if tree_v:
-        print(f"  FAIL: {len(tree_v)} 件が README の構造ツリーと実態で食い違います")
-        for m in tree_v:
-            print(f"    {m}")
-        overall_fail += len(tree_v)
-    else:
-        print("  OK: README の構造ツリーは実態と一致")
+    def _sec_29() -> None:
+        nonlocal overall_fail
+        tree_v = check_readme_structure()
+        if tree_v:
+            print(f"  FAIL: {len(tree_v)} 件が README の構造ツリーと実態で食い違います")
+            for m in tree_v:
+                print(f"    {m}")
+            overall_fail += len(tree_v)
+        else:
+            print("  OK: README の構造ツリーは実態と一致")
 
-    _section("30. フォント候補リストの乖離 (2026-08-13)")
-    font_v = check_font_candidate_lists()
-    if font_v:
-        print(f"  FAIL: {len(font_v)} 件のリストが実在するフォント名を持っていません")
-        for m in font_v:
-            print(f"    {m}")
-        overall_fail += len(font_v)
-    else:
-        print("  OK: 全てのフォント候補リストが実在名を含む")
+    def _sec_30() -> None:
+        nonlocal overall_fail
+        font_v = check_font_candidate_lists()
+        if font_v:
+            print(f"  FAIL: {len(font_v)} 件のリストが実在するフォント名を持っていません")
+            for m in font_v:
+                print(f"    {m}")
+            overall_fail += len(font_v)
+        else:
+            print("  OK: 全てのフォント候補リストが実在名を含む")
+
+    def _sec_31() -> None:
+        nonlocal overall_fail
+        fi_v = check_fadein_indicate_shared_play()
+        if fi_v:
+            print(f"  FAIL: {len(fi_v)} 件が最終フレームで不可視になります")
+            for m in fi_v:
+                print(f"    {m}")
+            overall_fail += len(fi_v)
+        else:
+            print("  OK: FadeIn と Indicate が同じ play に同居するテンプレなし")
+
+    def _sec_32() -> None:
+        nonlocal overall_fail
+        mp_v, wt_v, tl_v = check_scene_definition_contracts()
+        # 3 系統とも較正 0 件なので FAIL。(a) は png の有無を条件に入れて初めて 0 に
+        # なった -- prompt の有無だけを見ていた版は出荷済みの 022_riemann/math1_03 を
+        # 誤検出し、WARN に落とすしかなかった。**誤検出を許容水位で吸収せず、述語を
+        # 実際の失敗条件に合わせる**ほうが正しい。いま作っている回は pipeline の
+        # preflight が起動直後に同じ述語で hard gate する。
+        problems = mp_v + wt_v + tl_v
+        if problems:
+            print(f"  FAIL: {len(problems)} 件")
+            for m in problems:
+                print(f"    {m}")
+            overall_fail += len(problems)
+        else:
+            print("  OK: ken_burns の画像源 / 数値欄の型 / timeline_recap の title-legend は健全")
+
+    def _sec_33() -> None:
+        dup_v = check_duplicate_sentences()
+        if dup_v:
+            print(
+                f"  WARN: {len(dup_v)} 組の完全一致文 (意図的な呼応なら無視。較正: 出荷 68 本で 9 組)"
+            )
+            for m in dup_v[:12]:
+                print(f"    {m}")
+        else:
+            print("  OK: 同一エピソード内に完全一致の文なし")
+
+    def _sec_34() -> None:
+        memo_v = check_reference_production_memos()
+        if memo_v:
+            print(
+                f"  WARN: {len(memo_v)} 件の references に制作メモ (較正: 出荷 69 本で 3 件、いずれも実漏れ)"
+            )
+            for m in memo_v:
+                print(f"    {m}")
+        else:
+            print("  OK: references に制作メモなし")
+
+    def _sec_35() -> None:
+        nonlocal overall_fail
+        ent_v = check_description_entities()
+        if ent_v:
+            print(f"  FAIL: {len(ent_v)} 件 (公開クレジットは文字どおり正確でなければならない)")
+            for m in ent_v:
+                print(f"    {m}")
+            overall_fail += len(ent_v)
+        else:
+            print("  OK: description.txt に実体参照・重複語なし")
+
+    def _sec_36() -> None:
+        glass_v = check_glasses_prop_prompts()
+        if glass_v:
+            print(
+                f"  WARN: {len(glass_v)} 件の source_prompt が置かれた眼鏡を指示 (較正: 出荷 69 本で 11 件)"
+            )
+            for m in glass_v[:12]:
+                print(f"    {m}")
+        else:
+            print("  OK: 置かれた眼鏡を指示している prompt なし")
+
+    def _sec_37() -> None:
+        nonlocal overall_fail
+        tc_v, tc_note = check_new_template_contracts()
+        if tc_note:
+            print(f"  NOTE: {tc_note}")
+        if tc_v:
+            print(f"  FAIL: {len(tc_v)} 件の新規テンプレが契約を欠いています")
+            for m in tc_v:
+                print(f"    {m}")
+            overall_fail += len(tc_v)
+        else:
+            print(
+                f"  OK: {TEMPLATE_CONTRACT_SINCE} 以降に追加されたテンプレは全て宣言と pace を持つ"
+            )
+
+    _sections: list[tuple[str, str, object]] = [
+        ("1", "1. Imports", _sec_1),
+        ("2", "2. Episode configs", _sec_2),
+        ("3", "3. Manim templates", _sec_3),
+        ("4", "4. MathTex Japanese lint", _sec_4),
+        ("5", "5. Thumbnail source_image consistency", _sec_5),
+        ("6", "6. Manim Y-clearance lint", _sec_6),
+        ("7", "7. Manim 末尾静止 lint", _sec_7),
+        ("8", "8. Pipeline step self-test", _sec_8),
+        ("9", "9. Reusable template hardcode", _sec_9),
+        ("10", "10. Subtitle timing weighting (mora vs char-count)", _sec_10),
+        ("11", "11. BGM .part container-format guard", _sec_11),
+        ("12", "12. Ambiguous power-tower prose (an earlier episode Gauss)", _sec_12),
+        ("13", "13. text_overlay 生キャレット", _sec_13),
+        ("14", "14. 参考文献の刊行年", _sec_14),
+        ("15", "15. 最上級/初出クレーム", _sec_15),
+        ("16", "16. 参考文献の重複", _sec_16),
+        ("17", "17. quote オーバーレイの二重括弧", _sec_17),
+        ("18", "18. 禁止表現の user-facing 漏れ", _sec_18),
+        ("18b", "18b. 企画で決めた必須語が本編に無い", _sec_18b),
+        ("18d", "18d. 『使わない』と書いた語が生成に効いていない", _sec_18d),
+        ("18c", "18c. 概要欄に編集用マークアップ/内部メモ", _sec_18c),
+        ("19", "19. Manim 1ファイル1クラス (ある回 regression)", _sec_19),
+        ("20", "20. Console encoding guard (cp932 crash on the warning path)", _sec_20),
+        ("21", "21. route_map 凡例色の識別可能性", _sec_21),
+        ("22b", "22b. 文脈依存の読み規則 (里)", _sec_22b),
+        ("22", "22. 取り残された作業 / 行末の反転 (ある回 merge)", _sec_22),
+        ("23", "23. 回帰スイートからの漏れ (2026-08-06)", _sec_23),
+        ("24", "24. 実在しない Manim mode", _sec_24),
+        ("25", "25. 再利用テンプレの必須 params 欠落", _sec_25),
+        ("26", "26. references の編集用マークアップ", _sec_26),
+        ("27", "27. argparse の登録漏れ (2026-08-13)", _sec_27),
+        ("28", "28. doc が書いた件数と実体の一致 (2026-08-13)", _sec_28),
+        ("29", "29. README のリポジトリ構造 (2026-08-13)", _sec_29),
+        ("30", "30. フォント候補リストの乖離 (2026-08-13)", _sec_30),
+        ("31", "31. FadeIn+Indicate の同居", _sec_31),
+        ("32", "32. scene_definition の契約", _sec_32),
+        ("33", "33. 同一エピソード内の完全一致文", _sec_33),
+        ("34", "34. references の制作メモ漏れ", _sec_34),
+        ("35", "35. description.txt の HTML 実体参照 / 重複語", _sec_35),
+        ("36", "36. 静物として置かれた眼鏡", _sec_36),
+        ("37", "37. 新規テンプレの契約 LINT_VISUAL_ELEMENTS + pace", _sec_37),
+    ]
+
+    if list_only:
+        for num, title, _ in _sections:
+            print(f"  {num:>4}  {title}")
+        return 0
+
+    _wanted = {s.strip() for s in (only or []) if s.strip()}
+    if _wanted:
+        _known = {num for num, _, _ in _sections}
+        _unknown = sorted(_wanted - _known)
+        if _unknown:
+            print(f"  FAIL: 未知の section: {', '.join(_unknown)} (--list-sections で一覧)")
+            return 1
+
+    for _num, _title, _fn in _sections:
+        if _wanted and _num not in _wanted:
+            continue
+        _section(_title)
+        _fn()
 
     print("\n" + "=" * 60)
     if overall_fail:
@@ -2372,4 +2928,15 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import argparse
+
+    _ap = argparse.ArgumentParser(description="pre-pipeline 静的健全性チェック")
+    _ap.add_argument(
+        "--section",
+        action="append",
+        metavar="N",
+        help="この section だけ走らせる (例: --section 18b --section 33)。複数指定可",
+    )
+    _ap.add_argument("--list-sections", action="store_true", help="section の一覧を出して終了")
+    _args = _ap.parse_args()
+    sys.exit(main(only=_args.section, list_only=_args.list_sections))

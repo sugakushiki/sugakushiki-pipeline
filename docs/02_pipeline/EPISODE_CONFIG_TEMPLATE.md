@@ -36,7 +36,7 @@ episode_config.json の各フィールドの説明とルール。
 |---|---|---|---|
 | `subject_appearance` | string | 人物の外見描写（英語）。**体格（thin/medium/heavy等）を必ず含めること** | 画像生成の体格チェックが機能しない |
 | `appearance` | object | 年代別外見 `{young, middle, old}` | 年齢変換生成の精度低下 |
-| `description` | object | YouTube概要欄設定 `{intro_guidance, tags_guidance}` | credits_generatorのチャプター・タグ生成が弱くなる |
+| `description` | object | YouTube概要欄設定 `{intro_guidance, tags_guidance, notes, intro_required_phrases}`。`notes` は本編に入れられなかった限定 (【注】)、`intro_required_phrases` は概要欄の intro に必ず出す語 | credits_generatorのチャプター・タグ生成が弱くなる |
 | `pronunciation_high_risk` | string[] | VOICEVOX誤読しやすい語のリスト | 誤読チェックが汎用ルールのみになる |
 
 ## その他のオプションフィールド
@@ -54,6 +54,7 @@ episode_config.json の各フィールドの説明とルール。
 | `thumbnail` | object | サムネイル設定 `{phrase, math_symbol}` |
 | `available_manim_templates` | any | 利用可能なManimテンプレートのリスト |
 | `wikimedia_photo_urls` | string[] | Wikimedia写真の手動URL指定（flat list 形式必須、dict 形式は `KeyError: 0` クラッシュ。自動検索のフォールバック） |
+| `cloud_direct_kana` | string[] | `cloud_reading_overrides` の語のうち、長さに関係なく合成テキストにかなを直書きする語。挙げた語は overrides にも書く |
 
 ## 廃止予定フィールド
 

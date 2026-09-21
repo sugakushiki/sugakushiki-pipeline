@@ -74,7 +74,7 @@ flowchart TB
 
     step9 -- "output_assembled.mp4 →<br/>(atomic rename)" --> outFinal[("output_final.mp4")]:::outputArtifact
     outFinal --> verify[["完了後の出力検証<br/>(ファイル存在 + 必須セクション +<br/>Manim fallback / 字幕 hash / 鮮度)"]]:::guard
-    verify --> postbuild[["post_build_verify (構造検査 11 件)<br/>+ レビューリールと未変更区間の同一性証明"]]:::guard
+    verify --> postbuild[["post_build_verify (構造検査 13 件)<br/>+ レビューリールと未変更区間の同一性証明"]]:::guard
 
     classDef inputArtifact fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef outputArtifact fill:#d4edda,stroke:#198754,color:#000
@@ -297,7 +297,7 @@ QA は 2 つの LLM Gate と、**生成物のライフサイクルに沿った 3
 層を分ける原理は「**その欠陥を最も安く捕まえられる時点はどこか**」。合成前に
 静的に分かるものは合成前に、合成しないと分からないものは合成直後に、
 連結・BGM を経た最終形でしか分からないものは出荷物で捕まえる。
-構造化ロガーは `--log-file` 指定時にこれらの結果を 1 つの append-only
+構造化ロガーは既定で `episodes/XXX/logs/build_<ts>.jsonl` (`--no-log-file` で無効) にこれらの結果を 1 つの append-only
 JSONL ストリームに多重分離する。
 
 ```mermaid
@@ -340,7 +340,7 @@ flowchart TB
         s2["完了後の出力検証<br/>(必須セクション / 字幕 hash / Manim fallback / 鮮度)"]
         s3["verify_shipped_audio (on-demand)<br/>output_final.mp4 から各シーンを切り出して STT<br/>= 連結・BGM 後の実音声で読みを再確認"]
         s4["概要欄の導入文 (credits step + 完了後)<br/>config→intro staleness (署名・決定論) /<br/>narration→intro 意味一致 〔Claude〕"]
-        s5["post_build_verify (pipeline 末尾で自動)<br/>ビルド後の構造検査 11 件<br/>(章タイムスタンプ vs timing.json / レビュー用コピーの同期 ほか)"]
+        s5["post_build_verify (pipeline 末尾で自動)<br/>ビルド後の構造検査 13 件<br/>(章タイムスタンプ vs timing.json / レビュー用コピーの同期 ほか)"]
         s6["レビューリール + 未変更区間の同一性証明<br/>変更シーンだけを ±2 秒の文脈付きで繋ぎ、<br/>触っていないシーンはフレーム hash / timing / 字幕で不変を示す"]
     end
 
@@ -436,7 +436,9 @@ flowchart TB
   維持、Manim/FFmpeg の進捗バー保護、出力のビット同一性確保)。構造化イベントは
   すべて stderr に専用マーカー prefix で乗せ、親プロセスがバックグラウンド
   thread で構造化イベントと raw stderr text を多重分離する (deadlock 回避)。
-  既定は `--log-file PATH` opt-in なので既存ビルドはバイト単位で同一に保たれる。
+  stdout は不変。JSONL は (2026-09-19) から既定 ON (build ごとに
+  `episodes/XXX/logs/build_<ts>.jsonl`、`--no-log-file` で無効) で、最終サマリに
+  step ごとの所要時間を出す。
 - **エピソード横断 lint はオフライン**: `lint_cross_episode_terms.py` は
   新エピソード追加後に手動実行する。全エピソードを横断して Wikidata Q-id
   インデックスを構築し、表記揺れ (例: 同一人物に対する `ニルス ↔ ニールス`)

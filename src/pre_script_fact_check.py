@@ -367,8 +367,20 @@ def arithmetic_sanity_check(episode_config: dict) -> list[dict]:
             if i == 0:
                 continue
             text_clean = _strip_lifespan(item if isinstance(item, str) else "")
-            year = _extract_first_year(text_clean)
-            if year and year < birth_year - 5 and year not in anchor_years:
+            # (2026-09-20): scan EVERY year, not just the first. The old
+            # `_extract_first_year` made the verdict depend on word order -- the same
+            # pre-birth year flagged CRITICAL when it led the sentence and passed
+            # unseen when a later year led it. Measured before changing: 8 key_episodes
+            # across the 75 shipped configs carry a pre-birth year in a non-first
+            # position, and all 8 are already vetted anchors, so scanning every year
+            # adds zero findings today. The escape hatch is unchanged: put an
+            # intentional third-party citation year in verified_facts.
+            seen_years: set[int] = set()
+            for m in _YEAR_RE.finditer(text_clean):
+                year = int(m.group(0))
+                if year in seen_years or year >= birth_year - 5 or year in anchor_years:
+                    continue
+                seen_years.add(year)
                 issues.append(
                     {
                         "severity": "critical",

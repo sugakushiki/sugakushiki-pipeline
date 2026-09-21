@@ -142,7 +142,9 @@ class FormulaDisplay(Scene):
             norm_f, norm_l = [], list(self._labels)
             for idx, f in enumerate(self._formulas):
                 if isinstance(f, dict):
-                    norm_f.append(f.get("latex") or f.get("formula") or "")
+                    # ある回: LLM は `tex` とも書く。script 側で latex に正規化するが、
+                    # 既存の scene_definition を使う回のためにここでも受ける。
+                    norm_f.append(f.get("latex") or f.get("formula") or f.get("tex") or "")
                     lbl = f.get("label", "")
                     if idx < len(norm_l):
                         if not norm_l[idx]:

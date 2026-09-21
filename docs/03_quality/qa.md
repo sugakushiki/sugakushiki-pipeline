@@ -101,6 +101,7 @@ D (算術サニティ) + E (Wikidata 照合) + F (references の書誌 review) �
 | フラグ | 既定 | 内容 |
 |---|---|---|
 | `--skip-fact-check` | off | 事前事実チェック自体を skip |
+| `--no-sentence-regen` | off | ある回: script step で決定論 lint (である調 / 比喩的な誇張 / forbidden_phrases) に引っかかった文の文単位再生成 (`src/sentence_regen.py`) を抑止。既定は ON。未解決の文と LLM が意図的として残した文は validate の warning に名指し |
 | `--fact-check-allow-warn` | off | WARNING で止まらず続行 (CRITICAL は止まる) |
 | `--use-gemini-fact` | off | Gemini Grounding (web 検索あり) で照合する |
 | `--skip-reference-check` | off | F 層 (references 書誌 review) だけ skip |
@@ -132,9 +133,11 @@ D (算術サニティ) + E (Wikidata 照合) + F (references の書誌 review) �
 | `--skip-pronunciation-check` | off | `--qa` が有効でも読み確認を skip |
 | `--skip-reading-guard` | off | 合成前の誤読 guard を skip (**voicevox 専用**、advisory) |
 | `--normalize-cloud-speed` | off | Cloud 合成後に文単位の発話速度を median へ atempo 正規化 (**cloud 専用**) |
+| `--no-auto-renormalize` | off | ある回: 正規化済みの回 (`audio/_prenorm_backup/` あり) で再合成後に速度段差が出たとき、pipeline が自動で `--apply` を掛け直すのを抑止 (**cloud 専用**) |
 
 - **`--normalize-cloud-speed` は検出ではなく修正の opt-in**。検出 (`speed_qa_report.txt`)
   は常時走る。取り消しは `cloud_speed_qa.py --restore`
+- **一度 `--apply` した回は、再合成後に段差が出れば pipeline が自動で掛け直す**。段差ゼロなら掛けない。`--apply` は直後に再測定して判定 sidecar (`_speed_qa_verdict.json`) を更新する
 - Cloud 回の読み検証 (`cloud_reading_lint` / `stt_qa`) は skip フラグを持たず常時 advisory
 - **`--pronunciation-dry-run` は pipeline のフラグではない** — `audio_generator.py`
   を単体実行するときのフラグで、修正提案だけ表示して `scene_definition.json` を
@@ -213,6 +216,7 @@ python scripts/check_intro_semantic.py episodes/XXX
 | フラグ | 既定 | 内容 |
 |---|---|---|
 | `--skip-auth-probe` | off | Claude CLI 認証 ping (起動 preflight + Vision QA 直前の再確認) を skip。オフライン / Claude を使わない mechanical な再ビルド向け |
+| (自動) | -- | ある回: Claude の利用上限に当たると各 wrapper が `_claude_usage_limit.json` (project root) を書き、pipeline は子プロセスが返るたびにそれを見て再開時刻を名指しして止める。起動時に消す。probe の reason `usage_limit` |
 | `--no-keep-awake` | off | ビルド中の system sleep 抑止を無効化 (Windows のみ有効、他 OS では no-op) |
 
 `--no-keep-awake` を外した既定では、pipeline 起動時に system sleep を抑止し
@@ -220,7 +224,7 @@ python scripts/check_intro_semantic.py episodes/XXX
 
 ### ビルド完了後
 
-`output_final.mp4` が存在する run の最後に、構造検査 11 件 (`scripts/post_build_verify.py`)
+`output_final.mp4` が存在する run の最後に、構造検査 13 件 (`scripts/post_build_verify.py`)
 が自動で走り、警告数は最終サマリの advisory roll-up に載る。あわせてレビュー用の
 `temp_videos/<ep>_output_final.mp4` へのコピーも pipeline が行う。
 
@@ -230,7 +234,7 @@ memory の「必ず実行」という記述だけだった。ある回でその�
 
 | フラグ | 既定 | 内容 |
 |---|---|---|
-| `--skip-post-build-verify` | off | ビルド後の構造検査 11 件を skip |
+| `--skip-post-build-verify` | off | ビルド後の構造検査 13 件を skip |
 | `--no-temp-video-copy` | off | `temp_videos/` へのコピーをしない |
 | `--no-review-reel` | off | のレビューリール + 未変更区間の同一性証明を skip (ビルド前の baseline 採取も止まる) |
 | `--allow-full-resynthesis` | off | 「既存キャッシュがあるのに半数以上を再合成する」という予告が出ても止まらない |
@@ -344,11 +348,16 @@ report のその節を先に読むこと。
 
 | フラグ | 既定 | 内容 |
 |---|---|---|
-| `--log-file PATH` | 無効 | 構造化 JSONL イベントを PATH に書く (stdout のテキストはそのまま) |
+| `--log-file PATH` | `episodes/XXX/logs/build_<ts>.jsonl` | 構造化 JSONL イベントを PATH に書く (stdout のテキストはそのまま)。** (2026-09-19) で既定 ON** ── build ごとに 1 ファイル |
+| `--no-log-file` | 無効 | JSONL を書かない (`--log-file` より優先) |
 
 1 行 1 JSON オブジェクト。フィールドは `ts` / `step` / `level` / `episode_id` /
 `scene_id` / `msg` / `metadata`、severity は critical / warning / info の 3 階層。
-既定は無効なので、既存ビルドの出力はバイト単位で変わらない。
+stdout のテキストは変わらない (起動直後に `[LOG] structured JSONL: <path>` を 1 行出し、
+最終サマリの箱に **step ごとの所要時間 (遅い順・割合)** と Log のパスを出す)。
+`_pipeline_progress.json` も所要時間を持つが毎 run 上書きされるので、フルビルドの後に
+`--steps credits` を 1 回回すと「どの step が遅かったか」が消える。JSONL は build ごとの
+ファイルなので残る (Manim 並列レンダの評価材料)。`logs/` は gitignore 済。
 
 ---
 

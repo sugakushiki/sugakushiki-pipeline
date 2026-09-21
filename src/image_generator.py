@@ -326,6 +326,9 @@ def extract_image_tasks(scene_def: dict, images_dir: str) -> list:
                     "no_human": no_human,
                     "is_subject": v.get("is_subject", True),
                     "cliche_acks": cliche_acks,
+                    # An earlier episode: per-scene opt-out of the illegible-text/no-signature
+                    # suffix (a scene that legitimately wants readable text).
+                    "allow_readable_text": v.get("allow_readable_text", False),
                 }
             )
 
@@ -444,8 +447,37 @@ def generate_image_flash(client, prompt: str, output_path: str, retries: int = 2
 # ---------------------------------------------------------------------------
 # Backend: Imagen 4 (generateImages API - requires billing)
 # ---------------------------------------------------------------------------
+# 人物がいないと prompt 自身が明言している形。
+_NO_PEOPLE_RE = re.compile(
+    r"no people|no figures|nobody|no human|without people|unpopulated"
+    r"|empty (?:room|terrace|street|hall|study|lecture)",
+    re.I,
+)
+# 所有格 (mathematician's desk) は場所や物の修飾であって人物ではない。
+_POSSESSIVE_SUFFIXES = ("'s", "’s")
+
+
 def detect_has_person(prompt: str) -> bool:
-    """Heuristic: does the prompt describe a person? (Imagen backend only)"""
+    """Heuristic: does the prompt describe a person?
+
+    `should_use_reference_photo` がこれを要求するので、**参照写真を使うかどうかの門**に
+    なっている (flash backend)。Imagen backend では personGeneration にも効く。
+
+    ある回で 2 つの穴を塞いだ:
+
+    1. **所有格を人物と数えていた。** `a mathematician's private homage …` の 1 語で門が開き、
+       テラスの絵に主題者が二重に描かれた (user が通し視聴の前に気づいた)。出荷 1,076 prompt
+       のうち判定が変わるのは **23 件**で、確認した限り全て机の静物・無人の構図・手の接写
+       (065 の `scholar's hands`) で、顔は描かれていない = 参照が要らない場面だった。
+    2. **prompt が「人物なし」と明言していても真になっていた** (`hair` や `standing` 等の
+       部分一致で)。出荷で 3 件。
+
+    **部分一致そのものは残す。** `` の単語境界にすると `Roman ` / `German` の中の `man `
+    で真になっていた prompt が 120 件も False に転び、その中には実際に人物が写る scene
+    (教師が生徒に教える等) が含まれていた ── 部分一致は偶然とはいえ機能している。
+    """
+    if _NO_PEOPLE_RE.search(prompt):
+        return False
     person_keywords = [
         "man ",
         "woman ",
@@ -473,7 +505,16 @@ def detect_has_person(prompt: str) -> bool:
         "monk",
     ]
     prompt_lower = prompt.lower()
-    return any(kw in prompt_lower for kw in person_keywords)
+    for kw in person_keywords:
+        start = 0
+        while True:
+            i = prompt_lower.find(kw, start)
+            if i < 0:
+                break
+            if not prompt_lower[i + len(kw) : i + len(kw) + 2].startswith(_POSSESSIVE_SUFFIXES):
+                return True
+            start = i + len(kw)
+    return False
 
 
 def should_use_reference_photo(
@@ -1051,7 +1092,7 @@ def _find_reference_photos(images_dir: str) -> list[str]:
         except (json.JSONDecodeError, KeyError):
             solo_filenames = None
 
-    # misreading: the reference arrived from Commons as wiki_01_henri_lebesgue.GIF and
+    # An earlier episode: the reference arrived from Commons as wiki_01_henri_lebesgue.GIF and
     # this loop only matched .jpg/.jpeg/.png, so the file landed in neither `refs`
     # nor `skipped`. The an earlier episode fail-loud backstop below fires on
     # `not refs and skipped`, so with `skipped` also empty it stayed silent, the
@@ -1073,7 +1114,7 @@ def _find_reference_photos(images_dir: str) -> list[str]:
                 # No credits info → include all (backward compat)
                 refs.append(os.path.join(images_dir, f))
 
-    # misreading: Vision-validate the INCLUDED refs (symmetric to the promote path
+    # An earlier episode: Vision-validate the INCLUDED refs (symmetric to the promote path
     # below). is_solo_portrait() is a TEXT heuristic on the Wikimedia title/
     # description; a group photo whose text lacks group keywords is mis-tagged
     # solo=true and would be used as an identity reference, contaminating every
@@ -1179,6 +1220,163 @@ def _mark_reference_photos_unused(images_dir: str) -> None:
         pass
 
 
+def _age_from_source_prompt(source_prompt: str) -> int | None:
+    """source_prompt が明示した年齢 (数字の年代 / 綴り字の年代 / "N years old" / elderly)。
+
+    2026-09-20 の 棚卸しで `_estimate_scene_age` から切り出した。**順位は変えていない**:
+    narration の年号 > narration の N歳 > **ここ** > 時代キーワード。
+
+    起票時の案は「prompt を最優先に」だったが**実測で却下**した。理由は 2 つ。
+    (1) `_estimate_scene_age` は参照写真を使う scene でしか呼ばれない (`ref_active` の中)
+    (2) 参照条件つき scene で年号と prompt が 20 歳以上食い違う 16 件を読むと、**prompt が
+        正しい場合と年号が正しい場合が半々**だった ── 010 person_03 は narration が
+        「ガウス 14 歳」と言っているのに prompt は公爵の広間を描いて 75、022 math1_01 は
+        narration が「27 歳のリーマン」なのに prompt は講堂で 75。逆に 017 closing_02 は
+        prompt の「20 歳のオイラー」が正しく、年号はヨハンの年齢 59 を返す。
+    どちらの信号も「この肖像に誰が写るか」を知らないので、**優先順では解けない**。
+    """
+    if not source_prompt:
+        return None
+    # This is scene- and subject-specific (the artist's directive for THIS portrait),
+    # so it OUTRANKS the ambient narration era-keywords in Strategy 4 below. Those
+    # keywords can false-match on OTHER people in the scene: an earlier episode ("戦後
+    # ...一世代を育てました ... 学生寮 ...") matched 学生→age 20 for a 50s teaching
+    # scene, overriding the prompt's clear "in his 50s" and producing a young solo
+    # portrait under reference conditioning.
+    prompt_lower = source_prompt.lower()
+
+    # 4a: Digit decades — "in his/her 70s", "in his/her late 70s"
+    # The (?<!\d) guard is load-bearing: without it the DECADE OF A YEAR is read
+    # as the subject's age. "a student room in Montpellier, late 1940s France"
+    # matched "late 40s" and returned 45 for a scene whose prompt says
+    # "This MUST be a YOUNG MAN of about TWENTY-TWO". A sweep of shipped episodes found 31 reference-conditioned
+    # portraits across 19 episodes whose age came from a year's decade this way
+    # (e.g. "late 1990s" -> 95, "the 1910s" -> 15).
+    en_age = re.findall(
+        r"(?:in (?:his|her|their) )?(?:early |late |mid[- ]?)?(?<!\d)(\d{2})s", prompt_lower
+    )
+    if en_age:
+        decade = int(en_age[0])
+        return decade + 5  # midpoint of decade
+
+    # 4a': Spelled-out ages — "a young man of about TWENTY-TWO", "is about twenty".
+    # This is how the strong age markers the image rules ask for are actually
+    # written, and nothing parsed them: an earlier episode says "of about forty" and
+    # fell through to the era keywords for 20, an earlier episode says "about
+    # twenty-three" and got 20. The leading of/is/looks is required so that a
+    # COUNT of things is not read as an age. Calibrated over every shipped prompt: 23 ages matched,
+    # that one non-age excluded.
+    word_age = re.search(
+        r"(?:of|is|are|looks?|appears?)\s+about\s+"
+        r"(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+        r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
+        r"(?:[-\s](one|two|three|four|five|six|seven|eight|nine))?\b",
+        prompt_lower,
+    )
+    if word_age:
+        _UNITS = {
+            "ten": 10,
+            "eleven": 11,
+            "twelve": 12,
+            "thirteen": 13,
+            "fourteen": 14,
+            "fifteen": 15,
+            "sixteen": 16,
+            "seventeen": 17,
+            "eighteen": 18,
+            "nineteen": 19,
+            "twenty": 20,
+            "thirty": 30,
+            "forty": 40,
+            "fifty": 50,
+            "sixty": 60,
+            "seventy": 70,
+            "eighty": 80,
+            "ninety": 90,
+        }
+        _ONES = {
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+        }
+        age = _UNITS[word_age.group(1)] + _ONES.get(word_age.group(2) or "", 0)
+        if 0 < age < 120:
+            return age
+
+    # 4a'': Single-digit spelled-out ages — "a boy of about eight", "a CHILD of
+    # about nine years old". The table above starts at "ten", so childhood scenes
+    # got NO age at all. The bare of/is/looks guard is not enough here because counts
+    # of small numbers are common, so require a person word right before it or
+    # "years old" right after. Calibrated over every shipped prompt: of the 8
+    # matches for a single digit, the 7 real ages all qualify and the one count is
+    # excluded.
+    _ONES_ONLY = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+    }
+    single = re.search(
+        r"(child|boy|girl|infant|toddler|son|daughter|kid)\s+"
+        r"(?:of|is|looks?|appears?)\s+about\s+"
+        r"(?:\w+\s+or\s+)?"  # "seven or eight" -> take the upper bound
+        r"(one|two|three|four|five|six|seven|eight|nine)\b"
+        r"|(?:of|is|looks?|appears?)\s+about\s+"
+        r"(?:\w+\s+or\s+)?"
+        r"(one|two|three|four|five|six|seven|eight|nine)\s+years?\s+old",
+        prompt_lower,
+    )
+    if single:
+        word = single.group(2) or single.group(3)
+        age = _ONES_ONLY.get(word or "")
+        if age:
+            return age
+
+    # 4b: Word decades — "in his mid-thirties", "in her early fifties"
+    _WORD_DECADES = {
+        "twenties": 20,
+        "thirties": 30,
+        "forties": 40,
+        "fifties": 50,
+        "sixties": 60,
+        "seventies": 70,
+        "eighties": 80,
+        "nineties": 90,
+    }
+    for word, decade in _WORD_DECADES.items():
+        if word in prompt_lower:
+            if "early" in prompt_lower:
+                return decade + 2
+            elif "late" in prompt_lower:
+                return decade + 8
+            else:
+                return decade + 5  # mid or unspecified
+
+    # 4c: "N years old", "N-year-old"
+    en_age2 = re.findall(r"(\d{1,3})[- ]?years?[- ]?old", prompt_lower)
+    if en_age2:
+        age = int(en_age2[0])
+        if 0 < age < 120:
+            return age
+
+    # 4d: "elderly" without specific age
+    if "elderly" in prompt_lower:
+        return 75
+
+    return None
+
+
 def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = "") -> int | None:
     """Estimate the subject's approximate age from narration text.
 
@@ -1209,144 +1407,12 @@ def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = ""
         if 0 < age < 120:
             return age
 
-    # Strategy 3: Explicit age directive in the source_prompt (e.g. "in his 50s").
-    # This is scene- and subject-specific (the artist's directive for THIS portrait),
-    # so it OUTRANKS the ambient narration era-keywords in Strategy 4 below. Those
-    # keywords can false-match on OTHER people in the scene: an earlier episode ("戦後
-    # ...一世代を育てました ... 学生寮 ...") matched 学生→age 20 for a 50s teaching
-    # scene, overriding the prompt's clear "in his 50s" and producing a young solo
-    # portrait under reference conditioning.
-    if source_prompt:
-        prompt_lower = source_prompt.lower()
-
-        # 4a: Digit decades — "in his/her 70s", "in his/her late 70s"
-        # The (?<!\d) guard is load-bearing: without it the DECADE OF A YEAR is read
-        # as the subject's age. "a student room in Montpellier, late 1940s France"
-        # matched "late 40s" and returned 45 for a scene whose prompt says
-        # "This MUST be a YOUNG MAN of about TWENTY-TWO". A sweep of shipped episodes found 31 reference-conditioned
-        # portraits across 19 episodes whose age came from a year's decade this way
-        # (e.g. "late 1990s" -> 95, "the 1910s" -> 15).
-        en_age = re.findall(
-            r"(?:in (?:his|her|their) )?(?:early |late |mid[- ]?)?(?<!\d)(\d{2})s", prompt_lower
-        )
-        if en_age:
-            decade = int(en_age[0])
-            return decade + 5  # midpoint of decade
-
-        # 4a': Spelled-out ages — "a young man of about TWENTY-TWO", "is about twenty".
-        # This is how the strong age markers the image rules ask for are actually
-        # written, and nothing parsed them: an earlier episode says "of about forty" and
-        # fell through to the era keywords for 20, an earlier episode says "about
-        # twenty-three" and got 20. The leading of/is/looks is required so that a
-        # COUNT of things is not read as an age. Calibrated over every shipped prompt: 23 ages matched,
-        # that one non-age excluded.
-        word_age = re.search(
-            r"(?:of|is|are|looks?|appears?)\s+about\s+"
-            r"(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
-            r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
-            r"(?:[-\s](one|two|three|four|five|six|seven|eight|nine))?\b",
-            prompt_lower,
-        )
-        if word_age:
-            _UNITS = {
-                "ten": 10,
-                "eleven": 11,
-                "twelve": 12,
-                "thirteen": 13,
-                "fourteen": 14,
-                "fifteen": 15,
-                "sixteen": 16,
-                "seventeen": 17,
-                "eighteen": 18,
-                "nineteen": 19,
-                "twenty": 20,
-                "thirty": 30,
-                "forty": 40,
-                "fifty": 50,
-                "sixty": 60,
-                "seventy": 70,
-                "eighty": 80,
-                "ninety": 90,
-            }
-            _ONES = {
-                "one": 1,
-                "two": 2,
-                "three": 3,
-                "four": 4,
-                "five": 5,
-                "six": 6,
-                "seven": 7,
-                "eight": 8,
-                "nine": 9,
-            }
-            age = _UNITS[word_age.group(1)] + _ONES.get(word_age.group(2) or "", 0)
-            if 0 < age < 120:
-                return age
-
-        # 4a'': Single-digit spelled-out ages — "a boy of about eight", "a CHILD of
-        # about nine years old". The table above starts at "ten", so childhood scenes
-        # got NO age at all. The bare of/is/looks guard is not enough here because counts
-        # of small numbers are common, so require a person word right before it or
-        # "years old" right after. Calibrated over every shipped prompt: of the 8
-        # matches for a single digit, the 7 real ages all qualify and the one count is
-        # excluded.
-        _ONES_ONLY = {
-            "one": 1,
-            "two": 2,
-            "three": 3,
-            "four": 4,
-            "five": 5,
-            "six": 6,
-            "seven": 7,
-            "eight": 8,
-            "nine": 9,
-        }
-        single = re.search(
-            r"(child|boy|girl|infant|toddler|son|daughter|kid)\s+"
-            r"(?:of|is|looks?|appears?)\s+about\s+"
-            r"(?:\w+\s+or\s+)?"  # "seven or eight" -> take the upper bound
-            r"(one|two|three|four|five|six|seven|eight|nine)\b"
-            r"|(?:of|is|looks?|appears?)\s+about\s+"
-            r"(?:\w+\s+or\s+)?"
-            r"(one|two|three|four|five|six|seven|eight|nine)\s+years?\s+old",
-            prompt_lower,
-        )
-        if single:
-            word = single.group(2) or single.group(3)
-            age = _ONES_ONLY.get(word or "")
-            if age:
-                return age
-
-        # 4b: Word decades — "in his mid-thirties", "in her early fifties"
-        _WORD_DECADES = {
-            "twenties": 20,
-            "thirties": 30,
-            "forties": 40,
-            "fifties": 50,
-            "sixties": 60,
-            "seventies": 70,
-            "eighties": 80,
-            "nineties": 90,
-        }
-        for word, decade in _WORD_DECADES.items():
-            if word in prompt_lower:
-                if "early" in prompt_lower:
-                    return decade + 2
-                elif "late" in prompt_lower:
-                    return decade + 8
-                else:
-                    return decade + 5  # mid or unspecified
-
-        # 4c: "N years old", "N-year-old"
-        en_age2 = re.findall(r"(\d{1,3})[- ]?years?[- ]?old", prompt_lower)
-        if en_age2:
-            age = int(en_age2[0])
-            if 0 < age < 120:
-                return age
-
-        # 4d: "elderly" without specific age
-        if "elderly" in prompt_lower:
-            return 75
+    # Strategy 3: source_prompt の明示年齢 (時代キーワードより上、narration の年号より下)。
+    # **順位はここから動かさない** — 2026-09-20 に「prompt を最優先に」を試して実測で却下した
+    # (に根拠)。
+    prompt_age = _age_from_source_prompt(source_prompt)
+    if prompt_age is not None:
+        return prompt_age
 
     # Strategy 4: Era keywords in the narration (lowest priority -- ambient and
     # greedy, so it only runs when the narration has no year / no 歳 and the
@@ -1374,6 +1440,34 @@ def _estimate_scene_age(narration: str, birth_year: int, source_prompt: str = ""
             return age
 
     return None
+
+
+_BEARD_NEG = re.compile(r",?\s*\b(?:no beard|clean-shaven|beardless)\b", re.I)
+_GLASSES_NEG = re.compile(r",?\s*\b(?:no glasses|without glasses|no spectacles)\b", re.I)
+
+
+def _reconcile_identity_terms(scene_prompt: str, appearance: str) -> str:
+    """scene prompt の顔の毛/眼鏡の記述が subject_appearance と矛盾するとき、scene 側を落とす。
+
+    ある回: config に (写真を見ずに) 『NO beard』と書いた状態で script が scene prompt を生成し、
+    config を直しても scene prompt の『no beard』が残って画像 QA が 4 回落ちた。scene prompt は
+    config から派生した記述なので、外見については config (= 参照写真に合わせて人が確かめた側) を
+    正とする。ここでは矛盾する否定句だけを機械的に外す (肯定側の記述は上の precedence 文で
+    上書きされる)。appearance が空なら何もしない。
+    """
+    if not scene_prompt or not appearance:
+        return scene_prompt
+    ap = appearance.lower()
+    out = scene_prompt
+    beard_in_ap = "beard" in ap and not re.search(r"no beard|clean-shaven|beardless", ap)
+    if beard_in_ap:
+        out = _BEARD_NEG.sub("", out)
+    glasses_in_ap = re.search(
+        r"(?:wears|wearing|with)[^.]{0,40}(?:glasses|spectacles)", ap
+    ) and not re.search(r"no glasses|without glasses", ap)
+    if glasses_in_ap:
+        out = _GLASSES_NEG.sub("", out)
+    return out
 
 
 def _build_reference_prompt(
@@ -1416,7 +1510,11 @@ def _build_reference_prompt(
         identity_desc = (
             f"The subject has these CONSISTENT facial features across all ages: "
             f"{appearance}. These features must be preserved regardless of age. "
+            "If the scene description below contradicts these CONSISTENT features "
+            "(facial hair, glasses, hair colour, build), the CONSISTENT features and the "
+            "reference photograph take precedence over the scene description. "
         )
+        original_prompt = _reconcile_identity_terms(original_prompt, appearance)
 
     # 変換方向の説明
     if ref_photo_age and abs(target_age - ref_photo_age) <= 10:
@@ -1453,6 +1551,32 @@ def _build_reference_prompt(
     return prompt
 
 
+REFERENCE_MIN_SIDE = 400
+
+
+def upscale_small_reference(img, min_side: int = REFERENCE_MIN_SIDE):
+    """短辺が min_side 未満の参照写真を Lanczos で整数倍に拡大し、コントラストを整える。
+
+    ある回: Commons にある唯一の肖像写真が 184x241 px だった。そのまま渡すより、手で 4 倍に
+    拡大してから渡したほうが 11 シーンで顔が一貫した (ある回の 276x320 も同じ型)。
+    ライセンスや出典は変わらない (拡大は複製の範囲)。Returns (image, factor).
+    """
+    from PIL import Image as _Img
+    from PIL import ImageOps as _Ops
+
+    w, h = img.size
+    short = min(w, h)
+    if short >= min_side:
+        return img, 1
+    factor = -(-min_side // short)  # ceil
+    up = img.convert("RGB").resize((w * factor, h * factor), _Img.LANCZOS)
+    try:
+        up = _Ops.autocontrast(up, cutoff=1)
+    except Exception:  # noqa: BLE001 - contrast is cosmetic; never fail generation on it
+        pass
+    return up, factor
+
+
 def generate_image_with_reference(
     client, reference_path: str, prompt: str, output_path: str, retries: int = 2
 ) -> bool:
@@ -1475,6 +1599,12 @@ def generate_image_with_reference(
 
     try:
         ref_img = Image.open(reference_path)
+        ref_img, _factor = upscale_small_reference(ref_img)
+        if _factor > 1:
+            print(
+                f"      [REF] reference is small ({os.path.basename(reference_path)}): "
+                f"upscaled x{_factor} -> {ref_img.size[0]}x{ref_img.size[1]}"
+            )
     except Exception as e:
         print(f"      Failed to load reference: {e}")
         return False
@@ -1544,69 +1674,25 @@ def _select_best_reference(
 #       個別シーン評価＋クロスシーン人物一貫性チェック。
 # ---------------------------------------------------------------------------
 def _call_claude_vision(image_path: str, prompt: str, debug: bool = False) -> str | None:
-    """Call Claude Code CLI with an image file path and text prompt.
+    """Claude Code CLI に画像パス + text prompt を渡す (Read tool が画像を読む)。
 
-    Uses the same file-based I/O pattern as claude_backend.py.
-    Claude Code reads the image file directly via its Read tool.
-    Runs under Max subscription — no API key or additional cost.
-
-    Returns response text, or None on failure.
+    (2026-09-19): 実装は claude_backend.call_claude_text。ここは prompt の組み立てだけ。
     """
-    import tempfile
-
-    # Build combined prompt: instruct Claude to read the image, then evaluate
     abs_image_path = os.path.abspath(image_path)
     combined = (
         f"以下の画像ファイルを読んで評価してください。\n画像ファイル: {abs_image_path}\n\n{prompt}"
     )
+    if debug:
+        print(f"    [DEBUG] Vision prompt: {len(combined)} chars")
+        print(f"    [DEBUG] Image: {abs_image_path}")
+    _src_dir = os.path.dirname(os.path.abspath(__file__))
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from claude_backend import call_claude_text
 
-    tmp_dir = tempfile.gettempdir()
-    prompt_path = os.path.join(tmp_dir, "_tmp_vision_prompt.txt")
-    output_path = os.path.join(tmp_dir, "_tmp_vision_output.txt")
-    error_path = os.path.join(tmp_dir, "_tmp_vision_error.txt")
-
-    try:
-        with open(prompt_path, "w", encoding="utf-8-sig") as f:
-            f.write(combined)
-
-        for p in [output_path, error_path]:
-            if os.path.exists(p):
-                os.remove(p)
-
-        cmd = (
-            f'type "{prompt_path}" | claude -p --output-format text '
-            f'> "{output_path}" 2> "{error_path}"'
-        )
-
-        if debug:
-            print(f"    [DEBUG] Vision prompt: {len(combined)} chars")
-            print(f"    [DEBUG] Image: {abs_image_path}")
-
-        exit_code = os.system(cmd)
-
-        if exit_code != 0:
-            if debug and os.path.exists(error_path):
-                with open(error_path, encoding="utf-8", errors="replace") as f:
-                    print(f"    [DEBUG] stderr: {f.read().strip()[:200]}")
-            return None
-
-        if not os.path.exists(output_path):
-            return None
-
-        with open(output_path, encoding="utf-8", errors="replace") as f:
-            return f.read().strip()
-
-    except Exception as e:
-        if debug:
-            print(f"    [DEBUG] _call_claude_vision error: {e}")
-        return None
-    finally:
-        for p in [prompt_path, output_path, error_path]:
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except OSError:
-                pass
+    return call_claude_text(
+        combined, context="image_generator vision", prefix="vision", debug=debug
+    )
 
 
 def evaluate_image_quality(
@@ -2062,7 +2148,7 @@ def generate_all(
     ref_photos = _find_reference_photos(images_dir)
     use_reference = bool(ref_photos) and birth_year and backend == "flash"
 
-    # misreading: reference photos may be FETCHED (wikimedia_fetcher, labelled
+    # An earlier episode: reference photos may be FETCHED (wikimedia_fetcher, labelled
     # usage="reference") yet the global gate is OFF -- e.g. an ancient figure
     # with no birth_year, so `use_reference` above is False and NO photo is ever
     # passed to Gemini (images are text-only/imaginative). Record that ACTUAL
@@ -2099,7 +2185,15 @@ def generate_all(
 
     success = 0
     failed = 0
-    qa_improved = 0  # QAリトライで改善されたシーン数
+    qa_retried = 0  # QAリトライを掛けたシーン数 (改善したとは限らない)
+    # ある回: リトライ上限まで一度も pass しなかったシーンを名前で残す。
+    # 従来は「Max retries reached」を 1 行出したあと success に計上し、サマリには
+    # 「QA improved: N scene(s) retried」とだけ出ていた -- **改善していないものが
+    # 改善済みとして数えられていた**。ある回は眼鏡の指摘が 5 回とも
+    # 消えないまま出荷され、user が完成画像で気づいた。プロンプト自体が config の
+    # 外見指定と矛盾している場合、リトライは原理的に収束しない (強化するほど
+    # 矛盾する指示が強まる) ので、**回数でなく「未解決のまま採用した」事実**を出す。
+    qa_unresolved: list[tuple[str, list]] = []
     ref_used = 0  # リファレンス使用回数
 
     for i, t in enumerate(to_generate):
@@ -2122,6 +2216,23 @@ def generate_all(
                 + " no human figure visible, still life composition, no people in scene."
             )
 
+        # An earlier episode: readable text painted by the model is ALWAYS wrong -- it
+        # invents dates that contradict the narration (a baptismal ledger dated
+        # October for a March birth), fake proper names (ANNA KOWASEKA as the
+        # mother), out-of-place language (LE PRIX! in a Lwów notebook) and
+        # pseudo-lettering on crests, plus a painter's signature in a corner
+        #. Blurring after the fact
+        # is visible to viewers (user caught it twice); the fix is to not let
+        # the text be painted. Appended at generation time only, so shipped
+        # images' fingerprints are untouched (no mass STALE regeneration).
+        # Opt-out per scene with "allow_readable_text": true (none needed yet).
+        # NOTE: appended AFTER has_person detection below -- today's clause
+        # wording trips no person keyword (functionally verified), but the
+        # same failure class as Issue 1 ("man " inside "human ") would return
+        # the moment someone adds e.g. "artist" to the keyword list. Detection
+        # therefore runs on the pre-clause prompt.
+        _append_no_text_clause = not t.get("allow_readable_text", False)
+
         # ── Determine generation method ───────────────────────
         # Issue 1 (s94 fix): force has_person=False when no_human=true.
         # Otherwise detect_has_person() can match "man " inside "human "
@@ -2132,6 +2243,17 @@ def generate_all(
             has_person = False
         else:
             has_person = detect_has_person(current_prompt)
+
+        if _append_no_text_clause:
+            current_prompt = (
+                current_prompt.rstrip()
+                + " Any writing, lettering, numbers or dates in the image must be "
+                "completely illegible pseudo-script -- no readable words or names in "
+                "any language. Absolutely NO artist signature, monogram, watermark or "
+                "inscription anywhere, especially in the corners. No carved lettering, "
+                "engraved friezes, plaques, signboards, banners or graffiti on walls or "
+                "buildings (render such surfaces as plain stone or plaster)."
+            )
         target_age = None
         ref_path = None
 
@@ -2241,8 +2363,12 @@ def generate_all(
 
             size_kb = os.path.getsize(output_path) / 1024
 
-            # QA評価スキップ（無効化または最終attempt）
-            if not qa_eval or attempt == qa_max_retries:
+            # QA評価スキップ (無効化のときだけ)。
+            # ある回以前は「最終 attempt も評価しない」で、リトライ上限まで不合格が続いた画像は
+            # **評価されないまま [OK] Saved** と出ていた (person_02: 4 回不合格 → 5 回目は未評価で保存)。
+            # その結果、下の「QA 未解決のまま採用」 は到達不能で一度も表示されなかった。
+            # 最終 attempt も評価し、不合格なら採用はするが未解決として名指しする。
+            if not qa_eval:
                 print(f"    [OK] Saved ({size_kb:.0f} KB)")
                 final_ok = True
                 break
@@ -2290,11 +2416,13 @@ def generate_all(
                         issues,
                         source_prompt=t["prompt"],
                     )
-                    qa_improved += 1
+                    qa_retried += 1
                     time.sleep(1)
                 else:
-                    # リトライ上限に達した場合は現在の画像を採用
+                    # リトライ上限に達した場合は現在の画像を採用。
+                    # ただし **未解決のまま採用した** ことを名前付きで残す。
                     print(f"    [WARN] Max retries reached, keeping best result ({size_kb:.0f} KB)")
+                    qa_unresolved.append((scene_id, list(issues)))
                     final_ok = True
 
         if final_ok:
@@ -2316,8 +2444,25 @@ def generate_all(
     print(f"  Generated: {success}")
     if ref_used:
         print(f"  Reference-based: {ref_used} scene(s)")
-    if qa_improved:
-        print(f"  QA improved: {qa_improved} scene(s) retried")
+    if qa_retried:
+        print(f"  QA retried: {qa_retried} scene(s)")
+    if qa_unresolved:
+        print(f"  [!] QA 未解決のまま採用: {len(qa_unresolved)} scene(s)")
+        for sid, issues in qa_unresolved:
+            print(f"      - {sid}")
+            for issue in issues[:3]:
+                try:
+                    print(f"          {issue}")
+                except UnicodeEncodeError:
+                    print(f"          {issue.encode('ascii', errors='replace').decode('ascii')}")
+        print(
+            "      [ACTION] 同じ指摘が上限まで消えないときは **画像でなく source_prompt を読む**。"
+        )
+        print(
+            "      プロンプトが episode_config の subject_appearance と矛盾していると "
+            "(ある回: config『全年代で眼鏡を描かない』/ prompt『thin-framed spectacles』)、"
+        )
+        print("      リトライは原理的に収束しません。")
     if failed:
         print(f"  Failed:    {failed}")
     print(f"  Output:    {images_dir}")

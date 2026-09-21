@@ -44,6 +44,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 
 META_FILENAME = "_description_meta.json"
 
@@ -162,3 +163,85 @@ def check_staleness(episode_dir: str, config: dict, scene_def: dict) -> str | No
         f"episode_config の {field_str} が script 生成後に編集されましたが、"
         "description.intro は刻印時のまま (旧生成テキスト) です -> stale の可能性。"
     )
+
+
+# ---------------------------------------------------------------------------
+# 数量ドリフト検出
+#
+# は config -> intro の drift を見る。だが ある回で踏んだのは **narration ->
+# intro** の drift だった: narration の「何十万年」を原典に合わせて「何百万年」に
+# 直したのに、`description.intro` は scene_definition に固定保存されていて
+# `--steps credits` では再生成されないため、**音声と字幕は何百万年・概要欄だけ
+# 何十万年** という食い違いのまま出るところだった (grep で偶然見つけた)。
+#
+# narration 全体のハッシュで見る案は退けた: ある回の narration 編集 4 件のうち
+# 3 件は intro と無関係で、そのたび空振りする。 が FP 0 なのは対象を導入系の
+# 4 フィールドに絞っているからで、narration 全体はその条件を満たさない。
+#
+# 代わりに **intro が名指しする数量トークン** が narration にあるかだけを見る。
+# 較正 (出荷 68 話、漢数字↔算用数字を正規化した後): **1 話**で発火。それは
+# 「intro にだけ年号がある」型で、今回の「同じ量について食い違う」型とは別。
+# よって **advisory** であってゲートではない。
+# ---------------------------------------------------------------------------
+
+_QUANTITY_RE = re.compile(
+    r"何[十百千]?[万億]?[年人倍通り]|[0-9]{3,4}年|[一二三四五六七八九十百千万]{2,}[年人問巻次個]"
+)
+
+_KANJI_DIGIT = {
+    "〇": "0",
+    "一": "1",
+    "二": "2",
+    "三": "3",
+    "四": "4",
+    "五": "5",
+    "六": "6",
+    "七": "7",
+    "八": "8",
+    "九": "9",
+}
+
+
+def _norm_numerals(text: str) -> str:
+    """漢数字と算用数字の表記違いを吸収する。
+
+    較正で分かった偽陽性はこれだけだった: 042_mandelbrot は intro「二千年」/
+    narration「2000年」、046_boole はその逆。**同じ量を言っているのに表記が違うだけ**
+    なので、正規化しないとこの 2 話が毎回鳴る。
+    """
+    t = text
+    for k, v in _KANJI_DIGIT.items():
+        t = t.replace(k, v)
+    # 位取り語を落として桁だけ残す (2千年 -> 2000年 相当の粗い正規化)
+    t = t.replace("千年", "000年").replace("百年", "00年")
+    return t
+
+
+def intro_quantity_drift(scene_def: dict) -> list:
+    """intro が名指しする数量トークンのうち、narration に見当たらないものを返す。
+
+    空リスト = ドリフトなし。**advisory 用**。較正 (2026-09-06、出荷 68 話): **1 話**。
+    正規化を入れる前は 6 話出て、うち 5 話は「二千年 vs 2000年」の表記違いだった
+    (漢数字↔算用数字を揃えると消える)。残る 1 件は「本編が言っていない年号を概要欄が
+    足している」型で、今回の失敗 (intro と narration が同じ量について食い違う) とは
+    別の話だが、どちらも人が見て判断すべきもの。**ゲートにはしない。**
+    """
+    intro = ((scene_def.get("description") or {}).get("intro")) or ""
+    if not intro:
+        return []
+    narr = "".join(
+        line.replace("|", "")
+        for section in scene_def.get("sections", [])
+        for scene in section.get("scenes", [])
+        for line in (scene.get("narration") or [])
+    )
+    narr_n = _norm_numerals(re.sub(r"[\s\u3000]+", "", narr))  # ある回: 空白差で偽警告を出さない
+    missing = []
+    for tok in _QUANTITY_RE.findall(intro):
+        if tok in narr:
+            continue
+        if _norm_numerals(re.sub(r"[\s\u3000]+", "", tok)) in narr_n:
+            continue  # 表記違いだけ (二千年 vs 2000年)
+        if tok not in missing:
+            missing.append(tok)
+    return missing

@@ -34,6 +34,7 @@ Sources:
 import argparse
 import json
 import os
+import re
 
 
 def load_json(path: str) -> dict:
@@ -398,10 +399,15 @@ def calculate_chapters(
         # Label priority: chapter_subtitles (from description block)
         #                > section.chapter_title (manual override)
         #                > section.label (cleanup parenthetical notes)
-        section_type = section.get("section_type", "")
+        # ある回: LLM が section_type を書かず section_id + title だけの section を出したので、
+        # 章ラベルが 4 つとも空のまま概要欄に焼かれた (post_build check 10 が捕まえた)。
+        # section_id を section_type の代わりに受け、title も label の候補にする
+        section_type = section.get("section_type") or section.get("section_id", "")
         label = chapter_subtitles.get(section_type, "")
         if not label:
             label = section.get("chapter_title", "")
+        if not label:
+            label = section.get("title", "")
         if not label:
             label = section.get("label", "")
             # Strip parenthetical notes like "（フック）"
@@ -456,6 +462,69 @@ def detect_visual_assets(scene_def: dict) -> list[str]:
         credits.append("地図データ：Natural Earth（パブリックドメイン）")
 
     return credits
+
+
+# ある回: YouTube の概要欄は 5,000 字が上限。参考文献の注記が膨らんで 6,176 字になり、
+# アップロード時に貼れないところだった (出荷 70 話の最大は 4,460 字で、誰も測っていなかった)。
+# credits は概要欄を焼く唯一の step なのでここで測る。
+YOUTUBE_DESCRIPTION_MAX = 5000
+
+
+def check_description_length(text: str, limit: int = YOUTUBE_DESCRIPTION_MAX) -> list[str]:
+    """概要欄が YouTube の上限を超えていれば警告行を返す (超えていなければ空リスト)。"""
+    n = len(text)
+    if n <= limit:
+        return []
+    return [
+        f"  [WARN] description.txt が YouTube の上限 {limit:,} 字を超えています "
+        f"({n:,} 字、超過 {n - limit:,} 字)",
+        "    -> references の注記を短くするか【注】を削って credits を再実行してください "
+        "(超過分はアップロード時に貼れません)",
+    ]
+
+
+def missing_intro_required_phrases(config: dict, scene_def: dict) -> list[str]:
+    """episode_config.description.intro_required_phrases のうち、概要欄の intro に無い語。
+
+    ある回: intro_guidance に「R(5,5) が 43〜46 で未確定であることを一文入れる」と書いたのに、
+    script が生成した intro には無く、 (config→intro のずれ) も intro-semantic
+    (narration→intro の限定詞欠落) も「要求が満たされたか」は見ないので、user の再確認まで
+    誰も気づかなかった。narration の required_phrases と同じ型で決定論的に照合する。
+    照合先は intro 本文 (scene_definition.description.intro、無ければ config.hook)。
+    未設定 ep は no-op。
+    """
+    desc_cfg = config.get("description") or {}
+    required = [
+        p for p in (desc_cfg.get("intro_required_phrases") or []) if isinstance(p, str) and p
+    ]
+    if not required:
+        return []
+    intro = (scene_def.get("description") or {}).get("intro", "") or config.get("hook", "") or ""
+    # ある回: 「12 人」(narration の書式) と「12人」(intro の書式) で毎回偽警告が出た。空白は無視する。
+    intro_n = _strip_ws(intro)
+    return [p for p in required if _strip_ws(p) not in intro_n]
+
+
+def _strip_ws(s: str) -> str:
+    return re.sub(r"[\s　]+", "", s or "")
+
+
+def description_notes_drift(config: dict, scene_def: dict) -> list[str]:
+    """config.description.notes と scene_definition.description.notes が両方あって食い違う。
+
+    【注】は script step が config から scene_definition へコピーし、credits は scene_definition
+    側を読む。ある回で config の注を短くしても概要欄が変わらず、二度目の credits で気づいた
+    (intro と同じ型の staleness だが、 は intro しか見ない)。両方あって内容が違うときだけ
+    名指しする。較正: 出荷 71 話で両方に notes があるのは 1 話、食い違い 0 件。
+    """
+    cfg_notes = [n for n in ((config.get("description") or {}).get("notes") or []) if n]
+    sd_notes = [n for n in ((scene_def.get("description") or {}).get("notes") or []) if n]
+    if not cfg_notes or not sd_notes or cfg_notes == sd_notes:
+        return []
+    return [
+        f"config の注 {len(cfg_notes)} 件と scene_definition の注 {len(sd_notes)} 件が食い違っています "
+        "(credits が読むのは scene_definition 側)",
+    ]
 
 
 def generate_description(
@@ -642,8 +711,17 @@ def generate_description(
             )
             for photo in ref_photos:
                 credit = photo.get("credit_text", "")
-                if credit:
-                    lines.append(f"- {credit}")
+                if not credit:
+                    continue
+                lines.append(f"- {credit}")
+                # 参照写真の分岐は URL を捨てていた。credit_text に URL が埋まる
+                # ライセンス (PUBLIC DOMAIN 等) では偶然リンクが出るが、Commons の
+                # "no restrictions" は license_url が空なので **出典へのリンクが
+                # どこにも出ない**。direct_photos 側と同じく、
+                # 持っている URL を必ず添える。
+                for url in (photo.get("license_url", ""), photo.get("commons_url", "")):
+                    if url and url not in credit:
+                        lines.append(f"  {url}")
             if direct_photos:
                 lines.append("")
                 lines.append("以下の画像は本編で直接使用しました。")
@@ -806,6 +884,36 @@ def main():
         f.write(text)
 
     print(f"\n[OK] description.txt generated: {output_path}")
+    for _line in check_description_length(text):
+        print(_line)
+    _missing_intro = missing_intro_required_phrases(config, scene_def)
+    if _missing_intro:
+        print(
+            "  [WARN] description.intro_required_phrases の語が概要欄の intro に無い: "
+            + "、".join(f"「{p}」" for p in _missing_intro)
+        )
+        print(
+            "    -> scene_definition.json の description.intro に手で補って credits を再実行 "
+            "(intro は script step でしか生成されない)"
+        )
+    _notes_drift = description_notes_drift(config, scene_def)
+    for _line in _notes_drift:
+        print(f"  [WARN] {_line}")
+        print(
+            "    -> scene_definition.json の description.notes を config に合わせて credits を再実行"
+        )
+    if check_description_length(text) or _missing_intro or _notes_drift:
+        try:
+            from pipeline_log import emit_stderr_warn_summary
+
+            emit_stderr_warn_summary(
+                "credits",
+                (1 if check_description_length(text) else 0)
+                + len(_missing_intro)
+                + len(_notes_drift),
+            )
+        except Exception as _e:  # noqa: BLE001 - advisory roll-up only
+            print(f"  [WARN] advisory roll-up unavailable: {_e!r}")
     print(f"{'=' * 60}")
     # Print text safely (avoid cp932 encoding errors on Windows)
     try:
@@ -836,6 +944,27 @@ def main():
             )
     except Exception as _e:  # noqa: BLE001 - advisory, never fatal
         print(f"  [WARN] description.intro staleness check unavailable: {_e!r}")
+
+    # ある回: intro が名指しする数量が narration に無い (narration -> intro drift)。
+    # は config -> intro しか見ない。ある回は narration の「何十万年」を原典に
+    # 合わせて「何百万年」に直したのに、intro は scene_definition に固定保存されていて
+    # `--steps credits` では再生成されないため、**音声と字幕は何百万年・概要欄だけ
+    # 何十万年** のまま出るところだった (grep で偶然見つけた)。
+    # 較正: 出荷 68 話で 1 件 (漢数字↔算用数字を正規化した後)。advisory。
+    try:
+        from description_meta import intro_quantity_drift as _intro_qty
+
+        _qty = _intro_qty(scene_def)
+        if _qty:
+            print(
+                f"  [WARN] description.intro の数量が narration に見当たりません: {'、'.join(_qty)}"
+            )
+            print(
+                "    -> narration を直したなら intro も手で同期してください "
+                "(intro は script ステップでしか生成されず、credits では作り直されません)"
+            )
+    except Exception as _e:  # noqa: BLE001 - advisory, never fatal
+        print(f"  [WARN] intro quantity drift check unavailable: {_e!r}")
 
     # (F): narration -> description.intro semantic review (ADVISORY, Claude).
     # above catches config->intro drift deterministically; this catches the

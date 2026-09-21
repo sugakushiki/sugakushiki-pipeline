@@ -27,6 +27,8 @@ import time
 import wave
 
 import cloud_tts  # Cloud TTS backend (engine=cloud); standalone, no back-import
+import speech_source  # 「その文は何を合成するか」の唯一の解決
+from cloud_reading_config import load_cloud_reading_config  # 読み設定の唯一の loader
 
 # ---------------------------------------------------------------------------
 # VOICEVOX settings (from STYLE_GUIDE.md)
@@ -356,25 +358,27 @@ JSONのみ出力し、他のテキストは含めないでください。
 修正不要なら空配列 [] を返してください。"""
 
 
+def _load_cloud_reading_overrides(episode_dir: str) -> dict:
+    """episode_config.json の `cloud_reading_overrides` を読む。
+
+    その回にしか出ない固有名 (地名・人名・書名) の読みを SSML <phoneme> で
+    差すための辞書。**narration_speech_cloud に かな を直接埋めない**ための口である ──
+    埋めると Chirp がトークンを割り、ある回では「場合」が「ば・あい」、
+    「えと」が「えーっと」になった。SSML は漢字のまま読みだけ指定するので韻律が保たれる。
+    グローバルの force 辞書に同じ表層があればそちらが優先される (cloud_tts 側で処理)。
+    """
+    # パス解決 (episode_dir / その親 = audio/ 等のサブディレクトリ) と JSON の読みは
+    # cloud_reading_config に 1 本化。壊れていれば向こうが WARN を出して空を返す。
+    return dict(load_cloud_reading_config(episode_dir).overrides)
+
+
 def _load_high_risk_words(episode_dir: str) -> str:
     """episode_config.json の pronunciation_high_risk を読み込み、プロンプト用テキストを返す。"""
-    config_path = os.path.join(episode_dir, "episode_config.json")
-    if not os.path.exists(config_path):
-        # episode_dir が audio/ 等のサブディレクトリの場合、親を探す
-        parent = os.path.dirname(episode_dir)
-        config_path = os.path.join(parent, "episode_config.json")
-    if not os.path.exists(config_path):
+    items = load_cloud_reading_config(episode_dir).high_risk
+    if not items:
         return ""
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            config = json.load(f)
-        items = config.get("pronunciation_high_risk", [])
-        if not items:
-            return ""
-        lines = "\n".join(f"- {item}" for item in items)
-        return f"## このエピソード固有の高リスク語（必ずチェック）\n{lines}"
-    except Exception:
-        return ""
+    lines = "\n".join(f"- {item}" for item in items)
+    return f"## このエピソード固有の高リスク語（必ずチェック）\n{lines}"
 
 
 _PRONCHECK_CACHE_VERSION = 1
@@ -1735,9 +1739,7 @@ def register_user_dict(voicevox_url: str, dict_file: str = DICT_FILE) -> int:
     return registered
 
 
-def strip_subtitle_markers(text: str) -> str:
-    """Remove | subtitle break markers from narration text."""
-    return text.replace("|", "")
+strip_subtitle_markers = speech_source.strip_subtitle_markers  # 実装は speech_source (再輸出)
 
 
 def get_wav_duration(filepath: str) -> float:
@@ -1922,21 +1924,9 @@ def resolve_scene_speech(
     else:
         config_sig = _voicevox_config_signature()
 
-    speech_texts: list[str] = []
-    for i, raw_text in enumerate(narration):
-        if engine == "cloud":
-            if narration_speech_cloud is not None:
-                source = narration_speech_cloud[i]
-            elif narration_speech is not None:
-                source = narration_speech[i]  # fallback (WARN emitted above)
-            else:
-                source = raw_text
-            speech_texts.append(cloud_tts.strip_for_cloud(source))
-        else:
-            if narration_speech is not None:
-                speech_texts.append(strip_subtitle_markers(narration_speech[i]))
-            else:
-                speech_texts.append(strip_subtitle_markers(raw_text))
+    # 文の選択 (cloud → speech → narration、長さ不一致の配列は捨てる、strip) は
+    # speech_source が唯一の実装。lint / STT / speed QA も同じ関数で「合成器が送る文」を見る。
+    speech_texts = speech_source.speech_texts(scene, engine)
     return config_sig, speech_texts
 
 
@@ -1966,6 +1956,17 @@ def plan_synthesis(
 
     audio_dir = os.path.join(output_dir, "audio")
     cache = _load_audio_cache(audio_dir)
+
+    # engine=cloud のキャッシュキーは build_synthesis_input() の出力 (上書き語を含む
+    # 文は SSML、含まない文は plain text) から作られる。**予告だけ episode 固有の
+    # 読み上書きを読んでいないと、上書き語を含む全文がキーずれで「再合成」と数えられる。**
+    # ある回実測: 上書きなしで 26 文 / ありで 0 文。ある回の反省で入れた「必ず読め」と
+    # 言われているゲートが 26 倍の嘘をついていた。**呼び出し側でなくここで読む** ──
+    # 呼び出し側に置くと、経路が増えたときに片方が忘れられる (それがこのバグの発生経緯)。
+    _prev_ep_ov = None
+    if engine == "cloud":
+        _prev_ep_ov = dict(cloud_tts._EPISODE_OVERRIDES)
+        cloud_tts.set_episode_overrides(_load_cloud_reading_overrides(output_dir))
 
     # VOICEVOX の config 署名は module global (SPEED_SCALE) を読む。予告を pipeline
     # 本体から呼ぶときは subprocess に渡す値と揃えないと、キーがずれて予告が外れる。
@@ -2000,6 +2001,10 @@ def plan_synthesis(
                         miss_scenes[scene_id] = miss_scenes.get(scene_id, 0) + 1
     finally:
         SPEED_SCALE = prev_speed
+        # 予告は副作用なしが契約 (wav も cache も書かない)。モジュール大域である
+        # 読み上書きも呼び出し前の状態へ必ず戻す。
+        if _prev_ep_ov is not None:
+            cloud_tts.set_episode_overrides(_prev_ep_ov)
 
     return {
         "total": total,
@@ -2328,6 +2333,10 @@ def main():
         tts_rate = tts_rate if tts_rate is not None else cloud_tts.DEFAULT_RATE
         if not args.dry_run:
             cloud_api_key = cloud_tts.load_tts_api_key()
+        _ep_ov = _load_cloud_reading_overrides(os.path.dirname(os.path.abspath(args.scene_json)))
+        _n_ov = cloud_tts.set_episode_overrides(_ep_ov)
+        if _n_ov:
+            print(f"  [READING] episode 固有の読み上書き {_n_ov} 語を SSML で適用します")
         print(f"  [TTS] engine=cloud voice={tts_voice} rate={tts_rate}")
     else:
         print(f"  [TTS] engine=voicevox speedScale={SPEED_SCALE}")
@@ -2601,6 +2610,10 @@ def rebuild_single_scene_audio(
         tts_voice = tts_voice or cloud_tts.DEFAULT_VOICE
         tts_rate = tts_rate if tts_rate is not None else cloud_tts.DEFAULT_RATE
         cloud_api_key = cloud_tts.load_tts_api_key()
+        _ep_ov = _load_cloud_reading_overrides(os.path.dirname(os.path.abspath(scene_json_path)))
+        _n_ov = cloud_tts.set_episode_overrides(_ep_ov)
+        if _n_ov:
+            print(f"  [READING] episode 固有の読み上書き {_n_ov} 語を SSML で適用します")
         print(f"[PARTIAL REBUILD] engine=cloud voice={tts_voice} rate={tts_rate}")
 
     # Load scene definition

@@ -39,6 +39,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cloud_reading_lint as _crl  # noqa: E402
+
 # STT 書き起こし (カタカナ) に対する既知 Cloud 誤読ルール。
 #   name  : ルール名
 #   regex : STT カタカナ書き起こしに対する検出正規表現
@@ -51,7 +54,7 @@ _STT_RULES = [
         # 助詞「は」は「ワ」と発音されるべきなので、この位置の「ハ」は誤読候補。
         # 語中の「ハ」(ハルトークス等、後続が非句読点) は除外され FP を抑える。
         "regex": re.compile(r"[ァ-ヶー]ハ(?=[、。!?\s]|$)"),
-        # misreading: unreliable in katakana-particle mode (Gemini renders は->ハ, を->ヲ,
+        # An earlier episode: unreliable in katakana-particle mode (Gemini renders は->ハ, を->ヲ,
         # です->デス as spelling, so EVERY topic は matches -> FP). Skipped there.
         "katakana_unreliable": True,
         "note": (
@@ -72,119 +75,112 @@ _STT_RULES = [
 ]
 
 
-# narration の表層 -> (期待カタカナ, [誤読カタカナ...], note)。多読み漢字の
-# 文脈依存誤読を、narration に surface があり STT に誤読カタカナが出た場合に
-# WARN する。surface は誤読が起きる文脈に限定して
-# FP を避ける (例: 「大学に入」= 入学 = はいる)。カタカナ照合は空白/句読点を
-# 除去して行う (_norm_kana)。実測で FP を確認してから足すこと。
-_READING_CHECKS = [
-    (
-        "大学に入",
-        "ダイガクニハイレ",
-        ["ダイガクニイレ"],
-        "入=はいる(入学) が『いれ』化した恐れ。narration_speech_cloud で『はいれ』に固定",
-    ),
-    (
-        "愛では",
-        "アイデワ",
-        ["メデワ", "メデ"],
-        "愛=あい が動詞『愛でる(めで)』化した恐れ。『あいでは』に固定",
-    ),
-    ("の友", "ノトモ", ["ノユウ", "ノユー"], "友=とも(名詞) が『ゆう』化した恐れ。『とも』に固定"),
-    (
-        "私講師",
-        "ノシコーシ",
-        ["ワタクシコーシ", "ワタクシコウシ"],
-        "私講師=しこうし の 私 が『わたくし』化した恐れ。『しこうし』に固定",
-    ),
-    (
-        "正教授",
-        "セイキョージュ",
-        ["ショーキョージュ", "ショウキョージュ"],
-        "正=せい が『しょう』化した恐れ。『せいきょうじゅ』に固定",
-    ),
-    (
-        "を通って",
-        "トオッテ",
-        ["カヨッテ", "ツウジテ", "ツージテ"],
-        "通=とおる が『かよう/つうじる』化した恐れ。『とおって』に固定",
-    ),
-    ("を通り", "トオリ", ["カヨイ"], "通=とおる が『かよう』化した恐れ。『とおり』に固定"),
-    # 外 = そと/がい/はず の多読み (で surface)。読み自体は正しく出たが
-    # 多読みの常連なので backstop。※ そ->ぞ の濁り(voicing)は STT が清音カタカナ(ソト)に
-    # 書き起こすため、ここでは捕まらない = 耳 spot-check の領域。
-    (
-        "外から",
-        "ソトカラ",
-        ["ガイカラ", "ホカカラ"],
-        "外=そと(外から) が がい/ほか 化した恐れ。『そとから』に固定",
-    ),
-    (
-        "を外れ",
-        "ハズレ",
-        ["ガイレ", "ソトレ"],
-        "外れ=はずれ が がい/そと 化した恐れ。『はずれ』に固定",
-    ),
-    (
-        "外国",
-        "ガイコク",
-        ["ソトクニ", "ホカクニ", "ソトコク"],
-        "外国=がいこく が そと/ほか 化した恐れ。『がいこく』に固定",
-    ),
-    # -
-    #     合成前 advisory を、実 wav でも backstop する層 (決定打=実 wav STT)。---
-    (
-        "第九巻",
-        "ダイキュウカン",
-        ["ダイクカン", "ダイクカ"],
-        "第九巻=だいきゅうかん の 九 が『く』化した恐れ (ある回 STT『大区間』)。『だいきゅうかん』に固定",
-    ),
-    (
-        "何ひとつ",
-        "ナニヒトツ",
-        ["トヒトツ"],
-        "何ひとつ=なにひとつ の 何 が脱落し『とひとつ』化した恐れ。『なにひとつ』に固定",
-    ),
-    # -
-    #     user が耳で見つけた**。同じ穴を次で開けないための backstop。---
-    (
-        "黒板",
-        "コクバン",
-        ["クロイタ"],
-        "黒板=こくばん が『くろいた』化した恐れ (ある回、user 耳)。『こくばん』に固定",
-    ),
-    (
-        "道路工夫",
-        "コウフ",
-        ["クフウ"],
-        "工夫=こうふ(労働者) が『くふう』化した恐れ (ある回、user 耳)。『こうふ』に固定",
-    ),
-    (
-        "へ行って",
-        "イッテ",
-        ["オコナッテ"],
-        "行=いく が『おこなう』化した恐れ (ある回、user 耳)。『いって』に固定",
-    ),
-    (
-        "に行って",
-        "イッテ",
-        ["オコナッテ"],
-        "行=いく が『おこなう』化した恐れ。『いって』に固定",
-    ),
-    (
-        "に通った",
-        "カヨッタ",
-        ["トオッタ"],
-        "通=かよう が『とおる』化した恐れ (ある回、user 耳)。『かよった』に固定"
-        " ※『筋の通った』は とおった が正しいので混同しないこと",
-    ),
-    (
-        "塩水",
-        "シオミズ",
-        ["エンスイ"],
-        "塩水=しおみず が『えんすい』化した恐れ (ある回、出荷 STT で実測)。『しおみず』に固定",
-    ),
-]
+# ---------------------------------------------------------------------------
+# 名前末尾「ハ」の偽陽性抑止
+#
+# particle-ha-as-HA は「カタカナ直後のハ + 句読点/空白」を助詞位置と見なすが、
+# 主題名が「ハ」で終わるエピソード (バナッハ) では名前そのものの末尾ハが
+# 「バナッハ ノ」「バナッハ ガ」の形で系統的に誤発火する。
+# STT は名前の綴りも揺らす (バラッハ / バナハ が実レポートに実在) ので、
+# narration から「ハ」で終わるカタカナ語を抽出した辞書と **編集距離 1 まで** の
+# 曖昧照合で抑止する。真陽性「名前+誤読助詞ハ」(バナッハハ、) は距離 2 になる
+# ため発火が維持される (窓は len(name)-1 / len(name) のみ。len+1 窓を入れると
+# この真陽性を巻き込むので入れない)。
+# ---------------------------------------------------------------------------
+
+# narration 中の「ハで終わる完結したカタカナ語」。後ろにカタカナが続く語中ハ
+# (シュタインハウス の ハ) を辞書に入れない — 入れると「シュタイン + 助詞ハ」型の
+# 真陽性を抑止してしまう。
+_HA_FINAL_NAME_RE = re.compile(r"[ァ-ヶー]{2,}ハ(?![ァ-ヶー])")
+
+
+def collect_ha_final_names(scene_def: dict) -> frozenset:
+    """scene_def の narration / narration_speech_cloud から「ハ」で終わる
+    カタカナ語 (バナッハ 等) を抽出する。無ければ空 = 挙動は従来と完全一致。"""
+    names = set()
+    for scene in _iter_scenes(scene_def):
+        texts = list(scene.get("narration") or [])
+        texts += [t for t in (scene.get("narration_speech_cloud") or []) if t]
+        for t in texts:
+            for m in _HA_FINAL_NAME_RE.finditer(t.replace("|", "")):
+                names.add(m.group(0))
+    return frozenset(names)
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """短いカタカナ語専用の素朴な編集距離 (名前照合は高々 10 文字程度)。"""
+    if a == b:
+        return 0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _is_name_final_ha(transcript: str, ha_pos: int, ha_names) -> bool:
+    """transcript[ha_pos] の「ハ」が、辞書中の名前 (バナッハ等) 自身の末尾か判定する。
+
+    - token = ハ で終わる最大カタカナ連 (STT の空白分かち書きでも語単位で取れる)
+    - 完全一致 (endswith) に加え、STT の綴り揺れ (バラッハ / バナハ) を
+      suffix 窓 len(name)-1 / len(name) の編集距離 <= 1 で許容する。
+    - 真陽性の「名前 + 誤読助詞ハ」(バナッハハ) は距離 2 になり抑止されない。
+    """
+    start = ha_pos
+    while start > 0 and re.match(r"[ァ-ヶー]", transcript[start - 1]):
+        start -= 1
+    token = transcript[start : ha_pos + 1]
+    for name in ha_names:
+        if len(name) < 3:
+            continue
+        if token.endswith(name):
+            return True
+        # narration 側が「スティファンバナッハ」のような融合連の場合 (token の方が短い)
+        if len(token) >= 3 and name.endswith(token):
+            return True
+        # 名前 + 助詞ハ (真陽性) は明示的に除外してから曖昧照合へ
+        if token.endswith(name + "ハ"):
+            continue
+        for w in (len(name) - 1, len(name)):
+            if w < 3 or w > len(token):
+                continue
+            if _levenshtein(token[-w:], name) <= 1:
+                return True
+    return False
+
+
+def scan_stt_rules(transcript: str, ha_names=frozenset()) -> list:
+    """_STT_RULES を 1 transcript に適用し (name, ctx, note) hits を返す。
+
+    stt_qa (scene wav) と verify_shipped_audio (出荷 mp4) の**共有実装**。
+    ある回で「corpus は import したのに katakana-mode guard だけ import し忘れ、
+    決定打であるはずの shipped 検査の方が偽陽性に弱かった」型を、判定を 1 実装に
+    まとめることで再発不能にする。katakana-mode guard も名前末尾ハ抑止
+    もここに含まれる。
+    """
+    hits = []
+    km = _is_katakana_mode(transcript)
+    for rule in _STT_RULES:
+        if rule.get("katakana_unreliable") and km:
+            continue  # An earlier episode: skip particle-は=ハ in katakana-particle mode (FP)
+        for m in rule["regex"].finditer(transcript):
+            if (
+                rule["name"] == "particle-ha-as-HA"
+                and ha_names
+                and _is_name_final_ha(transcript, m.end() - 1, ha_names)
+            ):
+                continue  # ある回: 名前 (バナッハ) 自身の末尾ハは助詞ではない
+            s = max(0, m.start() - 6)
+            e = min(len(transcript), m.end() + 6)
+            hits.append((rule["name"], transcript[s:e], rule["note"]))
+    return hits
+
+
+# (2026-09-19): 誤読の表は cloud_reading_lint._STT_MISREAD_ROWS に移した (多読み表 _POLYPHONE の隣)。
+# 同じ語が 2 つの表に別々に書かれる状態をやめ、ここは導出だけ。形は不変: (surface, 正読カタカナ, [誤読カタカナ], note)。
+_READING_CHECKS = _crl.stt_misread_checks()
 
 
 def _norm_kana(s: str) -> str:
@@ -216,6 +212,268 @@ def _reading_coverage(transcript: str) -> tuple[str, float]:
     if kanji <= _COVERAGE_PARTIAL_MAX_KANJI:
         return "partial", kanji
     return "none", kanji
+
+
+def _collect_reading_overrides(scene_def, scene_dir):
+    """読みを固定している語をすべて集める: global force 辞書 + episode の上書き。
+
+    どちらも「この語はこう読ませる」と決めた語なので、出荷 wav でそう読まれたかを
+    確かめる対象は同じである。使われている scene も一緒に返す (narration_speech_cloud
+    に表層が出る scene = SSML で読みが差される scene)。
+    """
+    readings: dict[str, str] = {}
+    try:
+        _src = os.path.abspath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+        )
+        if _src not in sys.path:
+            sys.path.insert(0, _src)
+        import cloud_tts
+
+        readings.update(cloud_tts._READING_OVERRIDES)
+    except Exception:
+        pass
+    # episode の上書きは cloud_reading_config が読む (5 か所の独自 json.load を 1 本化)。
+    # global が優先 (較正済みの読みを ep 側に壊させない = cloud_tts と同じ順)
+    try:
+        from cloud_reading_config import load_cloud_reading_config
+
+        readings = {**load_cloud_reading_config(scene_dir).overrides, **readings}
+    except Exception as e:  # noqa: BLE001 - src が path に無い環境でも QA は続ける
+        print(f"  [WARN] episode の cloud_reading_overrides を読めませんでした: {e}")
+    usage: dict[str, list] = {}
+    for scene in _iter_scenes(scene_def):
+        sid = scene.get("scene_id", "?")
+        # SSML は「合成器が送る文」に当たるので、その文 (cloud → speech → narration、
+        # 長さ不一致は捨てる) で表層の有無を見る。以前は cloud 配列だけを見ていた。
+        try:
+            from speech_source import effective_speech_lines
+
+            text = " ".join(effective_speech_lines(scene, "cloud")[0])
+        except Exception:  # noqa: BLE001 - src が path に無い環境では従来どおり cloud 配列
+            text = " ".join(scene.get("narration_speech_cloud") or [])
+        if not text:
+            continue
+        for surface in readings:
+            if surface in text:
+                usage.setdefault(surface, []).append(sid)
+    return readings, usage
+
+
+def _to_katakana(s: str) -> str:
+    return "".join(chr(ord(c) + 0x60) if "ぁ" <= c <= "ゖ" else c for c in s)
+
+
+# 読み照合専用の追加正規化。**実測で確認できた揺れだけ** を入れる (推測で足さない)。
+#   ヲ/オ : 助詞「を」を Gemini は ヲ とも オ とも書く。期待読み「コンヲフクゲ」に対し
+#           書き起こしが「コンオフクゲン」で前方一致が外れ、正しく読めている 根 を
+#           「不一致」と報告した。
+#   ー    : 長音記号の有無が揺れる (コーシ / コウシ)。両側から落として比べる。
+#   ヅ/ヂ : 四つ仮名の表記揺れ。
+# _norm_kana 自体は既存の誤読ルール照合と共有なので触らない (較正が変わる)。
+_READING_EQUIV = str.maketrans({"ヲ": "オ", "ヅ": "ズ", "ヂ": "ジ", "ー": None})
+
+
+def _norm_reading(s: str) -> str:
+    return _norm_kana(s).translate(_READING_EQUIV)
+
+
+# 数詞で始まる読み固定語 (二色 / 六人 / 四つ ...) は、Gemini の片仮名モードが **数詞を
+# 算用数字で書く** ことがある。期待読み ニショク の前方一致は外れ、正しく読めている 二色 が
+# 「不一致 -- 文単位の wav でも出ません」と報告された。先頭の数詞かなを算用数字に置き換えた
+# 別形も probe に加える (置換は先頭 1 字の数詞だけ = 実測した揺れの範囲。推測で広げない)。
+_NUM_KANJI = {
+    "一": ("1", ("いち", "いっ")),
+    "二": ("2", ("に",)),
+    "三": ("3", ("さん",)),
+    "四": ("4", ("よん", "よっ", "し")),
+    "五": ("5", ("ご",)),
+    "六": ("6", ("ろく", "ろっ")),
+    "七": ("7", ("なな", "しち")),
+    "八": ("8", ("はち", "はっ")),
+    "九": ("9", ("きゅう", "く")),
+    "十": ("10", ("じゅう", "じゅっ", "じっ")),
+}
+
+
+def _reading_probes(surface: str, reading: str) -> list[str]:
+    """期待読みの前方一致 probe と、先頭数詞を算用数字にした別形 probe。"""
+    want = _norm_reading(_to_katakana(str(reading)))
+    probes = [want[: max(3, min(len(want), 6))]]
+    head = str(surface)[:1]
+    if head in _NUM_KANJI:
+        digit, kanas = _NUM_KANJI[head]
+        for k in kanas:
+            if str(reading).startswith(k):
+                alt = _norm_reading(_to_katakana(digit + str(reading)[len(k) :]))
+                probes.append(alt[: max(3, min(len(alt), 6))])
+                break
+    return [p for p in probes if p]
+
+
+def classify_override_coverage(overrides, usage, transcripts) -> dict:
+    """読みを **固定した語** ごとに、出荷 wav で読みを確認できたかを分類する。
+
+    scene 単位のカバレッジ (上の summarize_reading_coverage) は「その scene の
+    書き起こしが かな か」しか見ない。だが実際に知りたいのは **「読みを指定した語が
+    その指定どおりに読まれたか」** である。ある回では読み上書き 17 語のうち 9 語しか
+    照合できておらず、**user が耳で見つけた 干支・根・一余り は全部その未照合側**に
+    いた。レポートはそれを一言も言っていなかった (「0 WARN」とだけ出た)。
+
+    「指摘ゼロ」と「未検査」を区別せよ の、語の粒度での適用である。
+
+    引数:
+      overrides   {表層: 読み(かな)}  — global force 辞書 + episode の上書きを統合したもの
+      usage       {表層: [scene_id...]} — その語が narration_speech_cloud に出る scene
+      transcripts {scene_id: 書き起こし}
+
+    返り値: {"confirmed": [...], "mismatch": [(語, 読み, [scene...])], "unverified": [...]}
+      - confirmed  : どこかの scene の書き起こしに指定どおりの読みが出た
+      - mismatch   : かな書き起こしの scene があるのに、指定した読みがどこにも出ない
+      - unverified : その語を含む scene が全部漢字書き起こしで、原理的に判定できない
+    """
+    confirmed, mismatch, unverified = [], [], []
+    for surface, reading in sorted(overrides.items(), key=lambda kv: -len(kv[0])):
+        # **今回書き起こした scene に限る**。--scenes で一部だけ回したとき、検査して
+        # いない scene で使われている語まで「検証不可」に数えると、「未検査」と
+        # 「検証できなかった」を混ぜることになる (この検査自体が無くそうとしている
+        # 混同そのもの)。実測: --scenes person_02,math_03 で回すと 18 語中 16 語が
+        # 対象外なのに「検証不可 18」と表示された。
+        scenes = [s for s in (usage.get(surface) or []) if transcripts.get(s)]
+        if not scenes:
+            continue
+        want = _norm_reading(_to_katakana(str(reading)))
+        probes = _reading_probes(surface, reading)
+        kanji = [c for c in surface if "一" <= c <= "鿿"]
+        saw_kana_scene = False
+        hit = False
+        for sid in scenes:
+            t = transcripts.get(sid) or ""
+            if not t:
+                continue
+            nt = _norm_reading(t)
+            if any(p in nt for p in probes):
+                hit = True
+                continue
+            # **その語が漢字のまま書き起こされていたら「検証不可」であって不一致ではない。**
+            # scene 単位のカタカナ率で判定していたときは、漢字かな混じりの scene
+            # が「検証可能」と誤分類され、漢字で
+            # 書かれた 根 を「読みが効いていない」と報告した -- 出荷 wav を STT に
+            # かけ直すと コンヲフクゲン で **正しく読めていた** (2026-09-06 実測)。
+            if kanji and any(c in t for c in kanji):
+                continue
+            if len(re.findall(r"[ァ-ヶ]", t)) > len(t) * 0.3:
+                saw_kana_scene = True
+        if hit:
+            confirmed.append(surface)
+        elif saw_kana_scene and len(want) >= 3:
+            mismatch.append((surface, str(reading), scenes))
+        else:
+            # **2 モーラ以下の読みは「出ない」ことを根拠にできない**:
+            # 筒 -> つつ が scene 全体の書き起こしで「シカクイッニ」と縮み、不一致として
+            # 報告された。出荷 mp4 から当該文だけ切り出して 2 回かけ直すと どちらも
+            # 「シカクイツツニ」で **音声は正常** だった。長い書き起こしほど STT は
+            # 短い語を落とすので、短い読みは「確認できず」に倒す (未検証は未検証と言う)。
+            unverified.append(surface)
+    return {"confirmed": confirmed, "mismatch": mismatch, "unverified": unverified}
+
+
+_SENTENCE_TAKES = 3  # 文単位 wav のかけ直し回数 (かなで返るまで)
+
+
+def confirm_mismatches_with_sentence_wavs(result, scene_def, audio_dir, transcribe) -> dict:
+    """不一致候補を **文単位の wav** で再確認して確定させる (ある回で必要と判明)。
+
+    stt_qa が STT にかけるのは **scene 単位** の wav (30〜60 秒) だが、長い音声ほど
+    Gemini は語を潰す。ある回では scene 単位の書き起こしが「場合」を バイ、「根」を
+    漢字のまま返し、いずれも「読みが効いていない」と報告した。ところが **文単位の
+    wav をかけ直すと 6/6 テイクで バアイ、コンヲフクゲン** で、音声は正しかった。
+
+    つまり不一致は「読みが違う」ではなく「長い書き起こしで消えた」ことが多い。
+    候補は全話で数件しか出ないので、その文だけ追加で 1 回かけ直す ── **決定打は
+    出荷物で取る**、を自動化する。読みが出れば確認済みへ格上げし、出なければ
+    不一致のまま残す (今度は文単位の証拠つき)。
+
+    `transcribe(wav_path) -> str` を注入するのは、この関数を API 無しで試験するため。
+    """
+    if not result.get("mismatch"):
+        return result
+    scenes = {s.get("scene_id"): s for s in _iter_scenes(scene_def)}
+    confirmed = list(result["confirmed"])
+    unverified = list(result["unverified"])
+    still, promoted, undetermined = [], [], []
+    for surface, reading, sids in result["mismatch"]:
+        probes = _reading_probes(surface, reading)
+        hit = False
+        kana_takes = 0  # 読みを判定できた (かなで返った) テイクの数
+        for sid in sids:
+            sc = scenes.get(sid)
+            if not sc:
+                continue
+            for i, line in enumerate(sc.get("narration_speech_cloud") or []):
+                if surface not in line:
+                    continue
+                wav = os.path.join(audio_dir, f"{sid}_{i + 1:03d}.wav")
+                if not os.path.exists(wav):
+                    continue
+                # ある回: 1 テイクだけだと Gemini が **その語を漢字で** 返したとき (枢機卿 ->
+                # 「枢機卿」) 読みは判定できないのに「文単位でも出ません」と不一致に倒れた
+                # (かけ直すと スウキキョウ)。かなで返るまで最大 _SENTENCE_TAKES 回かけ直し、
+                # 一度もかなで返らなければ「不一致」ではなく「検証不可」に分類する。
+                for _take in range(_SENTENCE_TAKES):
+                    try:
+                        t = transcribe(wav)
+                    except Exception:  # noqa: BLE001 - advisory: 確認できなければ据え置き
+                        break
+                    if any(p in _norm_reading(t) for p in probes):
+                        hit = True
+                        break
+                    if surface not in t:
+                        kana_takes += 1  # かな (または別の読み) で返った = 判定できた
+                        break
+                if hit:
+                    break
+            if hit:
+                break
+        if hit:
+            confirmed.append(surface)
+            promoted.append(surface)
+        elif kana_takes == 0:
+            undetermined.append(surface)
+            unverified.append(surface)
+        else:
+            still.append((surface, reading, sids))
+    return {
+        "confirmed": confirmed,
+        "mismatch": still,
+        "unverified": unverified,
+        "promoted": promoted,
+        "undetermined": undetermined,
+    }
+
+
+def summarize_override_coverage(result) -> list[str]:
+    """classify_override_coverage の結果を報告行にする (print はしない = テスト可能)。"""
+    n = len(result["confirmed"]) + len(result["mismatch"]) + len(result["unverified"])
+    if not n:
+        return []
+    lines = [
+        f"  読み固定した語の検証: 確認 {len(result['confirmed'])} / "
+        f"不一致 {len(result['mismatch'])} / 検証不可 {len(result['unverified'])}  (全 {n} 語)"
+    ]
+    for surface, reading, scenes in result["mismatch"]:
+        lines.append(
+            f"    [!] {surface} -> {reading} が書き起こしに出ません "
+            f"(scene: {','.join(scenes)})。**文単位の wav でも出ませんでした** -- "
+            f"audio/{scenes[0]}_NNN.wav を耳で確認してください "
+            f"(scene 全体の書き起こしは語を潰すので、ここは文単位で再確認済み)"
+        )
+    if result["unverified"]:
+        lines.append(
+            "    [!] 次の語は書き起こしが漢字のため読みを確認できていません -- 耳で確認してください:"
+        )
+        lines.append("        " + "、".join(result["unverified"]))
+    return lines
 
 
 def summarize_reading_coverage(coverage, reading_seen) -> list[str]:
@@ -386,9 +644,39 @@ def _transcribe(client, wav_path: str) -> str:
     return _strip_reasoning((resp.text or "").strip())
 
 
+def _sentence_wav_says_correct(scene, sid, surface, correct, audio_dir, client) -> bool:
+    """その語を含む **文単位** の wav をかけ直し、正しい読みが出るか見る。
+
+    scene 単位 (30〜60 秒) の書き起こしは長いほど語を潰す。ある回では「場合」が
+    scene 単位で バイ と書き起こされ誤読に見えたが、文単位では 6/6 テイクで バアイ
+    だった。誤読を報告する前に、その一文だけで裏を取る (候補は稀なので費用は小さい)。
+
+    確認できなければ False を返して従来どおり報告する (**取り下げは証拠があるときだけ**)。
+    """
+    lines = scene.get("narration_speech_cloud") or scene.get("narration") or []
+    for i, line in enumerate(lines):
+        if surface not in line.replace("|", ""):
+            continue
+        wav = os.path.join(audio_dir, f"{sid}_{i + 1:03d}.wav")
+        if not os.path.exists(wav):
+            continue
+        try:
+            t = _norm_kana(_transcribe(client, wav))
+        except Exception:  # noqa: BLE001 - advisory: 確認できなければ報告を残す
+            return False
+        if correct in t:
+            return True
+    return False
+
+
 def _iter_scenes(scene_def: dict):
-    for section in scene_def.get("sections", []):
-        yield from section.get("scenes", [])
+    """実装は scene_def.iter_scenes (5 か所にあった同じ走査を 1 つに)。"""
+    _src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from scene_def import iter_scenes
+
+    yield from iter_scenes(scene_def)
 
 
 def main() -> int:
@@ -444,11 +732,21 @@ def main() -> int:
     print("  STT QA (Cloud TTS read verification)")
     print("=" * 60)
 
+    # ある回: 主題名が「ハ」で終わる ep (バナッハ) で particle-ha が名前末尾に
+    # 系統誤発火するのを防ぐため、narration から ハ 終わり語辞書を先に作る。
+    ha_names = collect_ha_final_names(scene_def)
+
     warnings = []
     report_lines = []
     n_checked = 0
     n_missing = 0
     coverage = []  # (sid, label, kanji_ratio) — 読みを検証できた scene の割合を出すため
+    transcripts = {}  # sid -> 書き起こし。**語単位** の読み検証カバレッジに使う
+    # 読みを固定した語 (global force 辞書 + この ep の cloud_reading_overrides) と、
+    # それが実際に出てくる scene。scene 単位のカバレッジでは「読みを指定した語が
+    # 指定どおり読まれたか」が分からず、ある回は 17 語中 8 語が未照合のまま出荷寸前
+    # まで進んだ (user が耳で拾った 干支・根・一余り は全部その未照合側だった)。
+    override_readings, override_usage = _collect_reading_overrides(scene_def, scene_dir)
     # surface -> {"ok": [sid...], "ng": [sid...]}。同じ語が scene 間で読みが割れる型を拾う。
     reading_seen = {}
 
@@ -470,17 +768,10 @@ def main() -> int:
 
         n_checked += 1
         report_lines.append(f"===== {sid} =====\n{transcript}")
+        transcripts[sid] = transcript
 
-        scene_hits = []
-        km = _is_katakana_mode(transcript)
-        for rule in _STT_RULES:
-            if rule.get("katakana_unreliable") and km:
-                continue  # misreading: skip particle-は=ハ in katakana-particle mode (FP)
-            for m in rule["regex"].finditer(transcript):
-                s = max(0, m.start() - 6)
-                e = min(len(transcript), m.end() + 6)
-                ctx = transcript[s:e]
-                scene_hits.append((rule["name"], ctx, rule["note"]))
+        # 判定は scan_stt_rules に一本化 (katakana-mode guard / 名前末尾ハ抑止を含む)
+        scene_hits = scan_stt_rules(transcript, ha_names)
 
         # 多読み漢字の文脈依存誤読: narration に surface があり、STT に誤読カタカナ
         # が出て (かつ正しい読みが出ていない) なら WARN。narration は漢字で照合、
@@ -491,7 +782,24 @@ def main() -> int:
             if surface not in narr_text:
                 continue
             hit = [w for w in wrongs if w in t_norm]
-            if hit and correct not in t_norm:
+            # 正読が誤読の部分文字列 (主著: シュチョ ⊂ シュチョー) だと、誤読時にも
+            # correct が t_norm に「見つかって」検出漏れする。誤読ヒット箇所を除いた
+            # 残りで correct の有無を判定する。
+            t_wo_hit = t_norm
+            for w in hit:
+                t_wo_hit = t_wo_hit.replace(w, "")
+            if hit and correct not in t_wo_hit:
+                # **scene 単位の書き起こしだけを根拠にしない** (2026-09-06)。
+                # 30〜60 秒の wav では Gemini が語を潰し、正しく読めている語を誤読と
+                # 報告する。
+                # 該当文の wav でかけ直し、そこで正しい読みが出れば取り下げる。
+                if _sentence_wav_says_correct(scene, sid, surface, correct, audio_dir, client):
+                    reading_seen.setdefault(surface, {"ok": [], "ng": []})["ok"].append(sid)
+                    print(
+                        f"  [読み] {sid}: {surface} は scene 単位で誤読に見えましたが、"
+                        f"文単位の wav では {correct} でした (取り下げ)"
+                    )
+                    continue
                 scene_hits.append(
                     (f"misread:{surface}", f"STT={','.join(hit)} (expect {correct})", note)
                 )
@@ -528,6 +836,28 @@ def main() -> int:
     # すぎない。Gemini が漢字で書き起こした scene では読みが原理的に判定できないので、
     # どれだけ検証できたのかを必ず一緒に出す。
     for line in summarize_reading_coverage(coverage, reading_seen):
+        print(line)
+
+    # scene 単位に加えて **語単位**: 読みを固定した語が、指定どおり読まれたか。
+    _ov_result = classify_override_coverage(override_readings, override_usage, transcripts)
+    if _ov_result["mismatch"]:
+        # scene 単位で出なかった語だけ、その文の wav でかけ直して確定させる
+        # (候補は全話で数件。長い書き起こしの取りこぼしを実測で潰す)。
+        _ov_result = confirm_mismatches_with_sentence_wavs(
+            _ov_result, scene_def, audio_dir, lambda w: _transcribe(client, w)
+        )
+        if _ov_result.get("undetermined"):
+            print(
+                f"  [読み] 文単位の wav をかけ直しても {len(_ov_result['undetermined'])} 語は"
+                f"漢字で書き起こされ判定できません (不一致ではなく検証不可に分類): "
+                f"{'、'.join(_ov_result['undetermined'])}"
+            )
+        if _ov_result.get("promoted"):
+            print(
+                f"  [読み] scene 単位で出なかった {len(_ov_result['promoted'])} 語を "
+                f"文単位の wav で確認しました: {'、'.join(_ov_result['promoted'])}"
+            )
+    for line in summarize_override_coverage(_ov_result):
         print(line)
 
     print("  NOTE: STT can miss too -- always spot-check Cloud audio by ear before publishing.")

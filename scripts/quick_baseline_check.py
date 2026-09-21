@@ -4,7 +4,7 @@ Usage:
     python scripts/quick_baseline_check.py <episode_dir> <baseline_json>
 
 Example:
-    python scripts/quick_baseline_check.py examples/moriarty docs/internal/baselines/ep020.json
+    python scripts/quick_baseline_check.py examples/moriarty <baseline.json>
 
 Compares SHA256 hashes of episode artifacts (audio/, visuals/, key files) against
 the recorded baseline. Reports PASS / FAIL with detailed diff for any mismatches.

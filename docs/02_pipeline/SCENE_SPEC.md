@@ -540,7 +540,8 @@ examples/moriarty/
 │   ├── erdos_portrait.png
 │   └── ...
 ├── timing.json                  # 音声タイムスタンプ
-├── subtitles.srt                # 字幕（SRT形式）
+├── subtitles.srt                # 字幕（SRT形式、BGM 追加前の時刻）
+├── subtitles_final.srt          # bgm ステップが書く字幕（intro_pause ぶんずらし済み。アップロード用はこちら）
 ├── subtitles_drawtext.txt       # 字幕（FFmpeg drawtext filter_script）
 └── output.mp4                   # 最終出力
 ```

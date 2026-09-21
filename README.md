@@ -1,6 +1,6 @@
 # 数学史記 — 日本語数学史ドキュメンタリー動画 自動生成パイプライン
 
-![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
+![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)
 ![Manim 0.19.2](https://img.shields.io/badge/manim-0.19.2-orange.svg)
 ![License MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
@@ -32,7 +32,7 @@ flowchart LR
 
 - **10 ステップの自動実行** — スクリプト生成 (Claude Opus) / 音声合成 (VOICEVOX または Google Cloud TTS) / 字幕 / Wikimedia 画像取得 / 画像生成 (Gemini Flash + Vision QA) / サムネイル / Manim + Ken Burns + route_map + Blender / FFmpeg アセンブリ / YouTube 概要欄 / BGM
 - **生成物のライフサイクルに沿った QA** — 欠陥を「最も安く捕まえられる時点」に置く設計。合成前の静的予防 (config 検証 / 事前事実チェック / 読み lint / cliche scanner)、生成直後の実測検出 (複数エージェントの script QA / 画像とナレーションの整合 / STT による読み確認 / 発話速度の実測 / Manim 図の Vision 判定と bbox 衝突検出)、出荷物の検証 (assemble 直前の stale 検出 / 完了後の出力検証 / 出荷 mp4 からの音声再確認)。詳細は [`docs/architecture.md`](docs/architecture.md) §4
-- **構造化ログ** — `--log-file` opt-in で全ステップの severity 3 階層 JSONL を取得、step 別工数や失敗箇所が後から jq で集計可能
+- **構造化ログ** — 既定で build ごとに `episodes/XXX/logs/build_<ts>.jsonl` へ全ステップの severity 3 階層 JSONL を書き (`--no-log-file` で無効)、最終サマリに step 別の所要時間を出す。失敗箇所や工数が後から jq で集計可能
 - **エピソード横断 lint** — 全エピソードを Wikidata Q-id で索引し、表記揺れ (例: `ニルス ↔ ニールス`) を Levenshtein で検出
 - **duration-aware Manim** — `timing.json` から各シーンの実音声尺を取得し、アニメ再生時間を自動調整
 
@@ -66,7 +66,7 @@ flowchart LR
 | 項目 | 想定環境 |
 |---|---|
 | OS | Windows 11 想定 (Linux/Mac 動作未確認) |
-| Python | 3.11.0 |
+| Python | 3.13.15 |
 | FFmpeg | 2026-02 以降推奨 |
 | Manim | v0.19.2 (`-qh` で 1080p) |
 | VOICEVOX | 0.25.1 (GUI アプリ起動、localhost:50021)。`tts.engine=voicevox` の場合のみ必要 |
@@ -160,6 +160,9 @@ sugakushiki/
 │   ├── script_generator.py       # スクリプト生成 (Claude Opus via CLI)
 │   ├── audio_generator.py        # VOICEVOX + 辞書 + 発音チェック
 │   ├── cloud_tts.py              # Google Cloud TTS (Chirp3-HD) + SSML 読み固定
+│   ├── cloud_reading_config.py   # 読み関連 config (overrides / direct_kana / high_risk) の唯一の loader
+│   ├── speech_source.py          # 「その文は何を合成するか」の唯一の解決 (cloud→speech→narration)
+│   ├── scene_def.py              # sections/scenes の入れ子を歩く iter_scenes
 │   ├── subtitle_generator.py     # SRT + drawtext filter_script 生成
 │   ├── sentence_align.py         # 字幕の文境界を実測無音から壁時計時間へ戻す
 │   ├── wikimedia_fetcher.py      # Wikimedia Commons 画像取得 + ライセンス検証
@@ -177,6 +180,8 @@ sugakushiki/
 │   ├── bgm_mixer.py              # BGM ミックス + 冒頭ポーズ + 末尾フェード
 │   ├── thumbnail_generator.py    # YouTube サムネイル生成 (3 パターン)
 │   ├── qa_checker.py             # QA Gate 1 (複数エージェント)
+│   ├── hyperbole_lint.py         # 比喩的な誇張 (最初の頁 / 〜の父 / 幕を開け) の決定論 lint
+│   ├── sentence_regen.py         # 決定論 lint に引っかかった文だけを script step で書き直す
 │   ├── qa_retry.py               # QA リトライ + 比較ゲート
 │   ├── qa_image_checker.py       # QA Gate 2 (画像-ナレーション整合性)
 │   ├── qa_manim_consistency.py   # Manim 史実整合 lint
@@ -213,6 +218,7 @@ sugakushiki/
 │   ├── gen_cloud_readings.py     # Cloud: narration_speech_cloud を生成
 │   ├── cloud_reading_lint.py     # Cloud: 多読み漢字 / 難語 / 間 / 生分数の静的 lint
 │   ├── stt_qa.py                 # Cloud: 合成 wav を Gemini STT で読み確認
+│   ├── kana_reading_diff.py      # Cloud: 期待かな (cloud 文) と実際かな (文 wav の STT) の差分
 │   ├── cloud_speed_qa.py         # Cloud: 発話速度の段差検出 + atempo 正規化
 │   ├── verify_shipped_audio.py   # 出荷 mp4 から切り出して STT 再確認 (on-demand)
 │   │
@@ -222,6 +228,8 @@ sugakushiki/
 │   ├── lint_image_borders.py        # 焼き込まれた白縁・白帯をピクセル実測
 │   ├── manim_vision_qa.py           # Manim 図の意味・美観を Vision 判定
 │   ├── manim_text_collision_qa.py   # Manim の文字 bbox 衝突を決定論検出
+│   ├── check_image_signatures.py    # 生成画像の下隅に描き込まれた画家風の偽署名を Vision で検出
+│   ├── crop_signature.py            # 偽署名の帯を切り落として 16:9 に戻す (on-demand)
 │   ├── check_route_legend.py        # route_map の凡例ラベルが全経路について真か
 │   ├── check_route_places.py        # ナレーションが語る土地が地図にあるか
 │   │
@@ -243,7 +251,7 @@ sugakushiki/
 ├── requirements.in               # top-level 直接依存 10 件
 ├── requirements-dev.txt          # 開発依存 (ruff)
 ├── pyproject.toml                # ruff config (将来 build config 拡張余地)
-├── .python-version               # 3.11.0
+├── .python-version               # 3.13.15
 └── LICENSE                       # MIT
 ```
 

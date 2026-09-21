@@ -93,7 +93,41 @@ _DEFAULT_LEGEND = [["celestial", "天体力学"], ["probability", "確率論"]]
 #.
 _DEFAULT_NOTE = "── 線の上は数学の業績、下は人生の歩み ──"
 
+# Track vocabulary is a CONTRACT, not a free-text field: "work" is drawn ABOVE
+# the axis and everything else falls BELOW it (see `side` in construct).
+_TRACKS = ("work", "life")
+
 AXIS_Y = 0.0
+
+
+def resolve_tracks(milestones, note_param=None):
+    """Return (sides, note_text) for a milestone list, rejecting bad vocabulary.
+
+    Two failures used to hide behind each other here:
+
+      * an LLM-invented track name ("math") is not "work", so those milestones
+        silently rendered on the LIFE side -- the whole two-track design
+        collapsed into one row without anything failing;
+      * the two-track note was chosen by counting DISTINCT TRACK STRINGS, so
+        {"life", "math"} counted as two tracks and printed "the line's upper
+        side is the mathematics, the lower side is the life" over a picture
+        where nothing at all was above the line. The note asserted a layout
+        that was not drawn.
+
+    So: unknown vocabulary raises (23 shipped episodes use only work/life, so
+    nothing existing regresses), and the note follows the SIDES actually drawn
+    rather than the track strings.
+    """
+    unknown = sorted({str(m[2]) for m in milestones} - set(_TRACKS))
+    if unknown:
+        raise ValueError(
+            f"timeline_recap: unknown milestone track(s) {unknown}. "
+            f"Valid tracks are {'/'.join(_TRACKS)} "
+            "(work = above the axis, life = below)."
+        )
+    sides = {1 if str(m[2]) == "work" else -1 for m in milestones}
+    note_text = note_param or (_DEFAULT_NOTE if len(sides) >= 2 else "")
+    return sides, note_text
 
 
 def require_title(params: dict) -> None:
@@ -211,8 +245,7 @@ class TimelineRecap(Scene):
                 )
             legend_data = []
 
-        tracks = {str(m[2]) for m in milestones}
-        note_text = params.get("note") or (_DEFAULT_NOTE if len(tracks) >= 2 else "")
+        _sides, note_text = resolve_tracks(milestones, params.get("note"))
 
         title = Text(title_text, font=FONT, font_size=30, color=TEXT_DIM)
         title.move_to([0, 2.95, 0])
@@ -305,21 +338,30 @@ class TimelineRecap(Scene):
         leg = VGroup(*leg_items).arrange(RIGHT, buff=0.7)
         leg.move_to([0, legend_y, 0])
 
-        # Paced reveal: title + axis, then milestones left-to-right (covered by
-        # narration), then the legend; the finished timeline rests. No motion.
-        reveal_t = 0.6 + 0.5 + len(groups) * 0.5 + 0.5
-        hold = min(2.3, max(0.4, (duration - reveal_t) / (len(groups) + 1)))
+        # Paced reveal: title, then axis WITH the legend, then milestones
+        # left-to-right (covered by narration); the finished timeline rests.
+        #
+        # An earlier episode (user 耳/目): the legend used to be revealed AFTER every milestone.
+        # For a 10-item timeline in a 26 s scene that put it at ~25.5 s, and the old
+        # arithmetic overran `duration` by ~1 s, so the assembler trimmed the tail and
+        # the legend was cut to a flash or lost entirely. Two fixes, both structural:
+        #   1. the legend comes up with the axis. It is the key that decodes the
+        #      picture, so it has to be readable WHILE the milestones land, not after.
+        #   2. the budget is closed: reveal_t + (n+1) * hold + CODA == duration, so
+        #      nothing overruns and nothing is trimmed.
+        CODA = 1.5
+        reveal_t = 0.6 + 0.5 + len(groups) * 0.5
+        hold = max(0.3, (duration - reveal_t - CODA) / (len(groups) + 1))
 
         header = [FadeIn(title)] + ([FadeIn(note)] if note is not None else [])
         self.play(*header, run_time=0.6)
-        self.play(FadeIn(axis), run_time=0.5)
+        axis_in = [FadeIn(axis)] + ([FadeIn(leg)] if leg_items else [])
+        self.play(*axis_in, run_time=0.5)
         self.wait(hold)
         for g in groups:
             self.play(FadeIn(g), run_time=0.5)
             self.wait(hold)
-        if leg_items:
-            self.play(FadeIn(leg), run_time=0.5)
-        self.wait(max(1.0, duration - reveal_t - (len(groups) + 1) * hold))
+        self.wait(CODA)
 
 
 # -----------------------------------------------------------------------

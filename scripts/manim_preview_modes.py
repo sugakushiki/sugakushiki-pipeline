@@ -139,7 +139,12 @@ def render_mode(
         # (verified: md5 identical for 3 outputs in pascals_triangle/). Per-mode
         # media_dir gives each mode its own scene cache key.
         media_dir = out_dir / tpl_stem / "_media" / mode
+        # `manim` を PATH から探すと、venv を activate していないシェル (Claude Code の
+        # Bash tool など) では起動できず、しかも下の「PNG が無い」で報告されるので
+        # render 失敗と見分けが付かなかった。visual_generator と同じ呼び方に揃える。
         cmd = [
+            sys.executable,
+            "-m",
             "manim",
             f"-{quality_flag}",
             "-s",  # save last frame as PNG
@@ -149,7 +154,7 @@ def render_mode(
             scene_class,
         ]
         t0 = time.time()
-        subprocess.run(
+        proc = subprocess.run(
             cmd,
             cwd=str(template_path.parent),
             capture_output=True,
@@ -157,6 +162,11 @@ def render_mode(
             timeout=180,
         )
         elapsed = time.time() - t0
+        # 戻り値を捨てていたので、render が落ちても「PNG が無い」としか出なかった。
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            detail = tail[-1][:200] if tail else f"rc={proc.returncode}"
+            return False, f"render failed ({elapsed:.1f}s): {detail}"
 
         # Manim -s で生成された PNG を出力先に rename
         # default 出力: media_dir/images/<scene_class>/<scene_class>.png

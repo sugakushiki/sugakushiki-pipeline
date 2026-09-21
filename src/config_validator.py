@@ -346,6 +346,53 @@ def validate_config(config: dict, config_path: str = "") -> tuple[list[str], lis
                 "verified_facts['birth'] に生年を含めてください (image_generator.py:1754)"
             )
 
+    # ある回: 比喩的な誇張 (「〜の最初の頁」「〜の父」) は config の theme / hook / key_topics から
+    # narration に流れる。上流で名指しする。advisory。
+    try:
+        from hyperbole_lint import scan_text as _hyp_scan
+
+        texts = [
+            config.get("theme", ""),
+            config.get("hook", ""),
+            config.get("modern_connection", ""),
+        ]
+        texts += [t for t in (config.get("key_topics") or []) if isinstance(t, str)]
+        texts.append((config.get("description") or {}).get("intro_guidance") or "")
+        allow = config.get("hyperbole_allow") or []
+        hits = []
+        for t in texts:
+            hits += [h for h in _hyp_scan(t, allow) if h["kind"] == "metaphor"]
+        if hits:
+            words = "、".join(sorted({h["match"] for h in hits}))
+            warnings.append(
+                f"config の theme/hook/key_topics に比喩的な誇張があります: {words} "
+                "(narration にそのまま流れる。言い換えるか、文字どおりの用法なら hyperbole_allow に)"
+            )
+    except Exception:  # noqa: BLE001 - advisory; validator を止めない
+        pass
+
+    # ある回: cloud_reading_overrides の 1 文字キーは SSML の表層一致で複合語を壊す
+    # (角 -> 三角級数、表 -> 表せる、腹 -> 腹立たしい)。1 文字語は narration_speech_cloud に
+    # かな直書きするか `cloud_direct_kana` に挙げる。あわせて cloud_direct_kana の語が
+    # overrides に無ければ効かないので名指しする。
+    overrides = config.get("cloud_reading_overrides") or {}
+    if isinstance(overrides, dict):
+        listed = {str(w) for w in (config.get("cloud_direct_kana") or []) if isinstance(w, str)}
+        singles = [k for k in overrides if isinstance(k, str) and len(k) == 1 and k not in listed]
+        if singles:
+            warnings.append(
+                f"cloud_reading_overrides に 1 文字の語があります: {'、'.join(singles)} "
+                "(SSML は表層一致なので 三角級数/表せる のような複合語まで読みを変えます。"
+                "narration_speech_cloud にかな直書きするか cloud_direct_kana に挙げる)"
+            )
+    direct = config.get("cloud_direct_kana") or []
+    if isinstance(direct, list):
+        missing = [w for w in direct if isinstance(w, str) and w not in overrides]
+        if missing:
+            warnings.append(
+                f"cloud_direct_kana の語が cloud_reading_overrides に無く効きません: {'、'.join(missing)}"
+            )
+
     return errors, warnings
 
 

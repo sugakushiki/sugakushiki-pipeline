@@ -61,6 +61,28 @@ try:
     from cloud_tts import _READING_OVERRIDES as _SSML_FORCED
 except Exception:
     _SSML_FORCED = {}
+try:
+    from speech_source import cloud_array_status  # 合成で捨てられる cloud 配列を見分ける
+except Exception:  # noqa: BLE001
+
+    def cloud_array_status(scene):  # type: ignore[misc]
+        arr = scene.get("narration_speech_cloud")
+        if arr is None:
+            return "missing"
+        return "ok" if len(arr) == len(scene.get("narration") or []) else "length_mismatch"
+
+
+try:
+    from cloud_reading_config import load_cloud_reading_config  # 読み設定の唯一の loader
+except Exception:  # noqa: BLE001 - src が無い環境では episode 側の設定を空扱いにする
+
+    def load_cloud_reading_config(_path):  # type: ignore[misc]
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            overrides={}, direct_kana=(), high_risk=[], forced_surfaces=frozenset()
+        )
+
 
 # (1b) 数の位「京」(=けい, 10^16): 数字直後の 京 は単位。Chirp が きょう(都市) 誤読しうる
 #。数字非前置の 東京/京都 は対象外、後続 都/城/浜/阪/畿 も除外。
@@ -82,6 +104,51 @@ _STANDALONE_NUM_RE = re.compile(r"(?<![一-鿿ァ-ヶー々])数(?![一-鿿々�
 # ある回実績 + memory 由来の既知誤読を初期値に。測ってから足すこと。
 # ----------------------------------------------------------------------------
 _POLYPHONE = {
+    # ── ある回 (user 耳で 3 語) ──
+    # 十分 (じゅうぶん=enough / じゅっぷん=10 分): Chirp は「十分に多くの人を」を
+    # じゅっぷん と読んだ。分数「五十分の一」「十分の一」は ぶん で別物 (EXCLUDE)。
+    "十分": (
+        ("じゅうぶん", "じゅっぷん"),
+        ["十分=じゅうぶん (enough) を ジュップン (10 分) と読む"],
+        "narration_speech_cloud に じゅうぶん (または じゅっぷん) を平仮名で明示",
+    ),
+    # 四つ (よっつ / よつ): 「そのうち四つは」を よつは と読んだ。四つ角=よつかど 等は EXCLUDE。
+    "四つ": (
+        ("よっつ", "よつ"),
+        ["四つ=よっつ を ヨツ と読む"],
+        "narration_speech_cloud に よっつ を平仮名で明示",
+    ),
+    # 正に (せいに=positive / まさに=exactly): 「確率が正になります」を まさに と読んだ。
+    # 数学の「正になる」は せいに、副詞は まさに。どちらも実在するので固定せず明示を求める。
+    "正に": (
+        ("せいに", "まさに"),
+        ["正に=せいに (符号が正) を マサニ と読む"],
+        "narration_speech_cloud に せいに / まさに を平仮名で明示 (または「ゼロより大きく」に言い換え)",
+    ),
+    # ── ある回 (user 耳で 3 語。文単位 wav の STT で裏取り) ──
+    # 天が (てん / あま): 「天が動くか」「天が動き」を アマ と読んだ (math_07 / math_08)。
+    # 天体・天球・天文 は複合語で てん に安定するので surface は 天が に限る。
+    "天が": (
+        ("てんが", "あまが"),
+        ["天が=てんが (天球) を アマガ と読む (ある回 STT 実測)"],
+        "narration_speech_cloud に てんが を平仮名で明示",
+    ),
+    # 労に/労を (ろう): 「翻訳の労に対して」を ドク/トコ のように読んだ (person_07)。
+    # 労う=ねぎらう は surface が違うので当たらない。
+    "労に": (
+        ("ろうに",),
+        ["労=ろう を誤読 (ある回 STT=ドク)"],
+        "労 を ろう と平仮名で明示",
+    ),
+    "労を": (("ろうを",), ["労=ろう を誤読 (ある回の型)"], "労 を ろう と平仮名で明示"),
+    # 退け (しりぞけ / どけ): 「占星術を退け、」を トケ、「退けた」を ドケタ と読んだ
+    # (closing_02 / math_08)。退ける=どける も実在するので固定せず明示を求める。
+    # 退ける/退けた は 退け を含むので一つの surface で全活用に当たる。
+    "退け": (
+        ("しりぞけ", "どけ"),
+        ["退け=しりぞけ を トケ / ドケ と読む (ある回・math_08 STT 実測)"],
+        "narration_speech_cloud に しりぞけ を平仮名で明示、または cloud_reading_overrides で SSML 固定",
+    ),
     # 入 (はいる/いれる): 入学文脈の可能形「入れ(ません)」は はいれ。イレ 誤読。
     # 「踏み入れ」「手に入れ」は いれ で正しいので surface に含めず、
     # possible-form の "に入れ" (…に入れる/入れない) を狙う。
@@ -91,6 +158,98 @@ _POLYPHONE = {
         "大学に入れ->はいれ で固定",
     ),
     "に入れる": ("はいれ", ["入=いれ の可能形を イレル 化"], "はいれる で固定"),
+    # その間 (そのあいだ/そのかん): ある回「その間の値も定義できます」を
+    # そのかん と読んだ (user 耳)。どちらの読みも実在し (書き言葉の そのかん は
+    # 「その期間」の意で正しい) 文脈依存なので force には入れず advisory に留める。
+    # 全68話で 3 回 / 3 話。うち 1 件は「その間隔」= かんかく で **別語** なので
+    # _POLYPHONE_EXCLUDE で外す (部分一致の罠)。
+    "その間": (
+        "そのあいだ",
+        ["その間=そのあいだ(空間的な あいだ)/そのかん(時間的な 期間)"],
+        "narration が空間の あいだ を指すなら そのあいだ と明記",
+    ),
+    # 馬上 (ばじょう): ある回で誤読 (出荷 wav STT が『杖で/バで』と聞き取り、user 耳)。
+    "馬上": (
+        "ばじょう",
+        ["馬上=ばじょう。バ/ウマウエ 系の崩れ (ある回、user 耳)"],
+        "ばじょうで で固定",
+    ),
+    # 羽 (わ/はね/う): 数詞+羽 の助数詞を ハ 化。
+    # 出荷 66 ep の較正: 数詞+羽 は ある回の 1 件のみ (2026-08-17 実測)。1羽/一羽 の 2 表層に絞る (羽根/羽ばたき は不変)。
+    "1羽": (
+        "いちわ",
+        ["羽=わ (助数詞)。1羽 を イチハ 化 (ある回、user 耳)"],
+        "いちわ で固定",
+    ),
+    "一羽": (
+        "いちわ",
+        ["羽=わ (助数詞)。一羽 を イチハ 化しうる (ある回と同型)"],
+        "いちわ で固定",
+    ),
+    # 下りる (おりる) / 下る (くだる): 送り仮名「下り」でも Chirp が クダリ 化。
+    # 出荷 66 ep の較正: 「下り」は ある回の 1 件のみ (2026-08-17 実測)。否定形「下りず」だけ狙う (下り坂=くだり は表層が異なる)。
+    "下りず": (
+        "おりず",
+        ["下り=おり。許可は下りず を クダリズ 化 (ある回、user 耳)"],
+        "おりず で固定",
+    ),
+    # 乗 (じょう/のり): カタカナ変数直後の指数の乗を ノリ 化。
+    # 二乗/累乗 は安定。出現の較正: cloud 回では 049 (ピー乗/エヌ乗) と 066 のみ (2026-08-18 掃引)。
+    "ックス乗": (
+        "じょう",
+        ["乗=じょう (指数)。エックス乗 を ノリ 化 (ある回、user 耳)"],
+        "えっくすじょう 等かなで固定",
+    ),
+    "ヌ乗": (
+        "じょう",
+        ["乗=じょう (指数)。エヌ乗 も同型 (ある回出荷 narration に出現)"],
+        "えぬじょう 等かなで固定",
+    ),
+    "ピー乗": (
+        "じょう",
+        ["乗=じょう (指数)。ピー乗 も同型 (ある回出荷 narration に出現)"],
+        "ぴーじょう 等かなで固定",
+    ),
+    # 主著 (しゅちょ): Chirp が しゅちょう (主張) 化。
+    # 対照実験 (2026-08-18): 平仮名固定も phoneme 固定も長音側に揺れ、安定したのは言い換えのみ。
+    "主著": (
+        "しゅちょ",
+        [
+            "主著=しゅちょ が シュチョウ (主張) 化。かな固定/phoneme 固定でも揺れる (実験 2026-08-18)"
+        ],
+        "『主な著書』等へ言い換える (読み固定では安定しない)",
+    ),
+    # 志 (こころざし/し): 裸の志は シ 音読み化。志望/意志 等の複合語を巻き込まないよう「その志」だけ狙う。
+    "その志": (
+        "こころざし",
+        ["志=こころざし。シ 音読み化 (ある回、user 耳 + 出荷 wav STT『そのしは』)"],
+        "そのこころざし で固定",
+    ),
+    # 表 (ひょう/おもて): 裸の表は頻出しすぎるので「表全体」だけ狙う (天文表/発表/表紙 は安定)。
+    "表全体": (
+        "ひょうぜんたい",
+        ["表=ひょう。オモテ 誤読 (ある回、user 耳)"],
+        "ひょうぜんたい で固定",
+    ),
+    # 値 (あたい/ね): 形容詞直後の裸の値 (正しい値/正確な値/近い値) を ネ 化。
+    # 出荷 65 ep の較正: い値 4 件 / な値 9 件、全て あたい が正の同型文脈 (2026-08-16 実測)。
+    # 「の値」(25 件) は πの値/関数の値 等が頑健なので入れない。
+    "い値": (
+        "あたい",
+        ["値=あたい。正しい値 を ネ 化 (ある回、user 耳 + 出荷 wav STT『正しい根』)"],
+        "あたい で固定",
+    ),
+    "な値": ("あたい", ["値=あたい。正確な値 等を ネ 化しうる (ある回と同型)"], "あたい で固定"),
+    # 命 (めい/いのち): 命令の意の「〜の命による/命を受け」は めい。イノチ 誤読。
+    # 較正: 出荷 65 ep で 命による 1 件 + 命を受け 1 件 のみ。
+    "命による": (
+        "めい",
+        ["命=めい (命令)。イノチ 誤読 (ある回、user 耳)"],
+        "のめいによる で固定",
+    ),
+    "命によって": ("めい", ["命=めい (命令)。イノチ 誤読"], "のめいによって で固定"),
+    "命により": ("めい", ["命=めい (命令)。イノチ 誤読"], "のめいにより で固定"),
+    "命を受け": ("めい", ["命=めい (命令)。イノチ 誤読"], "めいをうけ で固定"),
     # 愛 (あい/めでる): 「愛では」「愛のない」は あい。「愛で」は動詞 めでる 化しやすい。
     "愛では": ("あい", ["愛で+は を 動詞めでる+は と解析し メデ 化"], "あいで(は) で固定"),
     "愛は": ("あい", ["愛=あい。語頭 愛+は を メデ 化しうる"], "あいは で固定"),
@@ -141,7 +300,8 @@ _POLYPHONE = {
         "りてい で固定 (難語自体は別途言い換え検討)",
     ),
     # 環 (かん/わ): 代数の環 (可換環・多項式環・整数環) は かん。Chirp は「わ」と読む
-    #。**環境/循環/一環を巻き込まない表層に限定**する
+    #   (実測: 「その足し算と掛け算の構造を環と呼びます」が STT で「構造はと呼びます」、
+    #   「どんな環の上でも」が「どんなワの上でも」)。**環境/循環/一環を巻き込まない表層に限定**する
     #   ため、助詞・後続語まで含めた形で登録する (環境を/循環性 は下記のどれにも一致しない)。
     "環を": ("かん", ["環=かん(代数の環)。ワ 誤読"], "かんを で固定 (環境/循環は別語)"),
     "環は": ("かん", ["環=かん(代数の環)。ワ 誤読"], "かんは で固定"),
@@ -167,7 +327,7 @@ _POLYPHONE = {
         ["二点=にてん。フタテン 誤読 (ある回、同一文で読みが割れた)"],
         "にてん で固定",
     ),
-    # -
+    # --- 耳検出、Cloud が非決定的に割れた多読み ---
     # 数 (かず/すう): 「数で解けない」= かず。Chirp が すう と非決定 (closing_03=スウ /
     #   closing_04=カズ に同表記で割れた実測)。「数学/関数/整数」は含まない specific surface。
     "数で解け": (
@@ -187,7 +347,7 @@ _POLYPHONE = {
     # NOTE(不採用): 三次方程式(さんじ)は Chirp が既定で正読するのが通常で、稀な三乗(さんじょう)
     #   誤読は再ロールで解消する。surface「三次方程式」→さんじ を入れると全 scene で FP 多発
     #   (かな固定しないのが慣行) のため多読み辞書には入れない。耳/STT spot-check で確認する。
-    # -
+    # --- 出荷 wav STT 検出、Cloud が誤読した多読み ---
     # 表 (ひょう/おもて): 対数表/一つの表/表を引く は ひょう(table)。Chirp が おもて(surface)化
     #。表面=ひょうめん/代表=だいひょう 等の複合語や
     #   コインの表(=おもて) を巻き込まない具体表層に限る。
@@ -206,7 +366,7 @@ _POLYPHONE = {
         "もていも で固定",
     ),
     "を底と": ("てい", ["X を底とする=ていとする。ソコ 誤読"], "をていと で固定"),
-    # -
+    # --- 耳/STT 検出、Cloud が誤読した多読み ---
     # 第九巻 (だいきゅうかん): 九=く/きゅう。Chirp が だいくかん 化。第九=だいく(ベートーヴェン) に引かれる。書物の巻は きゅう。
     "第九巻": (
         "だいきゅうかん",
@@ -229,7 +389,7 @@ _POLYPHONE = {
     #   (045/048/049/051/052、計 24 箇所) に FP 発火。確定した 天文→てんぶん 誤読は無く、
     #   Chirp は 天文 を安定して てんもん と読む。三次方程式(さんじ)と同じ「通常正読・FP 多発・
     #   稀な誤読は per-occurrence/再ロールで解消」ケースなので _POLYPHONE には入れない。
-    # -
+    # --- user が耳で検出。どれも辞書に無く、合成前に一件も警告できなかった ---
     # 黒板 (こくばん): Chirp が クロイタ と読む。**同一エピソード内で割れる** — ある回は
     #   closing_01 だけ コクバン で intro_01/intro_02 が クロイタ だった。文脈非依存で
     #   こくばん 以外に読みようがないので表層そのままで安全。
@@ -238,6 +398,73 @@ _POLYPHONE = {
         "こくばん",
         ["黒板=こくばん。クロイタ 誤読 (ある回、user 耳)"],
         "こくばんで固定",
+    ),
+    # --- user が耳で 6 語。lint も STT も沈黙した ---
+    # 縁 (ふち=edge / えん=relation): 円板の「縁」を エン と読んだ (math_03 で 6 回)。
+    #   どちらも実在するので固定せず、かな明示を求める。
+    "縁": (
+        ("ふち", "えん"),
+        ["縁=ふち (円板の縁) を エン と読む (ある回、user 耳)"],
+        "narration_speech_cloud に ふち (または えん) を平仮名で明示",
+    ),
+    # 梳かす (とかす) / 梳く (すく): 「梳かせません」を スカセマセン と読んだ。
+    #   活用「梳かし/梳かせ/梳かす」を「梳か」で当てる。「梳く」(すく) は含まない。
+    "梳か": (
+        "とか",
+        ["梳かす=とかす を スカス と読む (ある回、user 耳)"],
+        "とかし / とかせ で固定",
+    ),
+    # 私講師 は既存エントリ (上) にある。ある回では config の SSML override で「固定済み」と
+    #   判定されて沈黙したが、Chirp は ワタシコウシ と読んだ (複合語は SSML が honor されない型)。
+    #   **SSML で固定した語は lint が黙るので、かな直書きのほうが安全**。
+    # 故郷 (こきょう / ふるさと): 「学問の故郷」で どちらでもない読みになった。
+    "故郷": (
+        ("こきょう", "ふるさと"),
+        ["故郷=こきょう が崩れる (ある回、user 耳)"],
+        "narration_speech_cloud に こきょう を平仮名で明示",
+    ),
+    # 角谷 (かくたに): 不動点定理の角谷静夫。カクドヤ と読んだ。
+    "角谷": (
+        "かくたに",
+        ["角谷=かくたに を カクドヤ と読む (ある回、user 耳)"],
+        "かくたに で固定",
+    ),
+    # ── ある回 (ヴォルテラ。user が通し視聴で 6 語を耳で拾った。lint も STT も沈黙) ──
+    # 魚市場 (うおいちば / うおしじょう): どちらも実在するが、市場の魚売り場は うおいちば。
+    "魚市場": (
+        ("うおいちば", "うおしじょう"),
+        ["魚市場 を ウオシジョウ と読む (ある回、user 耳)"],
+        "narration_speech_cloud に うおいちば を平仮名で明示",
+    ),
+    # 食う者 (くうもの): クウシャ と読んだ (intro_02/person_07)。者=しゃ の複合語 (捕食者 等) は別。
+    "食う者": (
+        "くうもの",
+        ["食う者=くうもの を クウシャ と読む (ある回、user 耳)"],
+        "くうもの で固定",
+    ),
+    # 人街 (じんがい): ユダヤ人街 を ユダヤジンマチ と読んだ (person_01/closing_01)。
+    "人街": (
+        "じんがい",
+        ["ユダヤ人街=ゆだやじんがい を ジンマチ と読む (ある回、user 耳)"],
+        "じんがい で固定",
+    ),
+    # 二つの種 (しゅ=species / たね=seed): 「二つの種が出会う」を フタツノタネ と読んだ (math_02)。
+    "つの種": (
+        ("しゅ", "たね"),
+        ["種=しゅ (species) を タネ と読む (ある回、user 耳)"],
+        "narration_speech_cloud に しゅ を平仮名で明示 (種類/生物種 に言い換えてもよい)",
+    ),
+    # 獲る (とる / える): 「獲るのをやめたら」を エル と読んだ (math_06/closing_03)。獲物=えもの は別。
+    "獲る": (
+        ("とる", "える"),
+        ["獲る=とる を エル と読む (ある回、user 耳)"],
+        "narration_speech_cloud に とる を平仮名で明示",
+    ),
+    # 型 (かた / がた): 「同じ型の式」を オナジガタ と読んだ (closing_02)。「〜型」の連濁は語による。
+    "同じ型": (
+        ("おなじかた", "おなじがた"),
+        ["同じ型=おなじかた を オナジガタ と読む (ある回、user 耳)"],
+        "narration_speech_cloud に おなじかた を平仮名で明示",
     ),
     # 通 (かよう/とおる): 既存の「を通って/を通り」は とおる 側。こちらは かよう 側で、
     #   「学校に通った」= かよった を トオッタ と読む。
@@ -282,7 +509,7 @@ _POLYPHONE = {
         "しゅっしょうしょうめいしょ で固定",
     ),
     "苦もなく": ("くもなく", ["苦=く。ニガ 誤読"], "くもなく で固定"),
-    # -
+    # --- user が耳検出。lint がどれも見ていなかった ---
     # 大家 (たいか/おおや): 「不等式の大家」= たいか。Chirp は オオヤ (家主) と読んだ。
     "の大家": ("たいか", ["大家=たいか。オオヤ(家主) 誤読"], "たいか で固定"),
     # 公に (おおやけに): 「公に放棄した」。Chirp は コウニ と音読みした。
@@ -311,10 +538,35 @@ _POLYPHONE = {
 # _POLYPHONE は部分一致なので、より長い語の一部として現れると別読みが正しい場合がある。
 # 辞書のコメントに「〜は含めない」と書いてあっても、表層が部分文字列である限り一致する。
 _POLYPHONE_EXCLUDE = {
-    # 「手に入れる」「踏み入れる」は いれる が正しい (はいれる にすると誤り)。
-    # 狙いは 大学に入れる=はいれる のほう。
-    "に入れる": ("手に入れ", "踏み入れ"),
-    "に入れま": ("手に入れ", "踏み入れ"),
+    # 労に/労を は 苦労に・勤労に・労働に (くろう/きんろう/ろうどう) の部分一致を除く。
+    # 出荷 72 話で「労に」は ある回の 1 文だけだが、部分文字列の罠は先に塞ぐ。
+    "労に": ("苦労に", "勤労に", "労働に", "過労に", "心労に"),
+    "労を": ("苦労を", "勤労を", "労働を", "過労を", "心労を"),
+    # 「五十分の一」「十分の一」の 十分 は分数の ぶん (十分=じゅうぶん とは別物)。
+    # 「三十分」「五十分」は時間の ぷん で、これも enough の 十分 ではない。
+    "十分": (
+        "十分の",
+        "二十分",
+        "三十分",
+        "四十分",
+        "五十分",
+        "六十分",
+        "七十分",
+        "八十分",
+        "九十分",
+    ),
+    # 四つ角=よつかど / 四つ葉=よつば / 四つ足=よつあし / 四つん這い は よつ が正しい。
+    "四つ": ("四つ角", "四つ葉", "四つ足", "四つん這い", "四つ辻"),
+    # 「手に入れる」「踏み入れる」「式に入れる (=代入する)」は いれる が正しい
+    # (はいれる にすると誤り)。狙いは 大学に入れる=はいれる のほう。
+    # 「式に入れ」は ある回 (反復法: 近似値を式に入れる) で毎ビルド発火した FP。
+    "に入れる": ("手に入れ", "踏み入れ", "式に入れ"),
+    "に入れま": ("手に入れ", "踏み入れ", "式に入れ"),
+    # 「値段」「値札」「値域」の 値 は ね/域の一部で、あたい ではない。
+    "い値": ("値段", "値札", "値域"),
+    "な値": ("値段", "値札", "値域"),
+    # 「その間隔」は かんかく で 間 単独ではない。
+    "その間": ("その間隔", "その間柄"),
     # 「筋の通った」は とおった。「学校に通った」= かよった とは別語。
     "に通った": ("筋の通った", "筋が通った"),
     # 「主人公に」「公にする」以外の 公 の複合語は こう が正しい。
@@ -336,6 +588,8 @@ _HOMOPHONE = {
 # ----------------------------------------------------------------------------
 _HARD_WORDS = {
     "里程標": "道しるべ / 節目",
+    # ある回: user「日常でほとんど聞かない語で、伝わらない人が一定いる」
+    "半可通": "半分しか分かっていない人 / 生かじりの人",
 }
 
 # ----------------------------------------------------------------------------
@@ -386,7 +640,13 @@ def _iter_scenes(scene_def: dict):
         for scene in section.get("scenes", []):
             sid = scene.get("scene_id", "?")
             narration = scene.get("narration", []) or []
-            cloud = scene.get("narration_speech_cloud") or []
+            # narration と長さの違う cloud 配列は合成器が捨てる (narration_speech /
+            # narration を喋る)。それを正として検査すると、音声と違う文を見て黙る。
+            # 空として渡し、run_lint が別途 cloud_length_mismatch で名指しする。
+            if cloud_array_status(scene) == "length_mismatch":
+                cloud = []
+            else:
+                cloud = scene.get("narration_speech_cloud") or []
             for i, narr in enumerate(narration):
                 if not isinstance(narr, str):
                     continue
@@ -395,11 +655,53 @@ def _iter_scenes(scene_def: dict):
                 yield sid, i, narr_c, cloud_c
 
 
-def _scan_polyphone(sid, idx, narr, cloud):
-    """(1) 多読み漢字が narration にあり cloud で読み未固定なら WARN。"""
-    out = []
-    # cloud が空 (narration_speech_cloud 未設定) の場合は narration 自身を読み源とみなす。
+def is_reading_pinned(surface, yomis, narr, cloud, *, ssml_global=None, ssml_episode=()):
+    """ (2026-09-19): 語の読みが固定されている経路を返す。無ければ None。
+
+    3 つの層を **1 か所で** 見る (それまで polyphone は 3 層を独自の順で、high_risk は
+    かなの層しか見ておらず、`cloud_reading_overrides` で固定した語が `pronunciation_high_risk`
+    にもあると偽警告になっていた):
+      "kana"         : 読み (いずれか) が読み源 (cloud があれば cloud、無ければ narration) にある
+                       = gen_cloud_readings の直書き / cloud_direct_kana / 手書きの結果
+      "ssml_global"  : cloud_tts._READING_OVERRIDES の表層が surface を覆う (k in surface)、
+                       または surface を含む override 表層が文にある (surface in k and k in narr)
+      "ssml_episode" : episode_config.cloud_reading_overrides について同じ
+    `cloud_direct_kana` は特別扱いしない ── 直書きが効いていれば "kana" で固定済み、効いて
+    いなければ (の no-op) 未固定として名指しされるのが正しい。
+    """
     read_src = cloud if cloud else narr
+    yomis = yomis if isinstance(yomis, tuple | list) else (yomis,)
+    if any(y and y in read_src for y in yomis):
+        return "kana"
+
+    def _covered(keys) -> bool:
+        for k in keys or ():
+            if not isinstance(k, str) or not k:
+                continue
+            if k in surface:
+                return True
+            if surface in k and k in (narr or ""):
+                return True
+        return False
+
+    if _covered(ssml_global if ssml_global is not None else _SSML_FORCED):
+        return "ssml_global"
+    if _covered(ssml_episode):
+        return "ssml_episode"
+    return None
+
+
+def _scan_polyphone(sid, idx, narr, cloud, episode_forced=()):
+    """(1) 多読み漢字が narration にあり cloud で読み未固定なら WARN。
+
+    `episode_forced` は episode_config.cloud_reading_overrides の表層 (SSML phoneme で
+    合成時に固定される語)。ある回は 十分/四つ をそこで固定していたので、lint が
+    「未固定」と言うと嘘になる (global の `_SSML_FORCED` と同じ扱い)。
+    読み (yomi) は str か tuple。tuple は「文脈で割れる語」で、どれか一つが cloud に
+    あれば固定済みとみなす (十分=じゅうぶん/じゅっぷん、正に=せいに/まさに)。
+    """
+    out = []
+    # 読み源 (cloud があれば cloud、無ければ narration) の判定は is_reading_pinned の中。
     for surface, (yomi, notes, fix) in _POLYPHONE.items():
         if surface not in narr:
             continue
@@ -410,10 +712,10 @@ def _scan_polyphone(sid, idx, narr, cloud):
         # 書いていたが、表層一致だけでは実現できていなかった。
         if any(w in narr for w in _POLYPHONE_EXCLUDE.get(surface, ())):
             continue
-        if yomi in read_src:
-            continue  # 読み固定済み = OK
-        if any(k in surface for k in _SSML_FORCED):
-            continue  # cloud_tts._READING_OVERRIDES で SSML 合成時固定済み = OK (二乗 等)
+        yomis = yomi if isinstance(yomi, tuple) else (yomi,)
+        # かな / global SSML / episode SSML の 3 層を is_reading_pinned で 1 か所判定。
+        if is_reading_pinned(surface, yomis, narr, cloud, ssml_episode=episode_forced):
+            continue
         out.append(
             {
                 "type": "polyphone",
@@ -422,12 +724,39 @@ def _scan_polyphone(sid, idx, narr, cloud):
                 "surface": surface,
                 "detail": narr,
                 "note": (
-                    f"多読み「{surface}」の読み「{yomi}」が narration_speech_cloud に無い "
+                    f"多読み「{surface}」の読み「{'/'.join(yomis)}」が narration_speech_cloud に無い "
                     f"(Chirp 自動読み任せ)。誤読リスク: {'; '.join(notes)}。対処: {fix}"
                 ),
             }
         )
     return out
+
+
+# (1d) 単独の字母「エー」: 変数名 a を cloud で「エー」と書くと Chirp が長音を引き延ばし、
+# 「a、b、c」の a だけ不自然に遅くなる。「エイ」なら正常。
+# 後続が句読点/空白/閉じ括弧/行末のときだけ = 「エーアイ」「エース」等の語は対象外。
+_LETTER_LONG_VOWEL_RE = re.compile(r"(?<![ァ-ヶー])エー(?=[、。，．！？!?\s」』）)]|$)")
+
+
+def _scan_letter_long_vowel(sid, idx, narr, cloud):
+    """(1d) cloud の単独「エー」(字母 a) を WARN。「エイ」を推奨。"""
+    if not cloud:
+        return []
+    if not _LETTER_LONG_VOWEL_RE.search(cloud):
+        return []
+    return [
+        {
+            "type": "letter_long_vowel",
+            "scene_id": sid,
+            "index": idx,
+            "surface": "エー",
+            "detail": cloud,
+            "note": (
+                "cloud の単独「エー」(字母 a) は Chirp が長音を引き延ばして不自然に遅くなる。"
+                "対処: narration_speech_cloud で「エイ」と書く"
+            ),
+        }
+    ]
 
 
 def _scan_kei_unit(sid, idx, narr, cloud):
@@ -670,8 +999,14 @@ def _scan_rephrase_risk(sid, idx, narr, cloud):
 # after a letter (x^2), or a standalone Lagrange point L1..L5. gen_cloud.
 # spell_formula_tokens auto-fixes the common forms; this flags any that survived
 # (hand-tuned/legacy cloud, or a form not yet in the dictionary) BEFORE synthesis.
+# ある回で最後の 2 つの選択肢を足した。narration_speech_cloud は「読み」の文なので、
+# π / √ / ＝ が残っているのは常に取りこぼしである。出荷 wav の STT で確定した誤読:
+#   π/4 -> 「パイ4」 / π/8 -> 「パイハチ」 (わる が落ちる)
+#   エネストレーム＝掛谷の定理 -> 「エネストレームイコール掛谷の定理」
+# 既存の _BARE_FRACTION_RE は N/M の両側が数字のときだけ見るので π/4 を取りこぼす。
 _RAW_FORMULA_RE = re.compile(
     r"[A-Za-z]'|=[A-Za-z]|[A-Za-z]=|\bL[1-5](?![0-9A-Za-z])|[A-Za-zα-ωΑ-Ω]\^"
+    r"|[πΠ√∛]|＝"
 )
 # Case particle + 読点 (を、に、へ、が) which Chirp lengthens the pre-comma vowel on.
 # Capturing so per-particle repetition can be counted. Excludes は (topic-marker, the
@@ -769,6 +1104,36 @@ def _iter_bare_kanji(text: str, kanji: str):
         if nxt and _COMPOUND_NEXT.match(nxt):
             continue
         yield i
+
+
+_DIGIT_FRACTION_LINT_RE = re.compile(r"[0-9０-９]{2,}[ 　]*分の[ 　]*[0-9０-９]")
+
+
+def _scan_digit_fraction(sid, idx, narr, cloud):
+    """(1f) 合成テキストに算用数字 2 桁以上の分数「16 分の 4」が残ると Chirp が 分 を
+    時間の ぷん で読む (ある回 user 耳: じゅうろっぷんのよん。1 桁は ぶん で通っていた)。
+    gen_cloud_readings は生成時に かな 化するが、手書き・旧生成の cloud は数字のまま
+    残るので backstop。advisory。"""
+    if not cloud:
+        return []
+    out = []
+    for m in _DIGIT_FRACTION_LINT_RE.finditer(cloud):
+        out.append(
+            {
+                "type": "digit_fraction",
+                "scene_id": sid,
+                "index": idx,
+                "surface": m.group(0),
+                "detail": cloud,
+                "note": (
+                    "cloud=合成テキストに 2 桁以上の算用数字の分数が残存 -> Chirp が「分」を"
+                    "時間の ぷん で読む (ある回: 16 分の 4 -> じゅうろっぷんのよん)。"
+                    "narration_speech_cloud で じゅうろくぶんのよん のように かな 化 "
+                    "(gen_cloud_readings は自動で行う)"
+                ),
+            }
+        )
+    return out
 
 
 def _scan_bare_kaku(sid, idx, narr, cloud):
@@ -869,6 +1234,142 @@ _PARAPHRASE_LOANWORDS = (
     "シーン",
     "ルール",
 )
+
+
+# 文語 (漢文書き下し) の一次資料引用。ある回の掛谷のノート引用
+# 『予は側に在りて之を非常に興味ある質問なりと感じ、直ちに自ら一般的な問題を創作せり』は
+# **一語だけでなく引用全体**が危なかった (側=かたわら を そば/がわ、予=よ を あらかじめ、
+# 之=これ を ゆき 等)。既存の scanner は全て「この語が危ない」と語単位で見るので、
+# **文体まるごとが現代語の読み規則から外れている**ことは誰も見ていなかった。
+# 較正 (出荷 68 本): 標識 2 個以上の段落は ある回の 1 件のみ = 真陽性 1 / 偽陽性 0。
+# 標識 1 個に緩めると 009_seki の人名「沢口一之が」が 之が に一致して偽陽性になるので 2 個。
+_CLASSICAL_MARKS = (
+    "予は",
+    "之を",
+    "之が",
+    "なりと",
+    "在りて",
+    "ありて",
+    "べからず",
+    "ざるべ",
+    "なりき",
+)
+_CLASSICAL_SERI_RE = re.compile(r"せり(?![ぁ-ん])")
+_CLASSICAL_MIN_MARKS = 2
+# 文語文の中で **現代語と違う読みをする一字漢字**。これが cloud に残っていたら未対処。
+# 複合語の一部としても一致するが、発火は「文語標識 2 個以上の段落」に限られるので、
+# 現代文の 内側 / 予定 / 之 を巻き込まない (出荷 68 本で実測 0 件)。
+_CLASSICAL_KANJI = ("予", "側", "之", "於", "而", "曰", "猶", "已", "乃", "者")
+
+
+def _scan_classical_quote(sid, idx, narr, cloud):
+    """文語の引用が cloud で かな化されていなければ WARN。
+
+    語単位の読み固定では足りない。文語は語彙も活用も現代語と違うので、Chirp は
+    引用のほぼ全語を外す。**引用まるごとを かな で書く**のが唯一確実な対処なので、
+    個別の語を辞書に足すのではなく「この文体が居る」ことを検出する。
+
+    危ないのは **文語読みをする一字漢字** (予=よ / 側=かたわら / 之=これ) のほうで、
+    同じ引用に混じる現代語の複合語 (非常/興味/質問/創作) は普通に読まれる。だから
+    「漢字が全体として減ったか」では測れない ── ある回の実測は 21 字 -> 17 字 (0.81)
+    で、**必要な処置は済んでいるのに漢字比では未対処に見えた**。危険な一字だけを見る。
+    """
+    if not narr:
+        return []
+    marks = [m for m in _CLASSICAL_MARKS if m in narr]
+    n_marks = len(marks) + (1 if _CLASSICAL_SERI_RE.search(narr) else 0)
+    if n_marks < _CLASSICAL_MIN_MARKS:
+        return []
+    risky = [c for c in _CLASSICAL_KANJI if c in narr]
+    if not risky:
+        return []
+    # cloud で開かれていれば対処済み。cloud 未記入 (= Chirp に丸投げ) は未対処。
+    if cloud and not any(c in cloud for c in risky):
+        return []
+    return [
+        {
+            "type": "classical_quote",
+            "scene_id": sid,
+            "index": idx,
+            "surface": "/".join(marks[:4]) or "せり",
+            "detail": narr[:60],
+            "note": (
+                "文語 (漢文書き下し) の引用が narration_speech_cloud で かな化されて "
+                "いません。文語は語彙も活用も現代語と違うので Chirp は語単位でなく "
+                "**引用のほぼ全語**を外します (ある回: 側=かたわら を誤読)。"
+                "引用部分をまるごと平仮名で書いてください (字幕=narration は漢字のまま)"
+            ),
+        }
+    ]
+
+
+def _scan_itta(sid, idx, narr, cloud):
+    """多読み「行った」(おこなった / いった) が cloud で未固定なら WARN。
+
+    ある回「シローがアーベルとガロアの仕事について行った講義」が **いった** と
+    読まれた (出荷 wav STT が「について言った講義」と書き起こした 2026-08-19)。cloud
+    reading lint は当時この語を持っておらず、警告を一度も出していない。
+
+    両方の読みが実在するので強制はしない。全67話の narration での 9 件を実測すると
+    おこなった 5 (全体講演を行った / オイラーが行ったのは / リーマンが行ったのは x2 /
+    巡礼を行った) 対 いった 3 (置換を続けて行ったとき / 線が行ったり来たり /
+    先を行った考え)。文脈依存なので `_READING_OVERRIDES` には入れられない。
+    """
+    if not narr or "行った" not in narr:
+        return []
+    read_src = cloud if cloud else narr
+    if "おこなった" in read_src or "いった" in read_src:
+        return []
+    i = narr.index("行った")
+    return [
+        {
+            "type": "polyphone",
+            "scene_id": sid,
+            "index": idx,
+            "surface": "行った",
+            "detail": narr[max(0, i - 14) : i + 14],
+            "note": (
+                "多読み「行った」の読みが narration_speech_cloud に無い (Chirp 任せ)。"
+                "誤読リスク: 行った=おこなった(実施した)/いった(移動した)。ある回で "
+                "「仕事について行った講義」が イッタ と読まれた (出荷 wav STT)。"
+                "文脈に応じ おこなった または いった を明示"
+            ),
+        }
+    ]
+
+
+def _scan_bare_kyuu(sid, idx, narr, cloud):
+    """単独の「球」(きゅう / たま) が cloud で未固定なら WARN。
+
+    ある回「直線と球を一対一に対応させ、接する球が…」が **たま** と読まれた
+    (初回ビルドの STT が「直線と玉を」と書き起こし、user が通し視聴で指摘 2026-08-19)。
+
+    `_iter_bare_kanji` を通すのは複合語を壊さないため。全67話の narration に 球 は 103 件
+    あるが、地球/半球/球面/球体/野球 等は前後が漢字なので除外され、裸の 球 だけが残る。
+    根 と同じ理由で読みは強制しない (数学では きゅう だが「玉」的な比喩も原理的にはありうる)。
+    """
+    if not narr:
+        return []
+    read_src = cloud if cloud else narr
+    for i in _iter_bare_kanji(narr, "球"):
+        if "きゅう" in read_src or "たま" in read_src:
+            return []
+        return [
+            {
+                "type": "polyphone",
+                "scene_id": sid,
+                "index": idx,
+                "surface": "球",
+                "detail": narr[max(0, i - 14) : i + 14],
+                "note": (
+                    "多読み「球」の読みが narration_speech_cloud に無い (Chirp 任せ)。"
+                    "誤読リスク: 球=きゅう(数学の球)/たま。ある回で「直線と球を」が "
+                    "タマ と読まれた (出荷 wav STT)。文脈に応じ きゅう を明示。"
+                    "**置換するなら 地球/半球/球面 等の複合語を壊さないこと**"
+                ),
+            }
+        ]
+    return []
 
 
 def _scan_kana_only_particle(sid, idx, narr, cloud):
@@ -976,32 +1477,82 @@ def parse_high_risk_entry(entry):
     return surface, reading
 
 
+def load_episode_forced_readings(scene_path: str) -> frozenset:
+    """scene_definition.json の隣の episode_config.json の cloud_reading_overrides の表層。
+
+    そこに書いた語は cloud_tts が SSML <phoneme> で合成時に固定するので、
+    narration_speech_cloud に平仮名が無くても「未固定」ではない (ある回: 十分/四つ)。
+    config が無い/壊れている場合は空 (この lint を落とさない)。
+    """
+    # 読みは cloud_reading_config に 1 本化 (壊れた config は向こうが WARN、ここは空)
+    return frozenset(load_cloud_reading_config(scene_path).forced_surfaces)
+
+
 def load_high_risk_words(scene_path: str) -> list:
     """scene_definition.json の隣の episode_config.json から対象語を読む。
 
     config が無い/壊れている場合は空リスト (この lint を落とさない)。
     """
-    cfg_path = os.path.join(os.path.dirname(os.path.abspath(scene_path)), "episode_config.json")
-    try:
-        with open(cfg_path, encoding="utf-8") as f:
-            config = json.load(f)
-    except Exception:
-        return []
     out = []
-    for entry in config.get("pronunciation_high_risk") or []:
+    for entry in load_cloud_reading_config(scene_path).high_risk:
         parsed = parse_high_risk_entry(entry)
         if parsed:
             out.append(parsed)
     return out
 
 
-def _scan_high_risk_unpinned(sid, idx, narr, cloud, high_risk):
-    """(10) config が名指しした危険語が cloud に元の表記のまま残っていれば WARN。"""
+_PARTICLE_HA_BEFORE_HA_RE = re.compile(r"[ぁ-ん]は(?=は)")
+
+
+def _scan_particle_ha_before_ha(sid, idx, narr, cloud):
+    """(9b) かなの並びの中の助詞「は」の直後が「は」で始まる語 → Chirp が ハ と読む。
+
+    ある回: `端` を `はし` とかなで直した結果 `たばにははしが` となり、
+    **助詞が ハ に壊れた** (出荷 wav の STT で 2 回とも ニハハシ。読点を打つと ニワハシ)。
+    かな化は語の内部だけの操作ではなく、**隣接する助詞の区切りを変える**。
+
+    (8) `kana_only_particle` は行全体のかな率で見るので、行の一部だけがかなの
+    今回の形には沈黙する。ここは**局所**だけを見る。
+
+    較正: 出荷済み cloud 2,910 行で 1 件のみ。助詞の前が漢字/カタカナなら形態素の
+    切れ目が立つので対象外にしてある (前を平仮名に限らないと 153 件に膨らむ)。
+    """
+    if not cloud:
+        return []
+    m = _PARTICLE_HA_BEFORE_HA_RE.search(cloud)
+    if not m:
+        return []
+    return [
+        {
+            "type": "particle_ha_before_ha",
+            "scene_id": sid,
+            "index": idx,
+            "surface": cloud[m.start() : m.start() + 3],
+            "detail": cloud[max(0, m.start() - 10) : m.start() + 12],
+            "note": (
+                "かなの並びの中で助詞「は」の直後が「は」で始まる語になっている。"
+                "形態素の切れ目が立たず Chirp が助詞を ハ と読む (ある回で出荷まで漏れた)。"
+                "対処: 助詞のあとに読点を打つ (「には、はしが」)。"
+                "読点は尺を伸ばさず、`にわ` 表記のような語中変換の危険も無い"
+            ),
+        }
+    ]
+
+
+def _scan_high_risk_unpinned(sid, idx, narr, cloud, high_risk, episode_forced=()):
+    """(10) config が名指しした危険語が cloud に元の表記のまま残っていれば WARN。
+
+    固定済みの判定は polyphone と同じ `is_reading_pinned` (かな / global SSML /
+    episode SSML)。以前はかなの層しか見ず、`cloud_reading_overrides` で固定した語が
+    `pronunciation_high_risk` にも書いてあると偽警告になっていた。
+    """
     if not cloud or not high_risk:
         return []
     out = []
     for surface, reading in high_risk:
-        if surface in cloud and reading not in cloud:
+        if surface in cloud and not is_reading_pinned(
+            surface, (reading,), narr, cloud, ssml_episode=episode_forced
+        ):
             out.append(
                 {
                     "type": "high_risk_unpinned",
@@ -1049,6 +1600,66 @@ def _scan_wording_divergence(sid, idx, narr, cloud):
                         f"cloud にだけ「{w}」がある (narration に無い)。読みの明示ではなく"
                         "語の言い換えになっており、字幕と音声が別の語を伝える。"
                         "narration と同じ語に戻す (読みを変えたいなら平仮名で書く)"
+                    ),
+                }
+            )
+    return out
+
+
+# 合成時に SSML phoneme で読みが固定される語 (cloud_tts._READING_OVERRIDES)。
+# import 失敗時は空 dict にして、この scanner だけ黙って no-op にする。
+try:
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
+    )
+    from cloud_tts import _READING_OVERRIDES as _FORCE_READINGS
+except Exception:
+    _FORCE_READINGS = {}
+
+
+def _scan_kana_over_force(sid, idx, narr, cloud):
+    """(19) force 層がある語をわざわざ かなに開いて壊している。
+
+    `cloud_tts._READING_OVERRIDES` に載っている語は、合成直前に SSML
+    `<phoneme alphabet="yomigana">` で読みが固定される。**漢字のまま渡すのが正解**で、
+    親切のつもりで `narration_speech_cloud` に かな を直書きすると force 層の対象から
+    外れ、素の かな として読まれる。
+
+    ある回は「一度離れてから」を `いちどはなれてから` と開いた結果、Chirp が
+    **「いちど**あ**なれてから」** と読んだ。同じ回の `person_07` は漢字のまま
+    「一度離れ、」で**正しく読まれており**、かな直書きだけが壊れたという対照が
+    出荷 wav に残っている。かな は「は」が助詞に見えるなど別の曖昧さを持ち込むので、
+    **force 層がある語では漢字が優れる**。
+
+    判定は決定論: narration に override 対象の語があり、cloud 側ではその語が消えて
+    読み (かな) に置き換わっていれば発火。
+    """
+    if not cloud or not narr:
+        return []
+    out = []
+    for word, yomi in _FORCE_READINGS.items():
+        # 壊れる機構は「かなに開いた結果 は が助詞に見えて弱まる」こと。
+        # 出荷 69 話で素の一致は 16 件出るが、そのうち は/へ を含むのは ある回の
+        # 「いちどはなれ」だけで、他 (ひせんけい/そうず/にじょう/じょしゅ…) は
+        # user の耳でも正しく読まれている。**述語を機構に合わせて は を含む読みだけに
+        # 絞る** -- 素の一致で警告すると、動いているものまで鳴らして lint 全体の
+        # 信用を落とす。へ を含む「そうへいめん」も出荷 wav では正読だったので外した
+        # (語中の へ は助詞に見えない)。較正後の出荷 69 話での発火は 0 件。
+        if "は" not in yomi:
+            continue
+        if word in narr and word not in cloud and yomi in cloud:
+            out.append(
+                {
+                    "type": "kana_over_force",
+                    "scene_id": sid,
+                    "index": idx,
+                    "surface": f"{word} -> {yomi}",
+                    "detail": cloud,
+                    "note": (
+                        f"「{word}」は合成時の force 層 (SSML phoneme) で読みが固定される。"
+                        f"cloud で かな に開くと force の対象から外れ、素の かな として"
+                        f"読まれて別の誤読を招く (ある回「一度離れて」-> いちどあなれて)。"
+                        f"**漢字のまま**にする"
                     ),
                 }
             )
@@ -1140,10 +1751,33 @@ def run_lint(scene_path: str) -> list:
 
     # episode_config が名指しした危険語 (隣の episode_config.json)。無ければ空。
     high_risk = load_high_risk_words(scene_path)
+    # episode_config.cloud_reading_overrides (SSML で合成時固定) は多読み検査で固定済み扱い。
+    episode_forced = load_episode_forced_readings(scene_path)
 
     warnings = []
+    # cloud 配列の長さが narration と違う scene は、合成器がその配列を捨てて
+    # narration_speech / narration を喋る。cloud に書いた読みは 1 つも効いていない。
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            if cloud_array_status(scene) == "length_mismatch":
+                n_c = len(scene.get("narration_speech_cloud") or [])
+                n_n = len(scene.get("narration") or [])
+                warnings.append(
+                    {
+                        "type": "cloud_length_mismatch",
+                        "scene_id": scene.get("scene_id", "?"),
+                        "index": 0,
+                        "surface": "",
+                        "detail": f"narration_speech_cloud {n_c} 文 / narration {n_n} 文",
+                        "note": (
+                            "長さが違うので合成器はこの cloud 配列を捨て、narration_speech か narration を"
+                            "喋る (cloud に書いた読みは効かない)。対処: 文の数を narration と揃える"
+                        ),
+                    }
+                )
     for sid, idx, narr, cloud in _iter_scenes(scene_def):
-        warnings.extend(_scan_polyphone(sid, idx, narr, cloud))
+        warnings.extend(_scan_polyphone(sid, idx, narr, cloud, episode_forced))
+        warnings.extend(_scan_letter_long_vowel(sid, idx, narr, cloud))
         warnings.extend(_scan_kei_unit(sid, idx, narr, cloud))
         warnings.extend(_scan_standalone_num(sid, idx, narr, cloud))
         warnings.extend(_scan_homophone(sid, idx, narr, cloud))
@@ -1154,12 +1788,18 @@ def run_lint(scene_path: str) -> list:
         warnings.extend(_scan_rephrase_risk(sid, idx, narr, cloud))
         warnings.extend(_scan_raw_formula(sid, idx, narr, cloud))
         warnings.extend(_scan_bare_fraction(sid, idx, narr, cloud))
+        warnings.extend(_scan_digit_fraction(sid, idx, narr, cloud))
         warnings.extend(_scan_bare_kaku(sid, idx, narr, cloud))
         warnings.extend(_scan_bare_kon(sid, idx, narr, cloud))
+        warnings.extend(_scan_itta(sid, idx, narr, cloud))
+        warnings.extend(_scan_classical_quote(sid, idx, narr, cloud))
+        warnings.extend(_scan_bare_kyuu(sid, idx, narr, cloud))
+        warnings.extend(_scan_kana_over_force(sid, idx, narr, cloud))
         warnings.extend(_scan_comma_elongation(sid, idx, narr, cloud))
         warnings.extend(_scan_kana_only_particle(sid, idx, narr, cloud))
+        warnings.extend(_scan_particle_ha_before_ha(sid, idx, narr, cloud))
         warnings.extend(_scan_wording_divergence(sid, idx, narr, cloud))
-        warnings.extend(_scan_high_risk_unpinned(sid, idx, narr, cloud, high_risk))
+        warnings.extend(_scan_high_risk_unpinned(sid, idx, narr, cloud, high_risk, episode_forced))
     # scene 単位 (隣接要素比較) の scan
     for section in scene_def.get("sections", []):
         for scene in section.get("scenes", []):
@@ -1169,10 +1809,145 @@ def run_lint(scene_path: str) -> list:
     return warnings
 
 
+# ---- (11) 合成後 STT 用の誤読表 ----
+# (surface, 正読カタカナ, [STT が書いた誤読カタカナ], note)。多読み表 _POLYPHONE (合成前 lint) と
+# 同じ語が 15 件重なる。前は 2 ファイルに別々に書かれていて、読みが食い違っても誰も気づけなかった。
+# ここに置き、stt_qa / verify_shipped_audio は stt_misread_checks() で導出する。
+# 表に無い語の合成前 lint が無い (外から / 外国 等は文脈依存で静的には言えない) のは意図。
+# narration の表層 -> (期待カタカナ, [誤読カタカナ...], note)。多読み漢字の
+# 文脈依存誤読を、narration に surface があり STT に誤読カタカナが出た場合に
+# WARN する。surface は誤読が起きる文脈に限定して
+# FP を避ける (例: 「大学に入」= 入学 = はいる)。カタカナ照合は空白/句読点を
+# 除去して行う (_norm_kana)。実測で FP を確認してから足すこと。
+_STT_MISREAD_ROWS = [
+    (
+        "主著",
+        "シュチョ",
+        ["シュチョー", "シュチョウ", "シチョウ", "シチョー", "主張"],
+        "主著=しゅちょ が『しゅちょう』(主張) 化した恐れ (ある回 scene wav『シチョウ』+ "
+        "出荷 wav『主張』の 2 サンプルで確定)。今後のビルドは cloud_tts._READING_OVERRIDES "
+        "の SSML phoneme で固定済。出荷済み分の再ビルドは user 判断",
+    ),
+    (
+        "大学に入",
+        "ダイガクニハイレ",
+        ["ダイガクニイレ"],
+        "入=はいる(入学) が『いれ』化した恐れ。narration_speech_cloud で『はいれ』に固定",
+    ),
+    (
+        "愛では",
+        "アイデワ",
+        ["メデワ", "メデ"],
+        "愛=あい が動詞『愛でる(めで)』化した恐れ。『あいでは』に固定",
+    ),
+    ("の友", "ノトモ", ["ノユウ", "ノユー"], "友=とも(名詞) が『ゆう』化した恐れ。『とも』に固定"),
+    (
+        "私講師",
+        "ノシコーシ",
+        ["ワタクシコーシ", "ワタクシコウシ"],
+        "私講師=しこうし の 私 が『わたくし』化した恐れ。『しこうし』に固定",
+    ),
+    (
+        "正教授",
+        "セイキョージュ",
+        ["ショーキョージュ", "ショウキョージュ"],
+        "正=せい が『しょう』化した恐れ。『せいきょうじゅ』に固定",
+    ),
+    (
+        "を通って",
+        "トオッテ",
+        ["カヨッテ", "ツウジテ", "ツージテ"],
+        "通=とおる が『かよう/つうじる』化した恐れ。『とおって』に固定",
+    ),
+    ("を通り", "トオリ", ["カヨイ"], "通=とおる が『かよう』化した恐れ。『とおり』に固定"),
+    # 外 = そと/がい/はず の多読み (で surface)。読み自体は正しく出たが
+    # 多読みの常連なので backstop。※ そ->ぞ の濁り(voicing)は STT が清音カタカナ(ソト)に
+    # 書き起こすため、ここでは捕まらない = 耳 spot-check の領域。
+    (
+        "外から",
+        "ソトカラ",
+        ["ガイカラ", "ホカカラ"],
+        "外=そと(外から) が がい/ほか 化した恐れ。『そとから』に固定",
+    ),
+    (
+        "を外れ",
+        "ハズレ",
+        ["ガイレ", "ソトレ"],
+        "外れ=はずれ が がい/そと 化した恐れ。『はずれ』に固定",
+    ),
+    (
+        "外国",
+        "ガイコク",
+        ["ソトクニ", "ホカクニ", "ソトコク"],
+        "外国=がいこく が そと/ほか 化した恐れ。『がいこく』に固定",
+    ),
+    # --- user 耳 / 出荷 wav STT 検出。cloud_reading_lint の
+    #     合成前 advisory を、実 wav でも backstop する層 (決定打=実 wav STT)。---
+    (
+        "第九巻",
+        "ダイキュウカン",
+        ["ダイクカン", "ダイクカ"],
+        "第九巻=だいきゅうかん の 九 が『く』化した恐れ (ある回 STT『大区間』)。『だいきゅうかん』に固定",
+    ),
+    (
+        "何ひとつ",
+        "ナニヒトツ",
+        ["トヒトツ"],
+        "何ひとつ=なにひとつ の 何 が脱落し『とひとつ』化した恐れ。『なにひとつ』に固定",
+    ),
+    # --- user が耳で見つけた。**どれも辞書に無く、合成前も合成後も
+    #     一件も警告できなかった**。同じ穴を次で開けないための backstop。---
+    (
+        "黒板",
+        "コクバン",
+        ["クロイタ"],
+        "黒板=こくばん が『くろいた』化した恐れ (ある回、user 耳)。『こくばん』に固定",
+    ),
+    (
+        "道路工夫",
+        "コウフ",
+        ["クフウ"],
+        "工夫=こうふ(労働者) が『くふう』化した恐れ (ある回、user 耳)。『こうふ』に固定",
+    ),
+    (
+        "へ行って",
+        "イッテ",
+        ["オコナッテ"],
+        "行=いく が『おこなう』化した恐れ (ある回、user 耳)。『いって』に固定",
+    ),
+    (
+        "に行って",
+        "イッテ",
+        ["オコナッテ"],
+        "行=いく が『おこなう』化した恐れ。『いって』に固定",
+    ),
+    (
+        "に通った",
+        "カヨッタ",
+        ["トオッタ"],
+        "通=かよう が『とおる』化した恐れ (ある回、user 耳)。『かよった』に固定"
+        " ※『筋の通った』は とおった が正しいので混同しないこと",
+    ),
+    (
+        "塩水",
+        "シオミズ",
+        ["エンスイ"],
+        "塩水=しおみず が『えんすい』化した恐れ (ある回、出荷 STT で実測)。『しおみず』に固定",
+    ),
+]
+
+
+def stt_misread_checks() -> list:
+    """stt_qa._READING_CHECKS の形 (surface, correct, wrongs, note) で返す。"""
+    return [tuple(row) for row in _STT_MISREAD_ROWS]
+
+
 _CATEGORY_TAG = {
     "polyphone": "多読み未固定",
+    "letter_long_vowel": "字母の長音(エー→エイ)",
     "high_risk_unpinned": "config指定の読みが未固定",
     "kana_only_particle": "全文かな(助詞ha化)",
+    "particle_ha_before_ha": "助詞はの直後がは(かな並び)",
     "wording_divergence": "字幕と音声で語が違う",
     "kei_unit": "位(京=けい)",
     "standalone_num": "多読み(数=かず/すう)",
@@ -1183,10 +1958,16 @@ _CATEGORY_TAG = {
     "blanket_wa": "一括は→わ",
     "inline_particle_wa": "助詞は→わ過剰変換",
     "rephrase_risk": "発音リスク(言い換え推奨)",
-    "raw_formula": "生記号(L=T-V/f'(x)等)",
+    "raw_formula": "生記号(L=T-V/f'(x)/π/＝等)",
     "bare_fraction": "生分数(N/M)",
+    "digit_fraction": "分数(算用数字2桁以上)",
     "comma_elong": "コンマ伸ばし",
     "adjacent_dup": "隣接文重複",
+    "classical_quote": "文語引用",
+    "cloud_length_mismatch": "cloud配列の長さ不一致(合成で捨てられる)",
+    # (2026-09-19): emit されるのにタグが無かった 1 種。回帰 check_reading_tables が
+    # 「emit される type == _CATEGORY_TAG のキー」を固定する (doc の系統数はここから数える)。
+    "kana_over_force": "force語のかな直書き(SSMLと二重)",
 }
 
 

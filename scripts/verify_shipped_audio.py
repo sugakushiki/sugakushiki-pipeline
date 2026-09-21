@@ -28,11 +28,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Reuse the exact STT + reading-check corpus the scene-wav QA uses.
 from stt_qa import (
     _READING_CHECKS,
-    _STT_RULES,
-    _is_katakana_mode,
     _load_gemini_key,
     _norm_kana,
     _transcribe,
+    collect_ha_final_names,
+    scan_stt_rules,
 )
 
 
@@ -60,27 +60,26 @@ def _extract(video: str, start: float, dur: float, out_wav: str) -> bool:
     return os.path.exists(out_wav) and os.path.getsize(out_wav) > 0
 
 
-def _check_transcript(transcript: str, narr_text: str) -> list:
+def _check_transcript(transcript: str, narr_text: str, ha_names=frozenset()) -> list:
     """Run the stt_qa corpus on one transcript. Returns (name, ctx, note) hits."""
-    hits = []
-    # An earlier episode FP guard, same as stt_qa: when Gemini transcribes in katakana-particle
-    # mode it spells every topic は as ハ regardless of what was actually spoken, so
-    # the particle rules cannot discriminate there. This checker imported the corpus
-    # but not the guard, which made the SHIPPED-audio check - the one CLAUDE.md calls
-    # decisive - noisier than the scene-wav check it is meant to backstop.
-    km = _is_katakana_mode(transcript)
-    for rule in _STT_RULES:
-        if rule.get("katakana_unreliable") and km:
-            continue
-        for m in rule["regex"].finditer(transcript):
-            ctx = transcript[max(0, m.start() - 6) : m.end() + 6]
-            hits.append((rule["name"], ctx, rule["note"]))
+    # Particle-rule judgement is the SHARED scan_stt_rules implementation. An earlier episode:
+    # this checker imported the corpus but not the katakana-mode guard, which made
+    # the SHIPPED-audio check - the one CLAUDE.md calls decisive - noisier than the
+    # scene-wav check it is meant to backstop. Sharing the single implementation
+    # makes that
+    # divergence class unrepeatable.
+    hits = scan_stt_rules(transcript, ha_names)
     t_norm = _norm_kana(transcript)
     for surface, correct, wrongs, note in _READING_CHECKS:
         if surface not in narr_text:
             continue
         hit = [w for w in wrongs if w in t_norm]
-        if hit and correct not in t_norm:
+        # stt_qa と同じ prefix-collision 対策: 正読が誤読の部分文字列 (シュチョ ⊂
+        # シュチョー) でも検出できるよう、誤読ヒットを除いた残りで correct を判定。
+        t_wo_hit = t_norm
+        for w in hit:
+            t_wo_hit = t_wo_hit.replace(w, "")
+        if hit and correct not in t_wo_hit:
             hits.append((f"misread:{surface}", f"STT={','.join(hit)} (expect {correct})", note))
     return hits
 
@@ -138,6 +137,8 @@ def main() -> int:
     scenes_by_id = {
         s.get("scene_id"): s for sec in scene_def.get("sections", []) for s in sec.get("scenes", [])
     }
+    # ある回: suppress particle-ha FPs on names ending in ハ (バナッハ), same as stt_qa.
+    ha_names = collect_ha_final_names(scene_def)
 
     warnings = []
     report_lines = []
@@ -165,7 +166,7 @@ def main() -> int:
         narr_text = " ".join((scenes_by_id.get(sid, {}) or {}).get("narration", []) or []).replace(
             "|", ""
         )
-        hits = _check_transcript(transcript, narr_text)
+        hits = _check_transcript(transcript, narr_text, ha_names)
         if hits:
             print(f"  [WARN] {sid}: {len(hits)} suspicious reading(s)")
             for name, ctx, note in hits:

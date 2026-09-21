@@ -27,6 +27,7 @@ Requires: FFmpeg in PATH. Manim required unless --skip-manim.
 """
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -516,7 +517,7 @@ def generate_text_overlay(
             im = render_mathtext_png(text, fontsize=font_size, color_hex=_rgb_to_hex(color_rgb))
             return {"is_tex": True, "image": im, "height": im.height, "widths": [im.width]}
         lines = wrap_text(text, font, wrap_width)
-        # misreading: orphan-line guard. A block wrapping to a final line of ONE character
+        # An earlier episode: orphan-line guard. A block wrapping to a final line of ONE character
         # (intro_04 "…まとめ上げた" -> "…まとめ上げ" + lone "た") reads as a jarring stray
         # line. Deterministic warn at render (exact font metrics); fix by adding a manual
         # \n at a natural break or shortening. Not auto-fixed (rebalance would fight 禁則).
@@ -1000,7 +1001,9 @@ def generate_manim(
             return
 
         # Adjust duration: pad or trim to match timing.json
-        _adjust_duration(manim_output, output_path, duration, width, height, fps)
+        _adjust_duration(
+            manim_output, output_path, duration, width, height, fps, overrun_label=scene_id
+        )
 
         # This scene rendered for real, so it is no longer a placeholder.
         _clear_manim_fallback(output_path, scene_id)
@@ -1057,7 +1060,13 @@ _DEADAIR_HITS: list[str] = []
 
 
 def _adjust_duration(
-    input_path: str, output_path: str, target_duration: float, width: int, height: int, fps: int
+    input_path: str,
+    output_path: str,
+    target_duration: float,
+    width: int,
+    height: int,
+    fps: int,
+    overrun_label: str | None = None,
 ):
     """Adjust video duration to match target: trim if longer, pad with freeze-frame if shorter.
 
@@ -1068,7 +1077,9 @@ def _adjust_duration(
     import shutil
 
     try:
-        _adjust_duration_impl(input_path, output_path, target_duration, width, height, fps)
+        _adjust_duration_impl(
+            input_path, output_path, target_duration, width, height, fps, overrun_label
+        )
     except _FFmpegTimeout as exc:
         print(f"    [WARN] {exc} -> keeping un-adjusted render")
         if os.path.abspath(input_path) != os.path.abspath(output_path):
@@ -1076,7 +1087,13 @@ def _adjust_duration(
 
 
 def _adjust_duration_impl(
-    input_path: str, output_path: str, target_duration: float, width: int, height: int, fps: int
+    input_path: str,
+    output_path: str,
+    target_duration: float,
+    width: int,
+    height: int,
+    fps: int,
+    overrun_label: str | None = None,
 ):
     import shutil
 
@@ -1105,6 +1122,18 @@ def _adjust_duration_impl(
         # Can't probe, just copy
         shutil.copy2(input_path, output_path)
         return
+
+    # ある回: Manim の合計アニメ時間が割り当て尺を超えると、この直後の trim が
+    # **末尾を切り落とす**。尺は音声にぴったり合うので (visual mp4 vs timing) は
+    # 素通りし、失われたのが結論や凡例でも誰も気づかない。切り詰める前のここでしか
+    # 判定できないので、超過量を出す。style.pace() を使えば構造的に起きない。
+    if overrun_label and actual_duration - target_duration > 0.3:
+        print(
+            f"    [WARN] {overrun_label}: Manim の尺が割り当てを "
+            f"{actual_duration - target_duration:.2f}s 超過 "
+            f"({actual_duration:.2f}s > {target_duration:.2f}s) -- "
+            f"末尾がこのあと切り詰められます。style.pace() で尺を閉じてください"
+        )
 
     tolerance = 0.5  # seconds
 
@@ -1825,14 +1854,103 @@ def _manim_render_deps(template_path: str, manim_templates_dir: str) -> list:
     return sorted(seen)
 
 
+# (2026-09-19): scene type ごとに「どの関数がレンダするか」。visual_generator.py 自身の
+# レンダコードをキーに入れるための入口。呼び出し閉包 (このモジュール内で呼ぶ関数) を辿る。
+_RENDERER_ENTRY: dict[str, tuple[str, ...]] = {
+    "ken_burns": ("generate_ken_burns",),
+    "text_overlay": ("generate_text_overlay",),
+    "manim": ("generate_manim",),
+    "pillow_chart": ("generate_pillow_chart",),
+    "route_map": ("generate_route_map", "generate_ken_burns"),
+    "blender": ("generate_blender",),
+}
+# 失敗時の placeholder を作る関数。成功したレンダの中身には効かないので閉包から外す
+# (外さないと text_overlay を直すたびに manim 全 scene が再レンダになる)。
+_FALLBACK_FUNCS = {"generate_text_overlay", "_generate_stub_video", "_generate_black_placeholder"}
+_renderer_hash_cache: dict[str, str] = {}
+_font_fp_cache: dict[str, str] = {}
+
+
+def _renderer_code_hash(vtype: str) -> str:
+    """その scene type をレンダする関数群 (呼び出し閉包) の AST ハッシュ。
+
+    の cache はテンプレ .py / style.py / params / source 画像 / 尺を追跡したが、
+    **このファイルの generate_* 自体は追跡せず**「編集したら --force-regen-visuals」と
+    memory に書いてあるだけだった。忘れると stale な mp4 が黙って再利用される。
+    docstring とコメントは AST に乗らないので、それだけの変更では全再レンダにならない。
+    閉包はモジュール内の関数呼び出し (Name) だけを辿る。属性呼び出しやメソッドは追わない。
+    """
+    if vtype in _renderer_hash_cache:
+        return _renderer_hash_cache[vtype]
+    try:
+        with open(os.path.abspath(__file__), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except (OSError, SyntaxError):
+        return "unknown"
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+
+    def _callees(fn: ast.FunctionDef) -> set[str]:
+        return {
+            c.func.id
+            for c in ast.walk(fn)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in funcs
+        }
+
+    entries = set(_RENDERER_ENTRY.get(vtype, ()))
+    exclude = _FALLBACK_FUNCS - entries
+    todo = [n for n in entries if n in funcs]
+    seen: set[str] = set()
+    while todo:
+        name = todo.pop()
+        if name in seen or name in exclude:
+            continue
+        seen.add(name)
+        todo.extend(_callees(funcs[name]) - seen - exclude)
+    parts = []
+    for name in sorted(seen):
+        fn = funcs[name]
+        body = fn.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(getattr(body[0], "value", None), ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]  # docstring は落とす
+        stripped = ast.FunctionDef(
+            name=fn.name,
+            args=fn.args,
+            body=body or [ast.Pass()],
+            decorator_list=fn.decorator_list,
+            returns=fn.returns,
+        )
+        parts.append(ast.dump(stripped, annotate_fields=False))
+    h = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16] if parts else "none"
+    _renderer_hash_cache[vtype] = h
+    return h
+
+
+def _font_fingerprint() -> str:
+    """字幕/overlay に使うフォントファイルの指紋。無ければ 'none'。"""
+    if "font" not in _font_fp_cache:
+        path = find_font()
+        _font_fp_cache["font"] = _file_fingerprint(path) if path else "none"
+    return _font_fp_cache["font"]
+
+
 def _visual_staleness_key(
     scene: dict,
     duration: float,
     manim_templates_dir: str | None,
     images_dir: str,
     skip_manim: bool = False,
+    legacy: bool = False,
 ) -> str:
     """Content hash (sha256[:16]) of everything that changes a scene's mp4.
+
+    legacy=True reproduces the pre- key (no renderer / font parts) so that
+    entries written before 2026-09-19 can be recognised and migrated instead of
+    re-rendering every shipped scene once (see _visual_cache_hit_or_migrate).
 
     Inputs: the visual block (type/params/source/style/…), the scene duration
     (audio-cascade trigger), and the render backend's external files — for
@@ -1841,8 +1959,11 @@ def _visual_staleness_key(
     render for a text_overlay fallback); for image types the source-image
     fingerprint. A key mismatch => re-render.
 
-    NOT tracked (use --force-regen-visuals after changing these): the renderer
-    code in visual_generator.py itself, fonts, and non-.py assets.
+    (2026-09-19): also tracked -- the renderer code in visual_generator.py
+    itself (AST hash of the vtype's call closure, docstrings/comments excluded)
+    and the font file fingerprint. Editing either re-renders without
+    --force-regen-visuals. Still NOT tracked: non-.py assets other than the
+    source image (e.g. BGM, endcard) -- those do not feed the visual mp4.
     """
     visual = scene.get("visual", {})
     parts = [
@@ -1850,6 +1971,9 @@ def _visual_staleness_key(
         f"dur={round(float(duration), 3)}",
     ]
     vtype = visual.get("type")
+    if not legacy:
+        parts.append(f"renderer={_renderer_code_hash(str(vtype))}")
+        parts.append(f"font={_font_fingerprint()}")
     if vtype == "manim":
         parts.append(f"skip_manim={bool(skip_manim)}")
         tpath = _resolve_manim_template_path(visual, manim_templates_dir)
@@ -1865,6 +1989,27 @@ def _visual_staleness_key(
         parts.append("img=" + (_file_fingerprint(img) if img else "none"))
     payload = "\x00".join(parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _visual_cache_hit_or_migrate(
+    cache: dict | None, scene_id: str, key: str, legacy_key: str, mp4_path: str
+) -> bool:
+    """新キーで一致すれば hit。旧キー基 (レンダコード / フォント抜き) で一致し mp4 の指紋も
+    合うなら、それは 導入前に正しく作られた mp4 なので hit と見なし、entry を新キーに
+    書き換える (導入直後の 1 回だけ出荷 75 話の全 scene が再レンダ判定になるのを防ぐ)。
+    以後はレンダコードやフォントが変われば新キーが変わるので普通に miss になる。
+    """
+    if _visual_cache_entry_matches(cache, scene_id, key, mp4_path):
+        return True
+    if cache is not None and _visual_cache_entry_matches(cache, scene_id, legacy_key, mp4_path):
+        entry = cache.get(scene_id)
+        if isinstance(entry, dict):
+            entry["key"] = key
+        else:
+            cache[scene_id] = {"key": key, "mp4": _file_fingerprint(mp4_path)}
+        print(f"  {scene_id}: 旧キー基の cache entry を新キーに移行 (mp4 は指紋一致)")
+        return True
+    return False
 
 
 def _visual_cache_entry_matches(cache: dict | None, scene_id: str, key: str, mp4_path: str) -> bool:
@@ -2046,8 +2191,11 @@ def main():
             key = _visual_staleness_key(
                 scene, duration, manim_dir, images_dir, skip_manim=args.skip_manim
             )
-            if not args.force_regen_visuals and _visual_cache_entry_matches(
-                visual_cache, scene_id, key, output_file
+            legacy_key = _visual_staleness_key(
+                scene, duration, manim_dir, images_dir, skip_manim=args.skip_manim, legacy=True
+            )
+            if not args.force_regen_visuals and _visual_cache_hit_or_migrate(
+                visual_cache, scene_id, key, legacy_key, output_file
             ):
                 stats[vtype] = stats.get(vtype, 0) + 1
                 reused += 1

@@ -29,6 +29,26 @@ def get_duration(mode):
     return defaults.get(mode, 35)
 
 
+def _params_duration(default):
+    """Scene length from _manim_params.json, falling back to the mode default.
+
+    s3_elements used to skip this and animate for the hardcoded 25s no matter
+    how long the narration was. An earlier episode's math_06 runs 55.7s, so 31.7s (57% of
+    the scene) rendered as a frozen last frame -- the dead-air the pipeline
+    warns about and the exact "末尾静止" pattern the Manim rules forbid.
+    """
+    try:
+        import json
+        import os
+
+        if os.path.exists("_manim_params.json"):
+            with open("_manim_params.json", encoding="utf-8") as f:
+                return float(json.load(f).get("duration") or default)
+    except Exception:
+        pass
+    return float(default)
+
+
 # Red-ish color for ≠ symbol in commutative_compare mode
 NEQ_COLOR = "#e74c3c"
 
@@ -79,7 +99,7 @@ def make_perm_diagram(mapping, center=ORIGIN, scale_factor=0.65, label_text=None
 class PermutationGroupS3Elements(Scene):
     def construct(self):
         self.camera.background_color = BG_COLOR
-        duration = get_duration("s3_elements")
+        duration = _params_duration(get_duration("s3_elements"))
 
         s3_label = MathTex(r"S_3", font_size=52, color=GOLD)
         s3_label.to_edge(UP, buff=0.5)
@@ -122,18 +142,32 @@ class PermutationGroupS3Elements(Scene):
             cycle.next_to(diag, DOWN, buff=0.1)
             diagrams.add(VGroup(diag, cycle))
 
-        for i in range(0, 6, 2):
-            pair = [diagrams[i]]
-            if i + 1 < 6:
-                pair.append(diagrams[i + 1])
-            self.play(*[FadeIn(d) for d in pair], run_time=0.7)
-            self.wait(0.5)
-        self.wait(0.5)
+        # Slack goes into the BODY, never into one trailing wait.
+        # Two phases, both scaled to the real scene length:
+        #   1. the six elements appear one at a time (was: three pairs at a
+        #      fixed 0.7s, which finished in ~4s regardless of duration);
+        #   2. a "飛び石" sweep hops from element to element for whatever time
+        #      is left, so a long narration gets motion instead of a freeze.
+        INTRO, CODA = 0.5, 2.5
+        body = max(4.0, duration - INTRO - CODA)
+        per = min(2.6, (body * 0.5) / len(diagrams))
+        for d in diagrams:
+            fade = min(0.7, per)
+            self.play(FadeIn(d), run_time=fade)
+            if per - fade > 0.05:
+                self.wait(per - fade)
 
-        elapsed = 0.5 + (0.7 + 0.5) * 3 + 0.5
-        remaining = max(0, duration - elapsed - 1.0)
-        if remaining > 0:
-            self.wait(remaining)
+        # FadeIn and Indicate stay in separate plays: Indicate restores the
+        # state recorded at begin(), so sharing a play with FadeIn ends with
+        # the object invisible.
+        sweep = body - per * len(diagrams)
+        i = 0
+        while sweep > 0.05:
+            step = min(1.1, sweep)
+            self.play(Indicate(diagrams[i % len(diagrams)], color=PINK), run_time=step)
+            sweep -= step
+            i += 1
+        self.wait(CODA)
         # End FadeOut removed: leaves the last frame visible for FFmpeg
         # to pad when audio exceeds animation length. Scene transitions
         # are handled at video_assembler time, not inside Manim.

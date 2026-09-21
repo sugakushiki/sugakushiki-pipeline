@@ -55,7 +55,7 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-import cloud_tts  # noqa: E402
+import speech_source  # noqa: E402
 from audio_generator import (  # noqa: E402
     SILENCE_BETWEEN_SENTENCES,
     _wav_fingerprint,  # single source of truth: must match the writer's algorithm
@@ -70,6 +70,11 @@ FLOOR_FRAC = 0.72  # artic < median*FLOOR_FRAC -> intentional drama, left as-is
 ATEMPO_MIN, ATEMPO_MAX = 0.80, 1.25  # atempo safety clamp (audio-quality band)
 CHANGE_EPS = 0.02  # |atempo-1| below this -> treat as no-op (skip re-encode)
 ADJACENT_WARN_PCT = 18.0  # detect: WARN when a non-drama adjacent jump exceeds this
+# 直す目標は報告閾値より tight でなければならない。両者が同じ (どちらも 18%) だと
+# auto-tune は「18% をぎりぎり下回る」強度を選び、13-18% の段差は *狙われず* かつ
+# *報告もされない*。ある回はこの帯に 5 件を残したまま「段差 2 件」と報告し、user が
+# 通し視聴で「速度変化がひどい」と指摘した。tune はこちらを目標にする。
+NORMALIZE_TARGET_PCT = 12.0
 SIL_NOISE, SIL_MIN = "-35dB", "0.18"  # ffmpeg silencedetect params
 BACKUP_DIR = "_prenorm_backup"
 # Episode-level speed PROFILE baselines (detect advisory). Calibrated on shipped
@@ -83,7 +88,12 @@ PROFILE_MAX_MIN = 6.3  # slowest sentence above this -> no slow beats left (paci
 # pre-norm original behind the audio cache's back; if the current text no longer
 # matches that original, leaving the cache intact lets the audio step cache-hit and
 # reuse a STALE wav.
-# So --restore invalidates the cache entries for the sentences it reverts.
+# **2026-09-06**: --restore no longer DISCARDS those entries (that re-synthesized
+# even sentences whose text never changed -> Cloud is non-deterministic -> new
+# misreadings). It now re-points each new-format entry's wav fingerprint at the
+# restored original and leaves its synthesis-text hash alone, so the audio step's
+# own text comparison still catches an earlier episode. Legacy entries (no fingerprint) are
+# still dropped. See _repoint_audio_cache_to_restored.
 AUDIO_CACHE_FILE = "_audio_cache.json"
 # Pause/phrasing anomaly thresholds.
 RUN_ON_MAX_SILENCE = 0.35  # element with a mid-element 。 but < this internal silence -> run-on
@@ -168,21 +178,18 @@ def _internal_kuten(text: str) -> int:
 
 
 def _pick_speech(scene: dict, i: int, n: int) -> str:
-    """Mirror audio_generator.process_scene's Cloud speech-text selection."""
-    nsc = scene.get("narration_speech_cloud")
-    ns = scene.get("narration_speech")
-    if isinstance(nsc, list) and len(nsc) == n:
-        src = nsc[i]
-    elif isinstance(ns, list) and len(ns) == n:
-        src = ns[i]
-    else:
-        src = scene["narration"][i]
-    return cloud_tts.strip_for_cloud(src)
+    """合成器と同じ文を見る。実装は speech_source (ここは薄い呼び出し)。"""
+    return speech_source.pick_speech_text(scene, i, "cloud")
 
 
 def _iter_scenes(scene_def: dict):
-    for section in scene_def.get("sections", []):
-        yield from section.get("scenes", [])
+    """実装は scene_def.iter_scenes (5 か所にあった同じ走査を 1 つに)。"""
+    _src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from scene_def import iter_scenes
+
+    yield from iter_scenes(scene_def)
 
 
 def _measure(scene_def: dict, audio_dir: str) -> list:
@@ -269,13 +276,14 @@ def _autotune(rows: list) -> tuple[float, float]:
     floor_frac = FLOOR_FRAC
     if med > 0 and med * FLOOR_FRAC < raw_min < med * 0.85:
         floor_frac = min(0.86, (raw_min + 0.03) / med)
-    for s in (0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60):
+    # 探索範囲は 0.60 で打ち切られていたので、目標を tight にしても届かなかった。
+    for s in (0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.70, 0.80, 0.85):
         STRENGTH, FLOOR_FRAC = s, floor_frac
         _plan(rows)
         jumps = _adjacent_jumps(rows, med * floor_frac, effective=True)
-        if max((abs(j[5]) for j in jumps), default=0.0) < ADJACENT_WARN_PCT:
+        if max((abs(j[5]) for j in jumps), default=0.0) < NORMALIZE_TARGET_PCT:
             return s, floor_frac
-    STRENGTH, FLOOR_FRAC = 0.60, floor_frac
+    STRENGTH, FLOOR_FRAC = 0.85, floor_frac
     _plan(rows)
     return STRENGTH, FLOOR_FRAC
 
@@ -659,6 +667,9 @@ def cmd_detect(scene_def, audio_dir, report_path, strict) -> int:
     return 1 if ((warn or bwarn or pauses or profile_warn) and strict) else 0
 
 
+_SENTENCE_WAV_RE = re.compile(r".+_\d{3}\.wav$")
+
+
 def _backup_is_stale(audio_dir: str, backup: str) -> bool:
     """A _prenorm_backup/ is stale when the audio was (re)synthesized AFTER the last
     normalization -- e.g. --force-regen-audio, or a build stopped mid-normalize that
@@ -680,8 +691,12 @@ def _backup_is_stale(audio_dir: str, backup: str) -> bool:
     # un-normalized. cmd_apply writes the marker
     # LAST (after atempo + re-concat), so every wav it touched is older than the marker;
     # only a re-synth AFTER this apply produces a wav newer than the marker.
+    # ある回 (再検証で発覚): scene 単位の連結 wav (<sid>.wav) は audio ステップがキャッシュ命中でも
+    # 毎回書き直すので、それを見ると「再合成された」と誤認して **一文も変えていないのに全体を
+    # 掛け直す** (verify run で 62 文が再 atempo され、出荷済み動画と disk の音声がずれた)。
+    # 見るのは文 wav (<sid>_NNN.wav) だけ。
     for name in os.listdir(audio_dir):
-        if not name.endswith(".wav"):
+        if not _SENTENCE_WAV_RE.match(name):
             continue
         p = os.path.join(audio_dir, name)
         if os.path.isfile(p) and os.path.getmtime(p) > m + 1.0:
@@ -703,12 +718,23 @@ def _revert_untouched_from_backup(audio_dir: str, backup: str) -> int:
     old wording. So revert exactly the
     sentences whose live wav is older than the marker -- those are the ones still
     carrying the previous normalization -- and leave anything newer alone.
+
+    **戻り値は {sent_key: 戻した wav のパス}** (2026-09-06 に件数から変更)。呼び出し側が
+    キャッシュをその原本へ向け直せるようにするため ── ここは wav を **キャッシュの
+    背後で** 差し替えるので、向け直さないと次の audio ステップが指紋の不一致を見て
+    **テキストを一文字も変えていない文まで再合成する**。Cloud TTS は非決定的なので
+    その再合成は新しいテイク = 新しい誤読の機会になる。`--restore` 側で同じ欠陥を
+    直したときにこちらを見ておらず、後から実測で再現して気づいた。
+
+    apply の後段 `_refresh_audio_cache_wav_fp` は **atempo をかけた文だけ** を更新するので、
+    「戻したが今回は正規化されなかった」文 (係数が 1 に近い / ドラマ的に遅い) が
+    取り残される。そこがこの欠陥の通り道だった。
     """
     marker = os.path.join(backup, ".applied")
     if not os.path.exists(marker):
-        return 0  # legacy backup: cannot tell what is what, leave the audio as-is
+        return {}  # legacy backup: cannot tell what is what, leave the audio as-is
     m = os.path.getmtime(marker)
-    n = 0
+    reverted = {}
     for base in os.listdir(backup):
         if not base.endswith(".wav"):
             continue
@@ -718,8 +744,125 @@ def _revert_untouched_from_backup(audio_dir: str, backup: str) -> int:
         if os.path.getmtime(live) > m + 1.0:
             continue  # re-synthesized after the last apply: already an original
         shutil.copy2(os.path.join(backup, base), live)
-        n += 1
-    return n
+        reverted[base[:-4]] = live
+    return reverted
+
+
+PLAN_FILE = "plan.json"  # _prenorm_backup/plan.json: 初回正規化の target/strength/floor と係数
+
+
+def _factor_for(artic: float, target: float, strength: float, floor_frac: float) -> float:
+    """1 文の atempo 係数を、保存済みの target/strength/floor から決める (_plan と同じ式)。"""
+    a = artic
+    floor = target * floor_frac
+    if a <= 0 or a < floor:
+        newr = a
+    else:
+        newr = target + (a - target) * (1 - strength)
+    f = (newr / a) if a > 0 else 1.0
+    return max(ATEMPO_MIN, min(ATEMPO_MAX, f))
+
+
+def _save_plan(backup: str, rows: list, target: float, strength: float, floor_frac: float) -> None:
+    plan = {
+        "target": target,
+        "strength": strength,
+        "floor_frac": floor_frac,
+        "sentences": {
+            os.path.basename(r["path"])[:-4]: {"F": r["F"], "artic": r["artic"]} for r in rows
+        },
+    }
+    with open(os.path.join(backup, PLAN_FILE), "w", encoding="utf-8") as f:
+        json.dump(plan, f, ensure_ascii=False, indent=1)
+
+
+def _load_plan(backup: str) -> dict | None:
+    path = os.path.join(backup, PLAN_FILE)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            plan = json.load(f)
+        if not all(k in plan for k in ("target", "strength", "floor_frac", "sentences")):
+            return None
+        return plan
+    except (OSError, ValueError):
+        return None
+
+
+def _apply_incremental(scene_def, audio_dir, timing_path, backup: str, plan: dict) -> int:
+    """再合成された文**だけ**を、初回正規化の係数 (target/strength/floor) で均す。
+
+    従来は stale backup を見ると、未編集の文を原本に戻して episode 全体を測り直し、
+    autotune をやり直して全文に atempo を掛け直していた。target と strength が少し動くので
+    **一文も編集していない 61 文の wav まで変わり**、visual cache が全 scene を再レンダ
+    (24 分)、レビューリールは「全 scene 変更」で作れなかった (ある回: 1 文の修正で 61 分)。
+
+    初回の target/strength/floor を `plan.json` に保存しておき、以後の再合成分はその
+    係数で個別に均す。未編集の文は byte 単位で不変 = visual cache が効き、部分再ビルドは
+    数分、未変更区間の同一性証明が成り立つ。段差が残れば後段の speed_qa が報告する
+    (係数を固定した代償として許容。全体を均し直したいときは --restore してから --apply)。
+    """
+    marker = os.path.join(backup, ".applied")
+    m = os.path.getmtime(marker) if os.path.exists(marker) else 0.0
+    rows = _measure(scene_def, audio_dir)
+    fresh = [r for r in rows if os.path.getmtime(r["path"]) > m + 1.0]
+    target, strength, floor_frac = plan["target"], plan["strength"], plan["floor_frac"]
+    print("=" * 60)
+    print(
+        f"  Cloud speed normalization (incremental): 再合成 {len(fresh)}/{len(rows)} 文を "
+        f"初回の係数 (target={target:.2f} mora/s, strength={strength:.2f}, floor={floor_frac:.2f}) で均す。"
+        "未編集の文には触らない。"
+    )
+    print("=" * 60)
+    changed = []
+    for r in fresh:
+        r["F"] = _factor_for(r["artic"], target, strength, floor_frac)
+        r["change"] = abs(r["F"] - 1.0) > CHANGE_EPS
+        base = os.path.basename(r["path"])
+        dst = os.path.join(backup, base)
+        key = base[:-4]
+        if r["change"]:
+            shutil.copy2(r["path"], dst)  # 新しい原本で上書き (古いテイクを --restore が蘇らせない)
+            _atempo(r["path"], r["F"])
+            changed.append(r)
+            arrow = "SLOW" if r["F"] < 1 else "FAST"
+            print(
+                f"  {base} {arrow} atempo={r['F']:.3f}  ({r['artic']:.2f}->{r['artic'] * r['F']:.2f} mora/s)"
+            )
+        else:
+            if os.path.exists(dst):
+                os.remove(
+                    dst
+                )  # 掛けなかった文の古い原本は残さない (--restore で古いテイクに戻さない)
+            print(f"  {base} keep (atempo={r['F']:.3f}, within band)")
+        plan["sentences"][key] = {"F": r["F"], "artic": r["artic"]}
+    with open(os.path.join(backup, PLAN_FILE), "w", encoding="utf-8") as f:
+        json.dump(plan, f, ensure_ascii=False, indent=1)
+
+    if changed:
+        _refresh_audio_cache_wav_fp(
+            audio_dir, {os.path.basename(r["path"])[:-4]: r["path"] for r in changed}
+        )
+    # 再合成された scene は (atempo の有無に関わらず) 尺が変わっているので繋ぎ直す。
+    fresh_sids = {r["sid"] for r in fresh}
+    for scene in _iter_scenes(scene_def):
+        if scene["scene_id"] in fresh_sids:
+            _reconcat_scene(scene, audio_dir)
+    with open(timing_path, encoding="utf-8") as f:
+        timing = json.load(f)
+    timing = _rebuild_timing(scene_def, audio_dir, timing)
+    with open(timing_path, "w", encoding="utf-8") as f:
+        json.dump(timing, f, ensure_ascii=False, indent=2)
+    print(
+        f"\n  atempo {len(changed)} 文 / 再繋ぎ {len(fresh_sids)} scene; timing.json rebuilt "
+        f"(total={timing['total_duration_minutes']:.2f} min)。未編集の {len(rows) - len(fresh)} 文は不変。"
+    )
+    try:
+        open(marker, "w").close()
+    except OSError:
+        pass
+    return 0
 
 
 def cmd_apply(scene_def, audio_dir, timing_path, force=False, strength=None) -> int:
@@ -729,20 +872,30 @@ def cmd_apply(scene_def, audio_dir, timing_path, force=False, strength=None) -> 
     # pipeline's --normalize-cloud-speed never stacks on a prior --apply -- a benign
     # skip keeps the build going with the already-normalized audio (real errors still
     # return non-zero). To genuinely re-normalize, --restore first, then --apply.
-    # misreading: BUT only skip when the backup is CURRENT. A stopped build / --force-regen
+    # An earlier episode: BUT only skip when the backup is CURRENT. A stopped build / --force-regen
     # can leave a stale backup while the audio is freshly re-synthesized; skipping then
     # ships UN-normalized audio. _backup_is_stale detects that and re-normalizes.
     backup = os.path.join(audio_dir, BACKUP_DIR)
     if os.path.isdir(backup) and not force:
         if _backup_is_stale(audio_dir, backup):
+            # ある回: 初回の係数が plan.json に残っていれば、再合成分だけを増分で均す
+            # (未編集の文は不変 = visual cache が効く)。plan 無しの旧 backup は従来経路。
+            plan = _load_plan(backup)
+            if plan is not None and os.path.exists(os.path.join(backup, ".applied")):
+                return _apply_incremental(scene_def, audio_dir, timing_path, backup, plan)
             reverted = _revert_untouched_from_backup(audio_dir, backup)
+            # 戻した wav へキャッシュを向け直す。ここを飛ばすと、戻したのに今回は
+            # 正規化されなかった文 (後段の _refresh_audio_cache_wav_fp は atempo を
+            # かけた文しか更新しない) が指紋不一致のまま残り、**テキスト未編集なのに
+            # 次の audio ステップで引き直される** (2026-09-06 に実測で再現して修正)。
+            _repoint_audio_cache_to_restored(audio_dir, reverted)
             print(
                 "[SPEED-NORM] stale backup を検出 (前回正規化後に音声が再合成された、"
                 "または marker 無しの旧 backup)。作り直して現在の音声を正規化する。"
             )
             if reverted:
                 print(
-                    f"  再合成されていない {reverted} 文を正規化前の原本に戻してから掛け直す "
+                    f"  再合成されていない {len(reverted)} 文を正規化前の原本に戻してから掛け直す "
                     "(二重の atempo で緩急が潰れるのを防ぐ)。再合成済みの文は新しい音声のまま。"
                 )
             shutil.rmtree(backup, ignore_errors=True)
@@ -815,7 +968,9 @@ def cmd_apply(scene_def, audio_dir, timing_path, force=False, strength=None) -> 
         f"(total={timing['total_duration_minutes']:.2f} min)."
     )
     print(f"  Originals backed up in {backup} (undo with --restore).")
-    # misreading: mark normalization completion. _backup_is_stale compares live wav mtimes
+    # ある回: 初回の係数を残す。以後の再合成分は _apply_incremental がこの係数で均す。
+    _save_plan(backup, rows, target, STRENGTH, FLOOR_FRAC)
+    # An earlier episode: mark normalization completion. _backup_is_stale compares live wav mtimes
     # against this marker to detect audio re-synthesized after this point (stale backup).
     try:
         open(os.path.join(backup, ".applied"), "w").close()
@@ -859,29 +1014,65 @@ def cmd_verify_timing(scene_def, audio_dir, timing_path) -> int:
     return 1
 
 
-def _invalidate_audio_cache(audio_dir: str, sent_keys: list) -> None:
-    """Drop the given sentence keys from audio_generator's cache so the next audio
-    step re-synthesizes them from the current text (their wav content was reverted
-    out-of-band by --restore). On any trouble, remove the whole cache (cold cache is
-    safe: it re-synthesizes everything, never stale)."""
-    if not sent_keys:
-        return
+def _repoint_audio_cache_to_restored(audio_dir: str, key_to_wav: dict) -> None:
+    """--restore で wav を pre-norm 原本に戻したあと、キャッシュをその原本に向け直す。
+
+    **なぜ「捨てる」ではなく「向け直す」なのか** (2026-09-06):
+    従来は復元した文のキャッシュ項目を丸ごと削除していた。安全側ではあるが、
+    **テキストを一文字も変えていない文まで再合成させる**。Cloud TTS は非決定的
+    なので、その再合成は新しいテイクを引く = **新しい誤読が入る機会**になる。
+    ある回では 1 文の修正で 39 文が対象になり、実際に引き直した 1 文が「臨安」を
+    「リンガン」と読むテイクを引いた (出荷前に STT で捕まえた)。
+
+    **ある回のバグを復活させない理由**: ここでは `text` (合成テキストのハッシュ) に
+    触らない。刻まれているのは *その wav を作ったときのテキスト* のハッシュであり、
+    次の audio ステップは **現在のテキスト** から計算し直したハッシュと突き合わせる。
+
+      - テキストが編集されていれば   -> ハッシュ不一致 -> 再合成 (ある回は防がれたまま)
+      - テキストが変わっていなければ -> 一致 + 指紋一致 -> 原本を再利用 (引き直さない)
+
+    `--apply` 側の `_refresh_audio_cache_wav_fp` と対称の操作である。
+
+    **旧形式 (ハッシュ文字列だけの項目) は従来どおり破棄する** —— 指紋の欄が無い
+    ので「wav が差し替わった」ことを次段が検出できず、向け直すと stale な wav を
+    再利用させてしまう (それが ある回そのもの)。
+    """
     path = os.path.join(audio_dir, AUDIO_CACHE_FILE)
     if not os.path.exists(path):
+        return
+    if not key_to_wav:
         return
     try:
         with open(path, encoding="utf-8") as f:
             cache = json.load(f)
         if not isinstance(cache, dict):
             raise ValueError("unexpected audio-cache shape")
-        removed = sum(1 for k in sent_keys if cache.pop(k, None) is not None)
+        repointed = dropped = 0
+        for key, wav in key_to_wav.items():
+            entry = cache.get(key)
+            if entry is None:
+                continue
+            if isinstance(entry, dict):
+                entry["wav"] = _wav_fingerprint(wav)
+                repointed += 1
+            else:  # legacy: bare hash string, no fingerprint -> must not be trusted
+                cache.pop(key, None)
+                dropped += 1
         with open(path, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
-        print(
-            f"[RESTORE] invalidated {removed} audio-cache "
-            f"entr{'y' if removed == 1 else 'ies'} (next audio step re-synthesizes them)."
-        )
+        if repointed:
+            print(
+                f"[RESTORE] re-pointed {repointed} audio-cache entr"
+                f"{'y' if repointed == 1 else 'ies'} at the restored wav "
+                "(text unchanged -> reused, not re-synthesized)."
+            )
+        if dropped:
+            print(
+                f"[RESTORE] dropped {dropped} legacy cache entr"
+                f"{'y' if dropped == 1 else 'ies'} (no fingerprint -> re-synthesize)."
+            )
     except (OSError, ValueError, json.JSONDecodeError):
+        # 判断できないときは丸ごと捨てる (cold cache は安全。全部合成し直すだけ)。
         try:
             os.remove(path)
             print("[RESTORE] audio cache unreadable; removed it entirely (safe cold cache).")
@@ -931,18 +1122,21 @@ def cmd_restore(audio_dir) -> int:
         print(f"[RESTORE] no backup dir at {backup}; nothing to restore.")
         return 0
     n = 0
-    restored_keys = []
+    restored = {}
     for base in os.listdir(backup):
         if base.endswith(".wav"):
-            shutil.copy2(os.path.join(backup, base), os.path.join(audio_dir, base))
-            restored_keys.append(base[:-4])  # sent_key = "<scene>_<NNN>" (filename minus .wav)
+            dst = os.path.join(audio_dir, base)
+            shutil.copy2(os.path.join(backup, base), dst)
+            restored[base[:-4]] = dst  # sent_key = "<scene>_<NNN>" (filename minus .wav)
             n += 1
-    # Invalidate the audio cache for the reverted sentences so the next audio step
-    # re-synthesizes them from the CURRENT text instead of cache-hitting the reverted
-    # (possibly stale) wav. Best-effort: on any error, drop the whole cache (safe).
-    _invalidate_audio_cache(audio_dir, restored_keys)
+    # Point the audio cache at the restored originals instead of discarding it.
+    # The stored synthesis-text hash is left untouched, so the next audio step still
+    # re-synthesizes anything whose TEXT changed while reusing the accepted
+    # take for everything untouched (no non-deterministic re-roll). Legacy entries
+    # without a fingerprint are dropped as before. See the function's docstring.
+    _repoint_audio_cache_to_restored(audio_dir, restored)
     print(f"[RESTORE] restored {n} original sentence wav(s) from {backup}.")
-    # misreading: consume the backup after restoring. Leaving it (with its '.applied' marker)
+    # An earlier episode: consume the backup after restoring. Leaving it (with its '.applied' marker)
     # would make a later --apply see the restored (un-normalized, old-mtime) wavs as
     # "not stale" and skip -- shipping un-normalized audio. A fresh --apply recreates it.
     shutil.rmtree(backup, ignore_errors=True)
@@ -1009,9 +1203,15 @@ def main() -> int:
         if not os.path.exists(timing_path):
             print(f"[SPEED-NORM] ERROR: timing.json not found: {timing_path}")
             return 1
-        return cmd_apply(
-            scene_def, audio_dir, timing_path, force=args.force, strength=args.strength
-        )
+        rc = cmd_apply(scene_def, audio_dir, timing_path, force=args.force, strength=args.strength)
+        if rc == 0:
+            # ある回: --apply の後に判定 sidecar (_speed_qa_verdict.json) を更新しないと、
+            # 手で正規化した回で古い段差数が残り、pipeline の自動再正規化 (backup あり AND
+            # 段差あり) と verify_outputs が正規化前の判定を読む。掛けた直後に
+            # 再測定して report と sidecar を正規化後の値にする。
+            print("\n[SPEED-NORM] 正規化後の再測定 (speed_qa_report / verdict を更新):")
+            cmd_detect(scene_def, audio_dir, report_path, False)
+        return rc
     return cmd_detect(scene_def, audio_dir, report_path, args.strict)
 
 

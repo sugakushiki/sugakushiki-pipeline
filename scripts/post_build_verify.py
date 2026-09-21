@@ -57,6 +57,16 @@ unreviewed Manim frames.
    both pointed at the wrong things; one episode shipped with 6 of 13 images
    signed because only 2 were checked by eye.
 
+12. **subtitles_final.srt vs intro pause**: the bgm step prepends `intro_pause`
+    seconds of video and audio, so `subtitles.srt` (assembled-video times) is early
+    by that much on the final video. The bgm step now writes `subtitles_final.srt`
+    (+intro_pause); this check verifies every cue is shifted by exactly that, and
+    that the first speech onset in output_final.mp4 sits on the first cue.
+
+13. **disk vs shipped**: timing.json の署名が字幕焼き込み時と一致するか、visuals / images が
+    出荷物より新しくないか、文 wav が出荷物より新しいか (ある回再検証: audio ステップだけで
+    62 文が再正規化され、出荷動画と disk がずれうる経路があった)。
+
 This script does not replace human review; it forces a look at every artifact
 before a build is reported as complete.
 
@@ -289,15 +299,56 @@ def extract_manim_frames(ep_dir: Path, out_dir: Path) -> dict:
     }
 
 
-def verify_voicevox_proper_nouns(subject: str) -> dict:
-    """Query VOICEVOX for proper nouns, flag suspicious readings."""
+def _tts_engine(ep_dir: Path | None) -> str:
+    """episode_config.tts.engine (既定 voicevox)。読めなければ voicevox 扱い。"""
+    if ep_dir is None:
+        return "voicevox"
+    config = Path(ep_dir) / "episode_config.json"
+    if not config.exists():
+        return "voicevox"
+    try:
+        with open(config, encoding="utf-8") as f:
+            return str((json.load(f).get("tts") or {}).get("engine") or "voicevox").lower()
+    except Exception:
+        return "voicevox"
+
+
+def voicevox_is_up(timeout: float = 2.0) -> bool:
+    """VOICEVOX (localhost:50021) が応答するか。1 回だけ叩く。"""
+    try:
+        import requests
+
+        return requests.get("http://localhost:50021/version", timeout=timeout).status_code == 200
+    except Exception:
+        return False
+
+
+def verify_voicevox_proper_nouns(subject: str, ep_dir: Path | None = None, *, probe=None) -> dict:
+    """Query VOICEVOX for proper nouns, flag suspicious readings.
+
+    (2026-09-19): engine=cloud の回では VOICEVOX は使っていないので SKIP。
+    VOICEVOX が起動していなければ先に 1 回の probe で SKIP する ── 以前は 22 語それぞれが
+    接続タイムアウト (実測 4 秒) を待って **合計 90 秒**かかり、しかも全語が error なのに
+    suspicious が空だから **OK を返していた** (「指摘ゼロ」と「検査していない」の混同)。
+    回帰スイートの 220 秒のうち 191 秒がこれだった。probe はテストから差し替えられる。
+    """
     try:
         import requests
     except ImportError:
         return {"status": "SKIP", "reason": "requests not available"}
 
+    engine = _tts_engine(ep_dir)
+    if engine != "voicevox":
+        return {"status": "SKIP", "reason": f"engine={engine} (VOICEVOX は使っていない)"}
+    if not (probe or voicevox_is_up)():
+        return {
+            "status": "SKIP",
+            "reason": "VOICEVOX が起動していない (localhost:50021 無応答)。固有名詞の読みは未検証",
+        }
+
     results = {}
     suspicious = []
+    errors = []
     for noun in [subject] + PROPER_NOUNS_TO_VERIFY:
         try:
             r = requests.post(
@@ -329,10 +380,19 @@ def verify_voicevox_proper_nouns(subject: str) -> dict:
                     suspicious.append(f"{noun} → {kanas} (first char mismatch)")
         except Exception as e:
             results[noun] = f"(error: {e})"
+            errors.append(noun)
+    # 問い合わせに失敗した語は「読みが正しい」ことにしない。全部失敗なら検査していない。
+    if errors and len(errors) == len(results):
+        return {
+            "status": "SKIP",
+            "reason": f"全 {len(errors)} 語の問い合わせに失敗",
+            "results": results,
+        }
     return {
-        "status": "WARN" if suspicious else "OK",
+        "status": "WARN" if (suspicious or errors) else "OK",
         "results": results,
         "suspicious": suspicious,
+        "unverified": errors,
     }
 
 
@@ -536,6 +596,197 @@ def check_chapter_timestamps(ep_dir: Path) -> dict:
     return result
 
 
+def _first_speech_onset(video: Path) -> float | None:
+    """最終動画の声の立ち上がり (秒)。BGM を highpass で薄めて silencedetect の最初の silence_end。
+    冒頭に無音が無ければ 0.0。ffmpeg が無い/失敗なら None (advisory なので黙って諦める)。"""
+    try:
+        out = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "info",
+                "-i",
+                str(video),
+                "-t",
+                "8",
+                "-af",
+                "highpass=f=300,silencedetect=n=-30dB:d=0.15",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        ).stderr
+    except (OSError, subprocess.SubprocessError):
+        return None
+    starts = [float(m) for m in re.findall(r"silence_start: ([0-9.]+)", out)]
+    ends = [float(m) for m in re.findall(r"silence_end: ([0-9.]+)", out)]
+    if starts and starts[0] < 0.05 and ends:
+        return ends[0]
+    return 0.0
+
+
+def check_final_srt(ep_dir: Path) -> dict:
+    """subtitles_final.srt は最終動画 (冒頭ポーズ入り) の時刻になっているか。
+
+    subtitles.srt は output_assembled の時刻で、bgm ステップが intro_pause 秒の冒頭ポーズを
+    入れるので最終動画に対しては早い。焼き込み字幕は映像ごとずれるので同期しているが、
+    アップロード用の字幕ファイルは +intro_pause の subtitles_final.srt でなければならない。
+    照合は 2 段: (a) 全キューが subtitles.srt + intro_pause に一致するか (決定論)、
+    (b) 最終動画の声の立ち上がりが最初のキューの開始と 0.35 秒以内か (ffmpeg、advisory)。
+    """
+    src = ep_dir / "subtitles.srt"
+    dst = ep_dir / "subtitles_final.srt"
+    config = ep_dir / "episode_config.json"
+    if not src.exists():
+        return {"status": "SKIP", "reason": "subtitles.srt が無い"}
+    intro_pause = 1.0
+    if config.exists():
+        try:
+            with open(config, encoding="utf-8") as f:
+                intro_pause = float(json.load(f).get("bgm", {}).get("intro_pause", 1.0))
+        except (OSError, ValueError):
+            pass
+    if not dst.exists():
+        return {
+            "status": "WARN",
+            "msg": "subtitles_final.srt が無い (bgm step を回す)。subtitles.srt は最終動画に対して "
+            f"{intro_pause:.1f} 秒早いので、アップロード用には使えない",
+        }
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from subtitle_generator import parse_srt_time
+
+    def cues(path):
+        out = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if "-->" in line:
+                    a, b = (x.strip() for x in line.split("-->", 1))
+                    out.append((parse_srt_time(a), parse_srt_time(b)))
+        return out
+
+    try:
+        c_src, c_dst = cues(src), cues(dst)
+    except ValueError as e:
+        return {"status": "WARN", "msg": f"srt の時刻を読めない: {e}"}
+    if len(c_src) != len(c_dst):
+        return {
+            "status": "WARN",
+            "msg": f"キュー数が違う (subtitles.srt {len(c_src)} / final {len(c_dst)})。"
+            "subtitles が更新された後に bgm を回していない",
+        }
+    bad = [
+        i
+        for i, ((a, b), (a2, b2)) in enumerate(zip(c_src, c_dst, strict=True), 1)
+        if abs((a2 - a) - intro_pause) > 0.002 or abs((b2 - b) - intro_pause) > 0.002
+    ]
+    if bad:
+        return {
+            "status": "WARN",
+            "msg": f"{len(bad)} cue(s) が subtitles.srt + {intro_pause:.1f}s と合わない (最初: #{bad[0]})。"
+            "bgm step を回し直す",
+        }
+    result = {
+        "status": "OK",
+        "cues": len(c_dst),
+        "offset": intro_pause,
+        "first_cue": round(c_dst[0][0], 3) if c_dst else None,
+    }
+    final = ep_dir / "output_final.mp4"
+    if final.exists() and c_dst:
+        onset = _first_speech_onset(final)
+        if onset is not None:
+            result["speech_onset"] = round(onset, 3)
+            if abs(onset - c_dst[0][0]) > 0.35:
+                result["status"] = "WARN"
+                result["msg"] = (
+                    f"最終動画の声の立ち上がり {onset:.2f}s と最初のキュー {c_dst[0][0]:.2f}s が "
+                    "0.35 秒以上ずれている (冒頭ポーズが config と違うか、bgm を回し直していない)"
+                )
+    return result
+
+
+def check_disk_vs_shipped(ep_dir: Path) -> dict:
+    """disk 上の素材が出荷物 (output_final.mp4) とずれていないか (ある回再検証で新設)。
+
+    audio ステップを回すだけで 62 文が再正規化される経路があり、出荷済み動画と disk の
+    音声・timing.json が食い違いうることが分かった (同じ係数に収束したので実害は無かった)。
+    ここで見るのは 3 つ:
+      (a) timing.json の署名 (Guard-B2) が字幕を焼いたときの `_subtitles_meta.json` と一致するか
+          -- 不一致なら、音声を再合成/正規化した後に assemble していない = 焼き込み字幕と音がずれる
+      (b) visuals/*.mp4 / images/*.png が出荷物より新しくないか -- 再レンダ/再生成が結合されていない
+      (c) 文 wav が出荷物より新しいか -- (a) が一致なら音は同じ (係数が同じ) なので note のみ
+    """
+    final = ep_dir / "output_final.mp4"
+    if not final.exists():
+        return {"status": "SKIP", "reason": "output_final.mp4 が無い"}
+    shipped_at = final.stat().st_mtime
+    out: dict = {}
+    issues: list[str] = []
+    # (a) timing signature
+    meta = ep_dir / "_subtitles_meta.json"
+    timing = ep_dir / "timing.json"
+    if meta.exists() and timing.exists():
+        try:
+            sys.path.insert(0, str(REPO_ROOT / "src"))
+            from subtitle_generator import timing_signature
+
+            with open(meta, encoding="utf-8") as f:
+                embedded = json.load(f).get("timing_hash")
+            with open(timing, encoding="utf-8") as f:
+                current = timing_signature(json.load(f))
+            if embedded and embedded != current:
+                issues.append(
+                    f"timing.json の署名 {current} が字幕焼き込み時 {embedded} と違う "
+                    "(音声を再合成/正規化した後に subtitles/assemble を回していない)"
+                )
+            else:
+                out["timing_signature"] = "match"
+        except Exception as e:  # noqa: BLE001 - advisory
+            out["timing_signature"] = f"unavailable ({e})"
+    # (b) visuals / images newer than the shipped video
+    for sub, pat, what in (("visuals", "*.mp4", "映像"), ("images", "*.png", "画像")):
+        d = ep_dir / sub
+        if not d.is_dir():
+            continue
+        newer = sorted(
+            p.name
+            for p in d.glob(pat)
+            if not p.name.startswith("_") and p.stat().st_mtime > shipped_at + 1.0
+        )
+        if newer:
+            issues.append(
+                f"{what} {len(newer)} 本が出荷物より新しい (結合されていない): {', '.join(newer[:6])}"
+            )
+    # (c) sentence wavs newer than the shipped video
+    audio = ep_dir / "audio"
+    if audio.is_dir():
+        newer_wav = [
+            p.name
+            for p in audio.glob("*_[0-9][0-9][0-9].wav")
+            if p.stat().st_mtime > shipped_at + 1.0
+        ]
+        if newer_wav:
+            out["note"] = f"文 wav {len(newer_wav)} 本が出荷物より新しい" + (
+                " (timing 署名は一致 = 同じ係数の再適用。音は同じ)"
+                if out.get("timing_signature") == "match"
+                else ""
+            )
+    if issues:
+        out["status"] = "WARN"
+        out["issues"] = issues
+        out["msg"] = (
+            "disk が出荷物とずれている。subtitles 以降を回し直すか、出荷物を正として disk を戻す"
+        )
+        return out
+    out["status"] = "OK"
+    return out
+
+
 def build_corner_sheet(ep_dir: Path, out_dir: Path) -> dict:
     """One page showing the bottom corners of every generated image.
 
@@ -557,6 +808,10 @@ def build_corner_sheet(ep_dir: Path, out_dir: Path) -> dict:
     which is where a painter signs. `--all-corners` widens it.
     """
     images = sorted((ep_dir / "images").glob("*.png"))
+    # ある回: images/ に検査の作業ファイル (crop_bottomleft.png) が残っていてシートに写った。
+    # scene_definition が隣にあれば scene_id 以外の png はシートから外し、名指しで返す
+    # (シートの目的は出荷画像の下隅を見ることで、作業ファイルの隅ではない)。
+    images, extras = split_scene_images(ep_dir, images)
     if not images:
         return {"status": "SKIP", "reason": "images/ に png が無い"}
     try:
@@ -587,7 +842,47 @@ def build_corner_sheet(ep_dir: Path, out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     sheet = out_dir / f"corners_{ep_dir.name}.png"
     page.save(sheet)
-    return {"status": "OK", "images": len(images), "sheet": str(sheet)}
+    result = {"status": "OK", "images": len(images), "sheet": str(sheet)}
+    if extras:
+        result["extras"] = [p.name for p in extras]
+    return result
+
+
+def shipped_image_stems(scene_def: dict) -> set:
+    """出荷に使う png の stem: scene_id と、visual.source 等が参照するファイル名。
+
+    較正 (出荷 71 話): scene_id 以外の png は 14 話にあり、大半は退避 (`*_bk`) や参照写真
+    (`wiki_*`)、検査の作業ファイル (`corner_*`, `_crop_*`) だが、**010_gauss は
+    `visual.source` で `gemini_map.png` のような名前の画像を出荷している**。scene_id だけで
+    絞るとそれがシートから消えるので、参照されている名前も残す。
+    """
+    stems = set()
+    for sec in scene_def.get("sections", []) or []:
+        for sc in sec.get("scenes", []) or []:
+            if sc.get("scene_id"):
+                stems.add(sc["scene_id"])
+            v = sc.get("visual") or {}
+            for key in ("source", "image", "source_image", "background"):
+                val = v.get(key)
+                if isinstance(val, str) and val:
+                    stems.add(Path(val).stem)
+    return stems
+
+
+def split_scene_images(ep_dir: Path, images: list) -> tuple[list, list]:
+    """(出荷に使う png, それ以外の png)。scene_definition.json が無ければ全部出荷扱い。"""
+    sd_path = ep_dir / "scene_definition.json"
+    try:
+        with open(sd_path, encoding="utf-8") as f:
+            sd = json.load(f)
+    except Exception:
+        return list(images), []
+    ids = shipped_image_stems(sd)
+    if not ids:
+        return list(images), []
+    keep = [p for p in images if p.stem in ids]
+    extras = [p for p in images if p.stem not in ids]
+    return keep, extras
 
 
 def format_actions(checks: list[tuple[str, dict]]) -> list[str]:
@@ -612,6 +907,12 @@ def format_actions(checks: list[tuple[str, dict]]) -> list[str]:
             "(ある回は 13 枚中 6 枚にあり、2 枚しか見ずに出荷しかけました):"
         )
         lines.append(f"  Read {sheet}")
+    extras = next((r.get("extras") for _n, r in checks if r.get("extras")), None)
+    if extras:
+        lines.append(
+            "[ACTION] images/ に scene 以外の png があります (シートからは外しました。"
+            "作業ファイルなら削除): " + ", ".join(extras)
+        )
     return lines
 
 
@@ -630,12 +931,14 @@ CHECKS: tuple[tuple[str, object], ...] = (
     ("description.txt freshness (G6)", lambda ep, out, subj: check_description_freshness(ep)),
     ("narration vs NS structural diff", lambda ep, out, subj: check_narration_ns_sync(ep)),
     ("Manim scene frame extraction", lambda ep, out, subj: extract_manim_frames(ep, out)),
-    ("VOICEVOX proper noun verify", lambda ep, out, subj: verify_voicevox_proper_nouns(subj)),
+    ("VOICEVOX proper noun verify", lambda ep, out, subj: verify_voicevox_proper_nouns(subj, ep)),
     ("Subtitle char count (>25 jp)", lambda ep, out, subj: check_subtitle_char_count(ep)),
     ("temp_videos sync", lambda ep, out, subj: check_temp_videos_sync(ep)),
     ("output_final.mp4 health", lambda ep, out, subj: check_output_final_health(ep)),
     ("章タイムスタンプ vs timing.json", lambda ep, out, subj: check_chapter_timestamps(ep)),
     ("画像の下隅シート (目視用)", lambda ep, out, subj: build_corner_sheet(ep, out)),
+    ("subtitles_final.srt vs 冒頭ポーズ", lambda ep, out, subj: check_final_srt(ep)),
+    ("disk が出荷物とずれていないか", lambda ep, out, subj: check_disk_vs_shipped(ep)),
 )
 
 
@@ -691,7 +994,7 @@ def main():
         return 1
     # Per episode. A repo-wide directory with episode-agnostic file names lets any
     # other episode's verification silently replace the frames the [ACTION] line
-    # names
+    # names: an earlier episode opened post_build_math_02.png and found an earlier episode's simplex
     # picture, because an earlier episode regression test writes there on every smoke run.
     out_dir = Path(args.out_dir) if args.out_dir else ep_dir / "_qa_frames"
 

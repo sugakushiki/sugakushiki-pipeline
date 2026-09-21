@@ -17,6 +17,8 @@ Windows環境の制約（stdinパイプ不可）をファイルI/Oで回避す�
 
 import json
 import os
+import re
+import tempfile
 import time
 from pathlib import Path
 
@@ -98,6 +100,131 @@ _AUTH_MARKERS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# ある回: Claude の利用上限 (usage limit)
+#
+# ある回の Gate 2 でセッション上限に当たり、画像 QA が「全 scene 失敗」で abort した。
+# の probe は 401 (失効) しか見ないので、上限の応答は「QA が壊れた」ように見え、
+# 切り分けに一往復かかった。上限の応答には再開時刻が書いてある
+# ("You've hit your session limit · resets 9:30pm (Asia/Tokyo)") ので、
+#   1. 応答を分類して「利用上限。resets HH:MM」と名指しする (classify_usage_limit)
+#   2. どの呼び出し経路 (call_claude / 6 本の `claude -p --output-format text` wrapper) で
+#      当たっても project root に sentinel (_claude_usage_limit.json) を書く
+#   3. pipeline は子プロセスが返るたびに sentinel を見て、その場で止める
+#      (残りの Claude 依存ステップを回して時間を捨てない。再開は --steps で続きから)
+# 判定は失敗経路 (is_error / 非ゼロ終了 / 空出力) に限る。成功応答の本文に「rate limit」
+# のような語が出ても sentinel を書かない (偽の abort を避ける)。
+# ---------------------------------------------------------------------------
+
+_LIMIT_MARKERS = (
+    "hit your session limit",
+    "hit your weekly limit",
+    "hit your limit",
+    "usage limit reached",
+    "usage limit",
+    "limit reached",
+    "rate limit",
+    "too many requests",
+)
+_RESET_RE = re.compile(
+    r"resets?\s+(?:at\s+)?([0-9]{1,2}(?::[0-9]{2})?\s*(?:am|pm)?(?:\s*\([^)]{1,40}\))?)",
+    re.IGNORECASE,
+)
+USAGE_LIMIT_SENTINEL = "_claude_usage_limit.json"
+
+
+class ClaudeUsageLimitError(RuntimeError):
+    """Claude の利用上限に当たった (再開時刻は .resets)。"""
+
+    def __init__(self, message: str, resets: str | None = None, context: str | None = None):
+        super().__init__(message)
+        self.resets = resets
+        self.context = context
+
+
+def classify_usage_limit(text: str | None) -> dict | None:
+    """利用上限の応答なら {"resets", "snippet"} を返す。違えば None。純関数。"""
+    raw = text or ""
+    low = raw.lower()
+    if not any(m in low for m in _LIMIT_MARKERS):
+        return None
+    m = _RESET_RE.search(raw)
+    return {"resets": m.group(1).strip() if m else None, "snippet": raw.strip()[:200]}
+
+
+def usage_limit_message(info: dict | None) -> str:
+    resets = (info or {}).get("resets")
+    tail = f" (resets {resets})" if resets else ""
+    return f"Claude の利用上限に当たりました{tail}。上限が戻ってから同じコマンドを --steps で続きから再開してください"
+
+
+def _sentinel_path(project_root=None) -> Path:
+    root = Path(project_root) if project_root else find_project_root()
+    return Path(root) / USAGE_LIMIT_SENTINEL
+
+
+def note_usage_limit(context: str, info: dict, project_root=None) -> Path:
+    """sentinel を書く (pipeline が読んで止まる)。"""
+    path = _sentinel_path(project_root)
+    payload = {
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "context": context,
+        "resets": (info or {}).get("resets"),
+        "snippet": (info or {}).get("snippet", ""),
+    }
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as e:  # 書けなくても呼び出し側の例外は立つ
+        print(f"  [!] usage-limit sentinel を書けませんでした: {e}")
+    return path
+
+
+def read_usage_limit(project_root=None) -> dict | None:
+    path = _sentinel_path(project_root)
+    if not path.exists():
+        return None
+    try:
+        # utf-8-sig: 手で置いた sentinel (PowerShell の Set-Content は BOM 付き) も読める
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {"context": "?", "resets": None, "snippet": "(sentinel unreadable)"}
+
+
+def clear_usage_limit(project_root=None) -> None:
+    path = _sentinel_path(project_root)
+    try:
+        if path.exists():
+            path.unlink()
+    except OSError as e:
+        print(f"  [!] usage-limit sentinel を消せませんでした: {e}")
+
+
+def note_usage_limit_from_files(
+    output_path, error_path, context: str, exit_code: int = 1, project_root=None
+) -> dict | None:
+    """`claude -p --output-format text > out 2> err` 型の wrapper 用。
+
+    失敗経路 (非ゼロ終了、または短い出力) のときだけ out/err を読んで分類し、
+    上限なら sentinel を書いて名指しする。成功した長い応答は見ない (偽陽性回避)。
+    """
+    texts = []
+    for pth in (output_path, error_path):
+        try:
+            if pth and os.path.exists(pth):
+                texts.append(open(pth, encoding="utf-8", errors="replace").read())
+        except OSError:
+            continue
+    combined = "\n".join(texts)
+    if exit_code == 0 and len(combined.strip()) > 300:
+        return None
+    info = classify_usage_limit(combined)
+    if not info:
+        return None
+    note_usage_limit(context, info, project_root)
+    print(f"  [!] [USAGE-LIMIT] {usage_limit_message(info)} ({context})")
+    return info
+
+
 def classify_claude_ping(
     returncode,
     stdout: str,
@@ -112,6 +239,7 @@ def classify_claude_ping(
       "ok"         -- healthy (ping echoed 'pong')
       "not_found"  -- 'claude' command not in PATH
       "timeout"    -- ping did not return within timeout_sec
+      "usage_limit"-- non-healthy AND output says the usage/session limit was hit
       "auth"       -- non-healthy AND output carries an auth-failure signature
       "unexpected" -- non-healthy with no recognizable auth signature (CLI
                       malfunction / crash / model access / unknown)
@@ -132,6 +260,9 @@ def classify_claude_ping(
         return True, "ok", "OK"
 
     snippet = combined.strip()[:300]
+    _lim = classify_usage_limit(out + " " + (stderr or ""))
+    if _lim:
+        return False, "usage_limit", f"{usage_limit_message(_lim)}: {snippet}"
     if any(m in combined for m in _AUTH_MARKERS):
         return (
             False,
@@ -359,6 +490,22 @@ def call_claude(
         # 5. stream-json パースして全 assistant テキストを連結
         full_text, result_event = _parse_stream_json_output(raw_text, debug=debug)
 
+        # ある回: 利用上限は失敗経路 (is_error / 本文なし) でだけ判定し、sentinel を書いて
+        # 専用の例外で上げる (呼び出し側の graceful degrade に埋もれても pipeline が止まれる)
+        _lim_text = ""
+        if result_event and result_event.get("is_error"):
+            _lim_text = str(result_event.get("result", ""))
+        if not full_text:
+            _lim_text += " " + raw_text[:2000]
+        _lim = classify_usage_limit(_lim_text) if _lim_text.strip() else None
+        if _lim:
+            note_usage_limit(f"call_claude:{prefix}", _lim, root)
+            raise ClaudeUsageLimitError(
+                f"{usage_limit_message(_lim)}: {_lim['snippet']}",
+                resets=_lim.get("resets"),
+                context=prefix,
+            )
+
         # 6. エラーチェック
         if result_event and result_event.get("is_error"):
             err_msg = result_event.get("result", "unknown error")
@@ -397,39 +544,275 @@ def call_claude(
                 pass
 
 
-def extract_json_from_response(text: str) -> dict:
+# ---------------------------------------------------------------------------
+# JSON extraction from LLM responses
+#
+# Every QA agent answers with one JSON object inside a ```json fence. Two
+# failure shapes were observed in real transcripts and are handled here, in
+# order of least intervention:
+#
+#   1. Self-restart: Claude writes a broken block, says "starting fresh" and
+#      writes a second, complete block. A non-greedy regex grabbed the first
+#      (broken) block. Fix: enumerate ALL ```json blocks, try the LAST first.
+#      (script_generator.extract_json learned this first; ported here so the
+#      QA path has the same robustness.)
+#   2. Stray inner quotes: a long free-text string value (a formatted
+#      reference list with "Title" quoting) where the model escapes most inner
+#      quotes as \" but leaves a few raw. json.loads fails mid-string with
+#      "Expecting ',' delimiter". Seen twice in a row on the SourceManager
+#      agent: two ~7000-char responses, both COMPLETE (stop_reason=end_turn,
+#      one text block) -- not truncation. Fix: repair_json_text() re-escapes a
+#      quote that cannot be a terminator, judged by what follows it.
+#
+# Raw control characters (newline / tab) inside strings are the third common
+# LLM defect: strict=False accepts them and the repair pass escapes them.
+#
+# On total failure the ValueError names the first parse error's position and
+# surrounding text. "length=6997" alone was undiagnosable and the raw response
+# had to be dug out of the nested CLI's transcript after the fact.
+# ---------------------------------------------------------------------------
+
+_JSON_VALUE_START = '"{[-0123456789tfn'
+_JSON_WS = " \t\r\n"
+
+
+def _quote_is_terminator(text: str, j: int) -> bool:
+    """Decide whether the '"' just before index j closes a JSON string.
+
+    A real closing quote is followed (after whitespace) by ':' (it was a key),
+    '}' / ']' (last member), end of text, or ',' plus the start of the next
+    member. A following '"' is ambiguous (missing comma vs. prose) and is
+    deliberately treated as a terminator so a structural defect still fails
+    loudly instead of being merged into one string. Anything else -- a letter,
+    '(', '、', '所' ... -- means the quote sits inside prose and must be escaped.
     """
-    Claude Code レスポンスからJSONを抽出する。
-    コードブロック内のJSON、または直接のJSONを検出。
+    n = len(text)
+    while j < n and text[j] in _JSON_WS:
+        j += 1
+    if j >= n:
+        return True
+    c = text[j]
+    if c in ':}]"':
+        return True
+    if c == ",":
+        k = j + 1
+        while k < n and text[k] in _JSON_WS:
+            k += 1
+        return k >= n or text[k] in _JSON_VALUE_START
+    return False
+
+
+def repair_json_text(text: str) -> str:
+    """Escape stray inner double quotes and raw control characters inside JSON strings.
+
+    Walks the text tracking string state. Outside strings nothing is touched.
+    Inside a string an unescaped '"' that cannot be a terminator (see
+    _quote_is_terminator) becomes '\\"', and raw newline / tab become '\\n' /
+    '\\t'. Existing escape pairs are copied verbatim, so well-formed JSON passes
+    through unchanged (asserted by).
+
+    Limitation: an inner quote followed by ', "' / '"' / '}' looks like a
+    terminator and is left alone. The candidate then either still fails to parse
+    (the caller raises as before) or parses with that quote closing the string
+    early -- e.g. {"a": "foo "bar", "b": "c"} becomes {"a": "foo \"bar", "b": "c"},
+    the trailing inner quote dropped (probed in an earlier episode re-verification). Members
+    are never silently merged into one string, so a structural defect (missing
+    comma) still fails loudly.
     """
-    import re
-
-    # 改行コード正規化
-    text = text.replace("\r\n", "\n")
-
-    # パターン1: ```json ... ```
-    patterns = [
-        r"```json\s*\n(.*?)\n\s*```",
-        r"```\s*\n(\{.*?\})\n\s*```",
-        r"```json\s*(.*?)\s*```",
-        r"```\s*(\{.*?\})\s*```",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1).strip())
-            except json.JSONDecodeError:
-                continue
-
-    # パターン2: 直接JSON（最初の { から最後の } まで）
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        try:
-            return json.loads(text[first_brace : last_brace + 1])
-        except json.JSONDecodeError:
+    out = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        ch = text[i]
+        if not in_str:
+            if ch == '"':
+                in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "\\":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if ch == '"':
+            if _quote_is_terminator(text, i + 1):
+                in_str = False
+                out.append(ch)
+            else:
+                out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\r":
             pass
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
 
-    raise ValueError(f"Could not extract valid JSON from response (length={len(text)})")
+
+def _json_candidates(text: str) -> list:
+    """Substrings that might be the JSON object, most likely first, de-duplicated."""
+    cands = []
+
+    # 1. every ```json block, LAST first (a later self-restart supersedes)
+    fences = [m.start() for m in re.finditer(r"```", text)]
+    blocks = []
+    for m in re.finditer(r"```json", text):
+        body_start = m.end()
+        nxt = next((p for p in fences if p > body_start), None)
+        body = text[body_start : nxt if nxt is not None else len(text)].strip()
+        if body:
+            blocks.append(body)
+    cands.extend(reversed(blocks))
+
+    # 2. generic fenced blocks holding an object
+    for m in re.finditer(r"```[\w-]*\s*(\{.*?\})\s*```", text, re.DOTALL):
+        cands.append(m.group(1).strip())
+
+    # 3. outermost { ... } of the whole text: covers un-fenced output and a
+    #    fence that a stray ``` inside a string value cut short
+    first, last = text.find("{"), text.rfind("}")
+    if first != -1 and last > first:
+        cands.append(text[first : last + 1])
+
+    seen, unique = set(), []
+    for c in cands:
+        if c not in seen:
+            seen.add(c)
+            unique.append(c)
+    return unique
+
+
+def _parse_json_object(body: str) -> tuple:
+    """(obj or None, first error). Tries strict, lenient (control chars), then repaired."""
+    first_error = None
+    attempts = ((body, True), (body, False))
+    for stage in range(3):
+        if stage < 2:
+            txt, strict = attempts[stage]
+        else:
+            txt, strict = repair_json_text(body), False
+        try:
+            obj = json.loads(txt, strict=strict)
+        except json.JSONDecodeError as e:
+            if first_error is None:
+                first_error = e
+            continue
+        if isinstance(obj, dict):
+            return obj, first_error
+        if first_error is None:
+            first_error = ValueError(f"top-level JSON is {type(obj).__name__}, not an object")
+    return None, first_error
+
+
+def _describe_error(body: str, err: Exception) -> str:
+    if isinstance(err, json.JSONDecodeError):
+        ctx = body[max(0, err.pos - 80) : err.pos + 80]
+        return f"{err.msg} at char {err.pos} (line {err.lineno} col {err.colno}); context: {ctx!r}"
+    return str(err)
+
+
+def extract_json_from_response(text: str) -> dict:
+    """Claude Code レスポンスから JSON オブジェクトを抽出する。
+
+    候補は ```json ブロック (複数あれば後のものを優先) → 汎用 ``` ブロック →
+    最初の { から最後の } の順。各候補を strict → 制御文字許容 →
+    repair_json_text() で修復、の順に parse する。全滅なら最初の候補の parse
+    エラー位置と前後の文脈を含む ValueError を投げる。
+    """
+    text = text.replace("\r\n", "\n")
+    candidates = _json_candidates(text)
+    first_desc = None
+    for body in candidates:
+        obj, err = _parse_json_object(body)
+        if obj is not None:
+            return obj
+        if first_desc is None and err is not None:
+            first_desc = _describe_error(body, err)
+    detail = f"; first error: {first_desc}" if first_desc else "; no JSON object found"
+    raise ValueError(
+        f"Could not extract valid JSON from response "
+        f"(length={len(text)}, candidates={len(candidates)}{detail})"
+    )
+
+
+def try_extract_json(text: str | None) -> dict | None:
+    """extract_json_from_response の「失敗したら None」版 (, 2026-09-19)。
+
+    qa_image_checker / qa_thumbnail_vision / manim_vision_qa が各自に持っていた `_extract_json`
+    (最初の ```json ブロックだけを見る、修復なし) の置き換え。こちらは複数ブロックの後方優先・
+    制御文字許容・repair_json_text まで通るので、旧実装で拾えたものは全部拾う。
+    """
+    if not text:
+        return None
+    try:
+        return extract_json_from_response(text)
+    except ValueError:
+        return None
+
+
+def call_claude_text(
+    prompt: str,
+    *,
+    context: str,
+    prefix: str = "txt",
+    allowed_tools: str | None = "Read,Bash",
+    debug: bool = False,
+) -> str | None:
+    """`claude -p --output-format text` の共通 wrapper (, 2026-09-19)。
+
+    qa_image_checker / qa_thumbnail_vision / manim_vision_qa / image_generator (vision) /
+    wikimedia_fetcher (外見) / check_image_signatures の 6 本が同じ 50 行 (temp ファイル経由の
+    os.system、利用上限 sentinel、後片付け) を各自に持っていた。違いは temp ファイルの接頭辞と
+    `--allowedTools Read,Bash` の有無だけで、後者は CLAUDE.md が「v2.1.63 以降必須」と書くのに
+    3 本が付けていなかった。ここに寄せる。
+
+    Windows では subprocess を使わない (日本語クラッシュ)。os.system + temp ファイル方式。
+    失敗 (非ゼロ終了 / 出力なし / 例外) は None。利用上限は note_usage_limit_from_files が
+    sentinel に書き、pipeline が次の子プロセス境界で止まる。
+    """
+    tmp_dir = tempfile.gettempdir()
+    prompt_path = os.path.join(tmp_dir, f"_tmp_{prefix}_prompt.txt")
+    output_path = os.path.join(tmp_dir, f"_tmp_{prefix}_output.txt")
+    error_path = os.path.join(tmp_dir, f"_tmp_{prefix}_error.txt")
+    try:
+        with open(prompt_path, "w", encoding="utf-8-sig") as f:
+            f.write(prompt)
+        for p in (output_path, error_path):
+            if os.path.exists(p):
+                os.remove(p)
+        tools = f"--allowedTools {allowed_tools} " if allowed_tools else ""
+        cmd = (
+            f'type "{prompt_path}" | claude -p --output-format text {tools}'
+            f'> "{output_path}" 2> "{error_path}"'
+        )
+        if debug:
+            print(f"    [DEBUG] Prompt: {len(prompt)} chars")
+            print(f"    [DEBUG] Command: {cmd[:120]}...")
+        exit_code = os.system(cmd)
+        try:
+            note_usage_limit_from_files(output_path, error_path, context, exit_code)
+        except Exception as _e:  # noqa: BLE001 - never let the guard break the caller
+            print(f"    [!] usage-limit guard skipped: {_e}")
+        if exit_code != 0:
+            if debug and os.path.exists(error_path):
+                with open(error_path, encoding="utf-8", errors="replace") as f:
+                    print(f"    [DEBUG] stderr: {f.read().strip()[:200]}")
+            return None
+        if not os.path.exists(output_path):
+            return None
+        with open(output_path, encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except Exception as e:  # noqa: BLE001 - caller degrades gracefully on None
+        if debug:
+            print(f"    [DEBUG] call_claude_text error: {e}")
+        return None
+    finally:
+        for p in (prompt_path, output_path, error_path):
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass

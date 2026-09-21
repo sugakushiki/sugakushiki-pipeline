@@ -57,7 +57,28 @@ def _capture_text_bboxes(template: str, params: dict, duration: float = 20.0) ->
         json.dump({**params, "duration": duration}, f, ensure_ascii=False)
 
     mod = __import__(template)
-    scenes = mod.SCENES
+    scenes = getattr(mod, "SCENES", None)
+    if not scenes:
+        # **SCENES を持たない旧テンプレは、この QA が丸ごと skip していた** (2026-09-06 実測:
+        # 出荷済み 450 manim scene のうち 38 件 = 8% が未検査。うち 28 件は formula_display で、
+        # 現役でよく使うテンプレである)。しかもサマリは「collisions 0」と出るので検査済みに
+        # 見える
+        # SCENES が無くても Scene サブクラスは在るので、そこから解決する。
+        from manim import Scene as _Scene
+
+        cands = [
+            v
+            for v in vars(mod).values()
+            if isinstance(v, type)
+            and issubclass(v, _Scene)
+            and v is not _Scene
+            and getattr(v, "__module__", "") == mod.__name__
+        ]
+        if len(cands) != 1:
+            raise ValueError(
+                f"{template}: SCENES が無く、Scene サブクラスも一意でない ({len(cands)} 個)"
+            )
+        scenes = {"__single__": cands[0]}
     # Resolve the Scene: use params.mode if it is a real SCENES key; else fall back to
     # the first key -- data-driven templates (timeline_recap) omit `mode` and key SCENES
     # under a self-test name.
@@ -169,12 +190,14 @@ def check_scene_definition(scene_json: str) -> int:
     total_hits = 0
     checked = 0
     errored = 0
+    unevaluated = []  # (scene_id, 理由) -- 「未評価」を件数だけでなく名指しで出す
     for scene_id, template, params in targets:
         mode = params.get("mode", "") or "-"
         try:
             boxes = _capture_text_bboxes(template, params)
         except Exception as e:  # noqa: BLE001 - never fail the build on a capture error
             errored += 1
+            unevaluated.append((scene_id, f"{template}:{mode} capture error: {repr(e)[:60]}"))
             print(f"  [SKIP] {scene_id} ({template}:{mode}) capture error: {repr(e)[:80]}")
             continue
         checked += 1
@@ -190,6 +213,13 @@ def check_scene_definition(scene_json: str) -> int:
             print(f"  [OK]   {scene_id} ({template}:{mode})")
     print("-" * 60)
     print(f"  Checked {checked}, collisions {total_hits}, capture-errors {errored}")
+    if unevaluated:
+        # 「collisions 0」だけを見て検査済みと思わせない。
+        print(
+            f"  [!] {len(unevaluated)}/{len(targets)} scene が **未評価** です (自分の目で確認する):"
+        )
+        for sid, why in unevaluated:
+            print(f"      {sid}: {why}")
     print("  NOTE: advisory. Complements manim_vision_qa; raise labels to clear.")
     try:  # tidy the transient params file the mock capture wrote to the cwd
         os.remove(os.path.join(os.getcwd(), "_manim_params.json"))

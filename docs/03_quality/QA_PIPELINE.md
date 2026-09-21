@@ -85,7 +85,7 @@ warning数件の手動修正は通常5分以内で完了する。
 |---|---|---|---|---|---|
 | 1 | **FactChecker** | Opus | ❌ | ✅ | 事実の正確性検証。年号・人名・数値・エピソードの真偽判定 |
 | 2 | **StyleChecker** | Sonnet | ✅ | ✅ | STYLE_GUIDE.md準拠チェック。トーン・禁止表現・感嘆符数 |
-| 3 | **SourceManager** | Sonnet | ✅ | ✅ | 参考文献リスト生成。概要欄用テキスト出力 |
+| 3 | **SourceManager** | Sonnet | ✅ | ✅ | 参考文献リスト生成（構造化 JSON のみ。概要欄本文は出さない） |
 | 4 | **ContentReviewer** | Opus | ❌ | ✅ | 構成・尺感・わかりやすさ・視聴者引き込み力の評価 |
 | 5 | **ConsistencyChecker** | Opus | ❌ | ✅ | エピソード内の用語統一、数学的表現の厳密性 |
 
@@ -139,8 +139,12 @@ warning数件の手動修正は通常5分以内で完了する。
       "model": "sonnet",
       "duration_sec": 502,
       "output": {
-        "references": ["Paul Hoffman, \"The Man Who Loved Only Numbers\" (1998)", "..."],
-        "youtube_description_text": "【主要参考文献】\n- ..."
+        "references": {
+          "books": [{"author": "Paul Hoffman", "title": "The Man Who Loved Only Numbers", "year": "1998", "relevance": "..."}],
+          "websites": [],
+          "data_sources": []
+        },
+        "unsourced_claims": []
       }
     },
     "content_reviewer": {
@@ -210,12 +214,13 @@ warning数件の手動修正は通常5分以内で完了する。
 #### Agent 3: SourceManager（Sonnet）
 
 **入力**: scene_definition.json + episode_config.json
-**タスク**: ナレーション内容から参考文献リストを推定し、YouTube概要欄用テキストを生成
+**タスク**: ナレーション内容から参考文献リストを推定する
 
 **出力**:
-- 推定参考文献リスト（書籍・論文・Webサイト）
-- YouTube概要欄用フォーマット済みテキスト
+- 推定参考文献リスト（書籍・論文・Webサイト、構造化 JSON）
 - ナレーション内で典拠が不明な主張のフラグ
+
+概要欄用の整形済みテキストは出力しない。以前は `youtube_description_text`（引用符だらけの長い自由文を JSON 文字列に埋め込む契約）を要求していたが、Sonnet が文字列内の `"` のエスケープを一部落として JSON 全体が parse 不能になる事故が連続し、かつこのフィールドを読むコードは存在しなかった（概要欄は `episode_config.references` から `credits_generator` が組み立てる）ため契約から外した。書名は『』で囲む指示を追加済み。
 
 **フォーマット**: STYLE_GUIDE セクション6準拠
 

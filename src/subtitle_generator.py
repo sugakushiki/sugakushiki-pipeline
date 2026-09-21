@@ -126,6 +126,10 @@ def dates_to_arabic(text: str) -> str:
     - Months: 1-12 + 月 (十二月 -> 12月); ヶ月 (十四ヶ月) is excluded.
     - Days: 1-31 + 日 (二十七日 -> 27日). 近日点/遠日点 are safe because 日 there
       is preceded by 近/遠 (not a digit kanji), so they never match.
+      **左隣の数字漢字を lookbehind で弾く**: 従来は「六十日」の内側の「十日」
+      だけが一致して **「六10日」** という字幕が出た (干支の60日周期)。日は 1-31 なので
+      十の位に来られるのは 二/三 だけだが、それ以外の数字が左に居ないことは
+      誰も見ていなかった。月も同型なので同じ guard を入れる。
     Idempotent (Arabic input passes through). Audio uses narration_speech and is
     unaffected by this display-only conversion.
     """
@@ -135,12 +139,12 @@ def dates_to_arabic(text: str) -> str:
         text,
     )
     text = re.sub(
-        r"(?<!ヶ)(十[一二]?|[一二三四五六七八九])月",
+        r"(?<![ヶ一二三四五六七八九十百千])(十[一二]?|[一二三四五六七八九])月",
         lambda m: str(_trad_kanji_to_int(m.group(1))) + "月",
         text,
     )
     text = re.sub(
-        r"(?<!ヶ)((?:[二三]?十[一二三四五六七八九]?)|[一二三四五六七八九])日",
+        r"(?<![ヶ一二三四五六七八九十百千])((?:[二三]?十[一二三四五六七八九]?)|[一二三四五六七八九])日",
         lambda m: str(_trad_kanji_to_int(m.group(1))) + "日",
         text,
     )
@@ -496,6 +500,57 @@ def format_srt_time(seconds: float) -> str:
     secs = int(seconds % 60)
     millis = int((seconds % 1) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+FINAL_SRT_NAME = "subtitles_final.srt"
+_SRT_TIME_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})")
+
+
+def parse_srt_time(text: str) -> float:
+    """'HH:MM:SS,mmm' -> seconds."""
+    m = _SRT_TIME_RE.fullmatch(text.strip())
+    if not m:
+        raise ValueError(f"not an SRT time: {text!r}")
+    h, mi, se, ms = (int(x) for x in m.groups())
+    return h * 3600 + mi * 60 + se + ms / 1000.0
+
+
+def _format_ms(ms: int) -> str:
+    h, rem = divmod(ms, 3600_000)
+    mi, rem = divmod(rem, 60_000)
+    se, mil = divmod(rem, 1000)
+    return f"{h:02d}:{mi:02d}:{se:02d},{mil:03d}"
+
+
+def shift_srt(src_path: str, dst_path: str, offset_sec: float) -> int:
+    """subtitles.srt の全キューを offset_sec ずらして dst_path に書く。Returns cue count.
+
+    ある回: subtitles.srt は BGM 追加前 (output_assembled) の時刻で、bgm ステップが冒頭ポーズ
+    (intro_pause、既定 1.0 秒) を映像と音声の両方に入れるので、最終動画に対しては全キューが
+    その分だけ早い。焼き込み字幕は映像ごとずれるので同期しているが、YouTube にアップロードする
+    字幕ファイルとしては使えなかった (72 話ぶん、誰も気づかなかった)。章タイムスタンプは credits が
+    intro_pause を足して計算していたのに、字幕ファイルだけ足していなかった。
+    """
+    n = 0
+    out_lines = []
+    with open(src_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if "-->" in line:
+                a, b = (x.strip() for x in line.split("-->", 1))
+                # ミリ秒の整数で足す (float で足して int() で切ると 1 ms ずれる)
+                off_ms = int(round(offset_sec * 1000))
+                a2 = _format_ms(max(0, int(round(parse_srt_time(a) * 1000)) + off_ms))
+                b2 = _format_ms(max(0, int(round(parse_srt_time(b) * 1000)) + off_ms))
+                out_lines.append(f"{a2} --> {b2}")
+                n += 1
+            else:
+                out_lines.append(line)
+    with open(dst_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out_lines))
+        if out_lines and out_lines[-1] != "":
+            f.write("\n")
+    return n
 
 
 def escape_drawtext(text: str) -> str:

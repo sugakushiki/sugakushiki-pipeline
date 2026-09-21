@@ -220,7 +220,7 @@ def _load_geojson_polygons(cache_file: str) -> list:
 # は 390px と桁違い。8px は known-good 6px のすぐ上・gross 390px の遥か下で安全に分離。
 _CLIP_TOL_PX = 8.0
 
-# -
+# --- bbox 重なりが「0 件」と言いながら絵が壊れていた 2 つの型 -----
 #
 # ある回は同じ地図で 3 回壊れ、3 回とも決定論チェックは沈黙し、人間の目か
 # Manim Vision QA だけが気づいた。bbox の重なりは「読めるか」の代理指標にすぎない、
@@ -671,6 +671,11 @@ def _check_line_through_label(label_rects, curves_px) -> list[dict]:
     return reports
 
 
+# 都市の点マーカーの見かけ半径 (markersize=14 -> 約 9.7px) に余裕を足した値。
+# route ラベルがこの距離まで点に寄ると、枠線と塗りで点が読めなくなる。
+_DOT_CLEARANCE_PX = 13.0
+
+
 def _check_route_map_collisions(
     fig,
     title_artist,
@@ -993,7 +998,7 @@ def _check_route_map_collisions(
             }
         )
 
-    # -
+    # --- A: ラベルの所属の曖昧さ / B: 線がラベルを貫く --------------------
     # ここまでの検査は全て「テキストとテキストの矩形が重なるか」だけを見ている。
     # 重なりが 0 でも (a) ラベルが他都市の点の上に乗る (b) 経路の線が文字を貫く
     # の 2 通りで絵は壊れる。ある回で 3 回とも「collisions 0」をすり抜けた。
@@ -1023,6 +1028,40 @@ def _check_route_map_collisions(
                 _cx, _cy = (_bb.x0 + _bb.x1) / 2.0, (_bb.y0 + _bb.y1) / 2.0
                 _rep["city_fix"] = _city_fix(_art, ((_own[0] - _cx) * 0.5, (_own[1] - _cy) * 0.5))
             reports.append(_rep)
+
+        # ある回: 上の所有権検査は **city ラベル対 点** だけを見ている。route ラベルが
+        # 都市の点マーカーを覆う場合は誰も見ておらず、preflight が「0 件」と言った状態で
+        # エインホーの点が「1919 セント・ヒューズ入学」の枠に隠れ、**4 都市のはずが
+        # 3 点しか見えない**絵が出た (user 目視で発覚、同じ穴に 2 回落ちた)。
+        # この関数冒頭のコメント自身が「(a) ラベルが他都市の点の上に乗る」を挙げていた
+        # のに、実装されていたのは city 側だけだった。
+        #
+        # 判定は決定論: 点の画素座標がラベル矩形 (マーカー半径ぶん広げたもの) の内側か。
+        # markersize=14 なので半径は約 9.7px、余裕を見て 13px で膨らませる。
+        for _r_artist, _r_bbox in route_bboxes:
+            if _r_bbox is None:
+                continue
+            for _city, (_dx, _dy) in dots_px.items():
+                if (
+                    _r_bbox.x0 - _DOT_CLEARANCE_PX <= _dx <= _r_bbox.x1 + _DOT_CLEARANCE_PX
+                    and _r_bbox.y0 - _DOT_CLEARANCE_PX <= _dy <= _r_bbox.y1 + _DOT_CLEARANCE_PX
+                ):
+                    reports.append(
+                        {
+                            "type": "route_label_over_city_dot",
+                            "severity": "warning",
+                            "summary": (
+                                f"route_label '{_r_artist.get_text()}' covers the city marker "
+                                f"of '{_city}' (the dot disappears behind the label box)"
+                            ),
+                            "suggestion": (
+                                "Move the route label off the marker via that step's "
+                                "label_offset [dlon, dlat], or shorten the label so it fits "
+                                "beside its own route. Nudging toward the route usually "
+                                "re-covers the dot -- sweep both and check the dot too."
+                            ),
+                        }
+                    )
 
     if ax is not None and route_curves:
         _curves_px = []
@@ -1082,12 +1121,12 @@ def _check_route_map_collisions(
                         None,
                     )
                 )
-            # misreading: a route label that drifted off its own route, or onto
+            # An earlier episode: a route label that drifted off its own route, or onto
             # another one. Advisory -- the user found both by eye on an earlier episode
             # because nothing measured it.
             reports.extend(route_label_attachment(_targets, _curves_px))
 
-            # misreading: the clipping check above measures against the still figure,
+            # An earlier episode: the clipping check above measures against the still figure,
             # but the still is then run through generate_ken_burns, which crops
             # inward as the shot runs (125px off each side by the end of a
             # zoom_in). Re-check every box against the region that survives the
@@ -1933,7 +1972,7 @@ def generate_route_map(
         ax=ax,
         city_dots=cities,
         route_curves=route_curves,
-        # misreading: the shot's crop decides what is actually visible, so the
+        # An earlier episode: the shot's crop decides what is actually visible, so the
         # clipping check needs to know which effect will be applied.
         effect=effect,
     )

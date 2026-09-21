@@ -21,82 +21,35 @@ Usage:
 import argparse
 import json
 import os
-import re
 import sys
-import tempfile
 import time
 from datetime import datetime
 
 
 def _call_claude_cli(prompt: str, debug: bool = False) -> str | None:
-    """Call Claude Code CLI with a text prompt (which may reference image file paths).
+    """Claude Code CLI に text prompt を渡す (画像はパスで参照、Read tool が読む)。
 
-    Uses the same file-based I/O pattern as claude_backend.py.
-    Claude Code reads image files directly via its Read tool.
-    Runs under Max subscription — no API key or additional cost.
-
-    Returns response text, or None on failure.
+    (2026-09-19): 実装は claude_backend.call_claude_text (6 本の同じ wrapper を 1 つに)。
     """
-    tmp_dir = tempfile.gettempdir()
-    prompt_path = os.path.join(tmp_dir, "_tmp_gate2_prompt.txt")
-    output_path = os.path.join(tmp_dir, "_tmp_gate2_output.txt")
-    error_path = os.path.join(tmp_dir, "_tmp_gate2_error.txt")
+    _src_dir = os.path.dirname(os.path.abspath(__file__))
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from claude_backend import call_claude_text
 
-    try:
-        with open(prompt_path, "w", encoding="utf-8-sig") as f:
-            f.write(prompt)
-
-        for p in [output_path, error_path]:
-            if os.path.exists(p):
-                os.remove(p)
-
-        cmd = (
-            f'type "{prompt_path}" | claude -p --output-format text '
-            f'> "{output_path}" 2> "{error_path}"'
-        )
-
-        if debug:
-            print(f"    [DEBUG] Prompt: {len(prompt)} chars")
-            print(f"    [DEBUG] Command: {cmd[:120]}...")
-
-        exit_code = os.system(cmd)
-
-        if exit_code != 0:
-            if debug and os.path.exists(error_path):
-                with open(error_path, encoding="utf-8", errors="replace") as f:
-                    print(f"    [DEBUG] stderr: {f.read().strip()[:200]}")
-            return None
-
-        if not os.path.exists(output_path):
-            return None
-
-        with open(output_path, encoding="utf-8", errors="replace") as f:
-            return f.read().strip()
-
-    except Exception as e:
-        if debug:
-            print(f"    [DEBUG] _call_claude_cli error: {e}")
-        return None
-    finally:
-        for p in [prompt_path, output_path, error_path]:
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except OSError:
-                pass
+    return call_claude_text(
+        prompt, context="qa_image_checker (Gate 2)", prefix="gate2", debug=debug
+    )
 
 
 def _extract_json(text: str) -> dict | None:
-    """Extract JSON object from response text (handles ```json blocks)."""
-    text = text.strip()
-    if "```" in text:
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
+    """Claude の応答から JSON を取り出す。実装は claude_backend.try_extract_json
+    (複数 ```json ブロックの後方優先・制御文字許容・修復まで通る)。"""
+    _src_dir = os.path.dirname(os.path.abspath(__file__))
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from claude_backend import try_extract_json
+
+    return try_extract_json(text)
 
 
 def evaluate_single_scene(scene: dict, image_path: str) -> dict:
@@ -280,6 +233,17 @@ JSONのみ（```なし）で回答:
         return {"status": "error", "error": str(e)}
 
 
+def scene_image_path(scene: dict, images_dir: str) -> str:
+    """ken_burns scene の画像パス。`visual.source` があればそれ、無ければ `<scene_id>.png`。
+
+    ある回: 細密画を `source` で指した intro_03 を「intro_03.png が存在しない (フォールバック
+    画像使用中)」と報告していた。image_generator / visual_generator / pipeline の欠落検査と
+    同じ規則で解決する。
+    """
+    src = (scene.get("visual") or {}).get("source") or f"{scene.get('scene_id')}.png"
+    return os.path.join(images_dir, os.path.basename(src))
+
+
 def main():
     # Progress and result lines carry emoji and em dashes that the Windows console
     # codepage cannot encode. This runs as a subprocess of the pipeline, so it needs
@@ -361,7 +325,7 @@ def main():
 
     for scene in ken_burns_scenes:
         scene_id = scene["scene_id"]
-        image_path = os.path.join(images_dir, f"{scene_id}.png")
+        image_path = scene_image_path(scene, images_dir)
         if os.path.exists(image_path):
             scenes_with_images.append({"scene": scene, "image_path": image_path})
         else:
@@ -381,7 +345,7 @@ def main():
         t0 = time.time()
 
         eval_result = evaluate_single_scene(scene, item["image_path"])
-        # misreading: the CLI intermittently returns truncated JSON or nothing at all, and
+        # An earlier episode: the CLI intermittently returns truncated JSON or nothing at all, and
         # a single failure silently dropped that scene from the gate -- 3-5 of 13
         # scenes went unevaluated on every run, including an image that had just been
         # regenerated to fix a critical finding. The call is non-deterministic, so one
@@ -419,7 +383,10 @@ def main():
                 "scene_id": scene_id,
                 "severity": "info",
                 "aspect": "画像不在",
-                "message": f"images/{scene_id}.png が存在しない（フォールバック画像使用中）",
+                "message": (
+                    f"images/{os.path.basename(scene_image_path({'scene_id': scene_id}, images_dir))}"
+                    " が存在しない（フォールバック画像使用中）"
+                ),
                 "suggestion": "image_generatorを再実行して画像を生成してください",
             }
         )
@@ -485,7 +452,7 @@ def main():
             "info": info_count,
         },
         "scenes_checked": len(scenes_with_images),
-        # misreading: "checked" counted scenes we ATTEMPTED, so a report saying "13 scenes"
+        # An earlier episode: "checked" counted scenes we ATTEMPTED, so a report saying "13 scenes"
         # could hide that 5 of them never produced a verdict. Record both.
         "scenes_evaluated": len(scenes_with_images) - scenes_errored,
         "scenes_unevaluated": scenes_errored,

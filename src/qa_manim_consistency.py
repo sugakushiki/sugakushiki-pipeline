@@ -182,11 +182,12 @@ def check_timeline_legend_coherence(scene_def):
     which (the note under the title states it). But when one track uses two or more
     colours, the colour is making a distinction that nothing on screen explains.
 
-    Calibrated against all 19 episodes using the template: it flags an earlier episode, an earlier episode,
-    an earlier episode, an earlier episode and an earlier episode
-    under a legend that names only gold, and an earlier episode splits its life track white/pink
-    (転機) with no legend at all -- and passes the 6 coherent ones (an earlier episode, an earlier episode,
-    an earlier episode, an earlier episode, an earlier episode, an earlier episode) plus every single-colour-per-track timeline.
+    Calibrated against all 19 episodes using the template: it flags five of them
+    (an earlier episode, an earlier episode, an earlier episode, an earlier episode, an earlier episode): one puts cyan and pink work milestones on
+    screen under a legend that names only gold, another splits its life track
+    white/pink (転機) with no legend at all. It passes the 6 coherent ones
+    (an earlier episode, an earlier episode, an earlier episode, an earlier episode, an earlier episode, an earlier episode) plus every single-colour-per-track
+    timeline.
 
     Returns:
         list of dicts {"scene_id", "track", "unnamed"}; empty when coherent.
@@ -255,6 +256,122 @@ def check_reused_template_params(scene_def):
                     }
                 )
     return violations
+
+
+def template_scene_modes(template_name, manim_dir):
+    """Resolve the template's valid mode names (its SCENES keys) via AST.
+
+    Mirrors smoke_test.template_mode_names: reads `SCENES = {...}` literal keys,
+    or `_MODES` when SCENES is the `dict.fromkeys(_MODES, Cls)` spelling. Returns
+    None when the template file is missing or SCENES cannot be resolved, so the
+    caller can skip rather than invent a failure (missing templates are
+    visual_generator's job to report).
+    """
+    path = os.path.join(manim_dir, f"{template_name}.py")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except (SyntaxError, UnicodeDecodeError, OSError):
+        return None
+    modes_const = None
+    scenes_node = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == "SCENES":
+                scenes_node = node.value
+            elif target.id == "_MODES" and isinstance(node.value, ast.Tuple | ast.List):
+                modes_const = {e.value for e in node.value.elts if isinstance(e, ast.Constant)}
+    if scenes_node is None:
+        return None
+    if isinstance(scenes_node, ast.Dict):
+        return {k.value for k in scenes_node.keys if isinstance(k, ast.Constant)}
+    if isinstance(scenes_node, ast.Call) and modes_const:
+        return modes_const
+    return None
+
+
+def check_invalid_manim_modes(scene_def, manim_dir):
+    """Manim scenes whose params.mode is not a key of the template's SCENES.
+
+    The an earlier episode hardening made fail-loud templates raise on unknown modes, and
+    smoke section 24 scans the repo -- but nothing between script generation and
+    the visuals render checked the freshly generated scene_definition, so an
+    LLM-invented mode ('default') was only discovered when the render raised at
+    minute 40 and shipped a placeholder. An earlier episode's generated script asked for
+    mode='default' on ALL THREE manim scenes (a brand-new template gives the
+    LLM no shipped examples to imitate -- it invents 'default' every time).
+
+    Run as a fail-fast preflight before the render. Calibration: all shipped
+    episodes pass smoke section 24, so making this blocking has zero retro
+    impact; an invalid mode has no legitimate use (the render would raise
+    anyway, this just moves the failure 40 minutes earlier with a fix hint).
+
+    Returns list of dicts {"scene_id", "template", "mode", "valid"} (empty = OK).
+    """
+    violations = []
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual", {})
+            if visual.get("type") != "manim":
+                continue
+            template = visual.get("template")
+            mode = (visual.get("params") or {}).get("mode")
+            if not template or mode is None:
+                continue  # missing mode is's job (multi-mode warn)
+            modes = template_scene_modes(template, manim_dir)
+            if modes is None or mode in modes:
+                continue
+            violations.append(
+                {
+                    "scene_id": scene.get("scene_id", "?"),
+                    "template": template,
+                    "mode": mode,
+                    "valid": sorted(modes),
+                }
+            )
+    return violations
+
+
+def check_duplicate_default_modes(scene_def, manim_dir):
+    """同じ多mode テンプレを **2 シーン以上が mode 未指定で** 使っている。
+
+    は「多mode テンプレで mode 未指定」を WARN するが advisory で、出荷 70 話に
+    69 件ある (timeline_recap のように既定 mode が正解の使い方が大半) ので止められない。
+    しかし **同じ回で同じテンプレを mode 無しで複数シーンが使う**なら、それらは全部
+    同じ既定 mode を描く = **画面が丸ごと重複する**。ある回は math_02/03/04 が
+    remainder_reconstruction を mode 無しで使い、**3 シーンが同じアニメになった**まま
+    出荷寸前まで気づかなかった (は 5 件発火していたが advisory なので通した)。
+
+    較正: 出荷 70 話で **0 件**。よって中断ゲートにできる。行き止まりにもならない ──
+    要求は実質「mode を明示せよ」なので、既定 mode を意図して複数シーンで使いたい回も
+    その mode 名を書けば通る。
+
+    Returns list of dicts {"template", "scene_ids", "modes"} (empty = OK).
+    """
+    buckets = {}
+    for section in scene_def.get("sections", []):
+        for scene in section.get("scenes", []):
+            visual = scene.get("visual", {})
+            if visual.get("type") != "manim":
+                continue
+            template = visual.get("template")
+            if not template or (visual.get("params") or {}).get("mode") is not None:
+                continue
+            modes = template_scene_modes(template, manim_dir)
+            if not modes or len(modes) < 2:
+                continue  # single-mode template: nothing to disambiguate
+            buckets.setdefault(template, []).append(scene.get("scene_id", "?"))
+    return [
+        {"template": t, "scene_ids": ids, "modes": sorted(template_scene_modes(t, manim_dir))}
+        for t, ids in sorted(buckets.items())
+        if len(ids) >= 2
+    ]
 
 
 _YEAR_RE = re.compile(r"(?<!\d)(1[0-9]{3}|20[0-2][0-9])(?!\d)")
@@ -365,7 +482,7 @@ def check_onscreen_years_traceable(scene_def, config):
 
 
 # ---------------------------------------------------------------------------
-# misreading: the narration points at something the assigned mode does not draw.
+# An earlier episode: the narration points at something the assigned mode does not draw.
 # ---------------------------------------------------------------------------
 # The user watching ある回 wrote: "矢印の説明で矢印が画面上になく理解が難しい".
 # math_02 said "二つの状態と、そのあいだの四本の矢印があります" while its mode

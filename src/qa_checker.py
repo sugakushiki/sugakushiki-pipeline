@@ -412,27 +412,24 @@ def _build_source_manager_prompt(narration_text: str, episode_config: dict) -> s
 # タスク
 
 1. ナレーションで言及されている事実・エピソードの出典となりうる文献を推定
-2. YouTube概要欄用のフォーマット済みテキストを生成
-3. 典拠が不明な主張があればフラグ
+2. 典拠が不明な主張があればフラグ
 
-# 参考文献の記載方針（STYLE_GUIDE準拠）
+概要欄用の整形済みテキストは不要です（references の構造化データから別途組み立てます）。
 
-```
-【主要参考文献】
-- 著者名, "書名" (出版年)
-- ウェブサイト名 (URL)
+# 参考文献の分類（STYLE_GUIDE準拠）
 
-【データ出典】
-- データ名：出典元
-
-【映像素材】
-- 地図データ：Natural Earth（パブリックドメイン）
-- 音声合成：VOICEVOX:青山龍星
-```
+- books: 書籍・論文（著者名 / 書名 / 出版年）
+- websites: ウェブサイト（サイト名 / URL）
+- data_sources: 統計値・データセットの出典
 
 # 出力形式
 
 以下のJSON形式で出力してください。JSON以外のテキストは含めないでください。
+
+## JSON 記法の厳守（パース失敗防止）
+
+- 文字列値の中に二重引用符 `"` を書かないこと。書名・論文名・引用は『』で囲む（例: 『Frank Ramsey: A Sheer Excess of Powers』）
+- 文字列内の改行は `\\n` と書き、生の改行を入れないこと
 
 ```json
 {{
@@ -448,7 +445,6 @@ def _build_source_manager_prompt(narration_text: str, episode_config: dict) -> s
       {{"data": "データ名", "source": "出典元"}}
     ]
   }},
-  "youtube_description_text": "概要欄用のフォーマット済みテキスト（改行含む）",
   "unsourced_claims": [
     {{
       "claim": "典拠不明な主張",
@@ -749,11 +745,67 @@ def _detect_description_drift(scene_definition: dict) -> list:
     return issues
 
 
+def run_hyperbole_lint(scene_definition: dict, scene_def_path: str | None = None) -> dict:
+    """Deterministic 比喩的誇張 detector.
+
+    「〜の最初の頁にあります」「〜の父」「幕を開けた」「世界を変えた」のような
+    **検証できない起源・最上級の比喩**を、全話共通の表で名指しする。LLM StyleChecker は
+    煽り語しか見ず、比喩の誇張は「文体は良好」で通した (ある回と ある回で同じ「最初の頁」が
+    再発)。config の `forbidden_phrases` はその回で決めた語しか見ない。
+    metaphor = warning (言い換える) / primacy = info (verified_facts に出典があれば残す)。
+    config の `hyperbole_allow` に文脈ごと書いた語は素通り (ある回「ノートの最初のページ」)。
+
+    Returns: agent-result 互換 dict (status / issues / summary / _agent)。
+    """
+    from hyperbole_lint import scan_scene_definition
+
+    allow: list[str] = []
+    if scene_def_path:
+        cfg_path = os.path.join(
+            os.path.dirname(os.path.abspath(str(scene_def_path))), "episode_config.json"
+        )
+        if os.path.exists(cfg_path):
+            try:
+                with open(cfg_path, encoding="utf-8") as f:
+                    allow = list((json.load(f) or {}).get("hyperbole_allow") or [])
+            except (OSError, ValueError):
+                allow = []
+
+    issues = []
+    for h in scan_scene_definition(scene_definition, allow):
+        sev = "warning" if h["kind"] == "metaphor" else "info"
+        advice = (
+            "検証できない比喩なので言い換える (「いまも〜に使われています」「〜の土台のひとつです」等)。"
+            if sev == "warning"
+            else "事実として書くなら verified_facts に出典を置く。無ければ外す。"
+        )
+        issues.append(
+            {
+                "severity": sev,
+                "scene_id": h["scene_id"],
+                "field": f"narration[{h['sentence_index']}]",
+                "description": f"比喩的な誇張 [{h['label']}]「{h['match']}」: …{h['context']}… {advice}",
+                "suggestion": "文字どおりの意味なら config の hyperbole_allow に文脈ごと書く",
+            }
+        )
+    n_warn = sum(1 for i in issues if i["severity"] == "warning")
+    return {
+        "status": "WARN" if n_warn else "PASS",
+        "issues": issues,
+        "summary": (
+            f"決定論 比喩的誇張 検出: warning {n_warn} 件 / info {len(issues) - n_warn} 件 "
+            "(LLM StyleChecker の盲点補完。ある回/074 の「最初の頁」型)"
+        ),
+        "_agent": "hyperbole_lint",
+    }
+
+
 def run_dearu_lint(scene_definition: dict) -> dict:
     """Deterministic である調 detector (強化 B).
 
     LLM StyleChecker は run 間で揺れ、ある回で である調 5 件中 2 件を見逃した
-    (`した。`/`ない。` pattern が盲点)。は hard rule なので、非決定的 LLM の補完として正規表現で確実に候補を列挙する
+    (`した。`/`ない。` pattern が盲点)。「ですます調厳守、である調禁止」
+    は hard rule なので、非決定的 LLM の補完として正規表現で確実に候補を列挙する
     (layered defense)。`『...』` 引用内 (古代視点の修辞的提示、ある回等) は
     info、本文の である調終止は warning。最終判断は人間 (鵜呑み禁止)。
 
@@ -1122,6 +1174,10 @@ def run_agent(
 
     # Claude Code 実行 or Gemini API
     start_time = time.time()
+    response = None
+    # parse 失敗時に生レスポンスを残す先。「length=6997」だけの ERROR では原因調査が
+    # できず、nested claude の transcript を掘って復元する羽目になった教訓。
+    raw_dump = scene_def_path.parent / f"_qa_{agent_key}_raw_response.txt"
     try:
         backend = agent_info.get("backend", "claude")
 
@@ -1148,6 +1204,13 @@ def run_agent(
         result = extract_json_from_response(response)
         elapsed = time.time() - start_time
 
+        # 前回失敗時の dump が残っていれば消す（成功した run と混同しないため）
+        if raw_dump.exists():
+            try:
+                raw_dump.unlink()
+            except OSError as io_err:
+                print(f"  [WARN] stale raw dump not removed: {raw_dump} ({io_err})")
+
         # メタ情報追加
         result["_agent"] = agent_key
         result["_model"] = agent_info["model"]
@@ -1166,7 +1229,7 @@ def run_agent(
     except Exception as e:
         elapsed = time.time() - start_time
         print(f"\n  [ERROR] {e}")
-        return {
+        error = {
             "_agent": agent_key,
             "_model": agent_info["model"],
             "_duration_sec": round(elapsed, 1),
@@ -1174,6 +1237,14 @@ def run_agent(
             "error": str(e),
             "issues": [],
         }
+        if response:
+            try:
+                raw_dump.write_text(response, encoding="utf-8")
+                error["raw_response_path"] = str(raw_dump)
+                print(f"  [ERROR] raw response saved: {raw_dump}")
+            except OSError as io_err:
+                print(f"  [WARN] raw response could not be saved: {io_err}")
+        return error
 
 
 # ============================================================
@@ -1480,6 +1551,16 @@ def main():
             f"\n  [dearu_lint] {dl['status']} "
             f"({sum(1 for i in dl['issues'] if i['severity'] == 'warning')} warning / "
             f"{sum(1 for i in dl['issues'] if i['severity'] == 'info')} info)"
+        )
+
+    # ある回: 決定論 比喩的誇張 lint (「最初の頁」「〜の父」型。StyleChecker の盲点)。
+    if args.gate == "script":
+        hl = run_hyperbole_lint(scene_definition, sd_path)
+        agent_results["hyperbole_lint"] = hl
+        print(
+            f"  [hyperbole_lint] {hl['status']} "
+            f"({sum(1 for i in hl['issues'] if i['severity'] == 'warning')} warning / "
+            f"{sum(1 for i in hl['issues'] if i['severity'] == 'info')} info)"
         )
 
     total_elapsed = time.time() - start_total

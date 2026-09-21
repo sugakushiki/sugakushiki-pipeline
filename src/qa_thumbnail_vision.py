@@ -36,79 +36,31 @@ WARN は hard failure ではなく、user に視覚 review を促す。
 import argparse
 import json
 import os
-import re
 import sys
-import tempfile
 
 
 def _call_claude_cli(prompt: str, debug: bool = False) -> str | None:
-    """Call Claude Code CLI with a text prompt (image file paths referenced inside).
+    """Claude Code CLI に text prompt を渡す (サムネイルはパスで参照)。
 
-    Uses the same file-based I/O pattern as qa_image_checker._call_claude_cli.
-    Claude Code reads image files directly via its Read tool.
-    Runs under Max subscription — no API key or additional cost.
+    (2026-09-19): 実装は claude_backend.call_claude_text (6 本の同じ wrapper を 1 つに)。
     """
-    tmp_dir = tempfile.gettempdir()
-    prompt_path = os.path.join(tmp_dir, "_tmp_qa_thumb_prompt.txt")
-    output_path = os.path.join(tmp_dir, "_tmp_qa_thumb_output.txt")
-    error_path = os.path.join(tmp_dir, "_tmp_qa_thumb_error.txt")
+    _src_dir = os.path.dirname(os.path.abspath(__file__))
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from claude_backend import call_claude_text
 
-    try:
-        with open(prompt_path, "w", encoding="utf-8-sig") as f:
-            f.write(prompt)
-
-        for p in [output_path, error_path]:
-            if os.path.exists(p):
-                os.remove(p)
-
-        # --allowedTools Read,Bash required for Claude CLI v2.1.63+
-        cmd = (
-            f'type "{prompt_path}" | claude -p --allowedTools Read,Bash --output-format text '
-            f'> "{output_path}" 2> "{error_path}"'
-        )
-
-        if debug:
-            print(f"    [DEBUG] Prompt: {len(prompt)} chars")
-            print(f"    [DEBUG] Command: {cmd[:120]}...")
-
-        exit_code = os.system(cmd)
-
-        if exit_code != 0:
-            if debug and os.path.exists(error_path):
-                with open(error_path, encoding="utf-8", errors="replace") as f:
-                    print(f"    [DEBUG] stderr: {f.read().strip()[:200]}")
-            return None
-
-        if not os.path.exists(output_path):
-            return None
-
-        with open(output_path, encoding="utf-8", errors="replace") as f:
-            return f.read().strip()
-
-    except Exception as e:
-        if debug:
-            print(f"    [DEBUG] _call_claude_cli error: {e}")
-        return None
-    finally:
-        for p in [prompt_path, output_path, error_path]:
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except OSError:
-                pass
+    return call_claude_text(prompt, context="qa_thumbnail_vision", prefix="qa_thumb", debug=debug)
 
 
 def _extract_json(text: str) -> dict | None:
-    """Extract JSON object from response text (handles ```json blocks)."""
-    text = text.strip()
-    if "```" in text:
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
+    """Claude の応答から JSON を取り出す。実装は claude_backend.try_extract_json
+    (複数 ```json ブロックの後方優先・制御文字許容・修復まで通る)。"""
+    _src_dir = os.path.dirname(os.path.abspath(__file__))
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from claude_backend import try_extract_json
+
+    return try_extract_json(text)
 
 
 def evaluate_thumbnail(thumbnail_path: str, subject: str, debug: bool = False) -> dict:

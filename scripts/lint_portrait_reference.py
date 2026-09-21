@@ -61,8 +61,13 @@ def _resolve(path: str):
 
 
 def _iter_scenes(scene_def: dict):
-    for sec in scene_def.get("sections", []):
-        yield from sec.get("scenes", [])
+    """実装は scene_def.iter_scenes (5 か所にあった同じ走査を 1 つに)。"""
+    _src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    from scene_def import iter_scenes
+
+    yield from iter_scenes(scene_def)
 
 
 def _is_portrait_prompt(prompt: str) -> bool:

@@ -41,6 +41,20 @@ def load_params() -> dict:
     return {}
 
 
+FRAME_RATE = 30  # 出荷 fps (pipeline は -qh --fps 30 でレンダする)
+
+
+def _snap_to_frames(t: float, fps: int = FRAME_RATE) -> float:
+    """run_time を 1/fps の倍数に **切り下げる**。
+
+    Manim は play/wait の run_time を np.arange(0, run_time, 1/fps) でフレーム化するので、
+    端数があると 1 フレーム多く描く。play が 20 回を超える scene (階段図) では切り上げが
+    積もって割り当て尺を 0.34 秒超過し、末尾が切り詰められた。切り下げなら合計は必ず
+    予算以下に収まる。
+    """
+    return max(0.0, int(t * fps + 1e-9) / fps)
+
+
 def pace(duration, weights, intro=0.0, coda=0.0, floor=0.12):
     """Split a scene's animation budget across steps by weight (an earlier episode fix).
 
@@ -71,7 +85,8 @@ def pace(duration, weights, intro=0.0, coda=0.0, floor=0.12):
     total_w = sum(weights) or 1.0
     budget = max(floor * total_w, float(duration) - intro - coda)
     per = budget / total_w
-    return [max(floor, w * per) for w in weights]
+    # 各 run_time をフレーム境界に切り下げる。
+    return [max(_snap_to_frames(floor), _snap_to_frames(w * per)) for w in weights]
 
 
 # ---------------------------------------------------------------------------

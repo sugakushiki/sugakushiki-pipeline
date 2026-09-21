@@ -25,6 +25,7 @@ License filter:
 """
 
 import argparse
+import html
 import json
 import os
 import re
@@ -797,6 +798,43 @@ def _match_by_era(
 # ---------------------------------------------------------------------------
 # Main fetch logic
 # ---------------------------------------------------------------------------
+def write_skip_credits(
+    credits_path: str, episode_id: str, subject_en: str, skip_reason: str
+) -> bool:
+    """Commons 検索を飛ばす回の wikimedia_credits.json を書く。手書きの登録は消さない。
+
+    ある回: use_reference=false の回で、実画像 (BnF の細密画) を 1 scene に使うために
+    手で書いた credits ファイルを、photos ステップが空リストで**黙って上書き**し、公開
+    概要欄から【画像クレジット】が丸ごと消えた (credits_generator はこのファイルしか
+    読まない)。既存ファイルに photos が 1 件でもあれば触らずに残し、無いときだけ空の
+    ファイルを書く。戻り値: 既存を保持したら True、空を書いたら False。
+    """
+    if os.path.exists(credits_path):
+        try:
+            with open(credits_path, encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception as e:  # noqa: BLE001 - 壊れたファイルは上書きしてよい (下で報告)
+            print(f"[wikimedia_fetcher] existing credits unreadable ({e}); rewriting")
+            existing = None
+        if existing and existing.get("photos"):
+            print(
+                f"[wikimedia_fetcher] Skipping fetch: {skip_reason}. "
+                f"Keeping existing credits ({len(existing['photos'])} manual entry/entries)."
+            )
+            return True
+    print(f"[wikimedia_fetcher] Skipping fetch: {skip_reason}. Writing empty credits.")
+    empty_credits = {
+        "episode_id": episode_id,
+        "subject": subject_en,
+        "fetched_at": None,
+        "photos": [],
+        "note": f"Search/download skipped: {skip_reason}.",
+    }
+    with open(credits_path, "w", encoding="utf-8") as f:
+        json.dump(empty_credits, f, ensure_ascii=False, indent=2)
+    return False
+
+
 def fetch_and_assign(
     episode_config_path: str,
     scene_json_path: str,
@@ -864,16 +902,9 @@ def fetch_and_assign(
                 f"({uses_ref_false_explicit} scenes)"
             )
     if skip_reason:
-        print(f"[wikimedia_fetcher] Skipping fetch: {skip_reason}. Writing empty credits.")
-        empty_credits = {
-            "episode_id": config.get("episode_id", "unknown"),
-            "subject": subject_en,
-            "fetched_at": None,
-            "photos": [],
-            "note": f"Search/download skipped: {skip_reason}.",
-        }
-        with open(credits_path, "w", encoding="utf-8") as f:
-            json.dump(empty_credits, f, ensure_ascii=False, indent=2)
+        write_skip_credits(
+            credits_path, config.get("episode_id", "unknown"), subject_en, skip_reason
+        )
         return {"status": "skipped", "reason": skip_reason}
 
     search_query = f"{subject_en} mathematician"
@@ -1239,13 +1270,33 @@ def _license_url(license_short: str) -> str:
     return ""
 
 
+def _clean_author(author: str) -> str:
+    """Normalise the Commons `Artist` string before it goes into a public credit.
+
+    Commons stores Artist as HTML, and some files store it as a sentence that already
+    begins with "by" (an earlier episode `Mary cartwright.jpg` = `by Elliott &amp; Fry, bromide print,
+    1950, NPG x86637`). Feeding that straight into `f"{title} by {author}"` shipped
+    **"by by Elliott &amp; Fry"** into the description -- a doubled preposition and a raw
+    HTML entity in an attribution line, which is the one place the text has to be exact.
+
+    Two fixes, both generic (no per-episode special-casing):
+      - `html.unescape` so `&amp;` / `&quot;` / `&#39;` become the characters they denote;
+      - drop a leading "by " (any case) so the caller's own "by" is not doubled.
+    """
+    if not author:
+        return ""
+    a = html.unescape(str(author)).strip()
+    a = re.sub(r"^by\s+", "", a, flags=re.IGNORECASE).strip()
+    return a
+
+
 def _format_credit(assignment: dict) -> str:
     """Format attribution string for video credits (CC BY compliant)."""
     # Empty author -> "Unknown author", NOT "Wikimedia Commons" (the repository is not the
     # creator). A PD/CC0 historical engraving genuinely has an unknown author; crediting it
     # to "Wikimedia Commons" misattributes authorship. A CC-BY work always carries a
     # real author, so this default only ever applies to unattributed PD/CC0 items.
-    author = assignment["author"] or "Unknown author"
+    author = _clean_author(assignment["author"]) or "Unknown author"
     license_short = assignment["license"].upper().replace("-", " ")
     license_url = _license_url(assignment["license"])
     title = assignment["wikimedia_title"].replace("File:", "")
@@ -1271,7 +1322,6 @@ def _generate_appearance(image_path: str, subject_name: str, backend: str = "son
         return _generate_appearance_gemini(image_path, subject_name)
 
     # ── Primary: Claude Code CLI ──────────────────────────────
-    import tempfile
 
     abs_image_path = os.path.abspath(image_path)
     prompt = (
@@ -1288,42 +1338,16 @@ def _generate_appearance(image_path: str, subject_name: str, backend: str = "son
         f"broad forehead, large ears, angular jawline, lean build'"
     )
 
-    tmp_dir = tempfile.gettempdir()
-    prompt_path = os.path.join(tmp_dir, "_tmp_appear_prompt.txt")
-    output_path = os.path.join(tmp_dir, "_tmp_appear_output.txt")
-    error_path = os.path.join(tmp_dir, "_tmp_appear_error.txt")
-
+    # (2026-09-19): Claude CLI の呼び出しは claude_backend.call_claude_text (6 本の同じ wrapper を 1 つに)
     try:
-        with open(prompt_path, "w", encoding="utf-8-sig") as f:
-            f.write(prompt)
+        from claude_backend import call_claude_text
 
-        for p in [output_path, error_path]:
-            if os.path.exists(p):
-                os.remove(p)
-
-        cmd = (
-            f'type "{prompt_path}" | claude -p --output-format text '
-            f'> "{output_path}" 2> "{error_path}"'
-        )
-
-        exit_code = os.system(cmd)
-
-        if exit_code == 0 and os.path.exists(output_path):
-            with open(output_path, encoding="utf-8", errors="replace") as f:
-                text = f.read().strip()
-            # 簡易バリデーション（英語のカンマ区切りリストか）
-            if text and "," in text and len(text) < 500 and not text.startswith("{"):
-                text = text.split("\n")[0].rstrip(".")
-                return text
-    except Exception as e:
+        text = call_claude_text(prompt, context="wikimedia_fetcher vision", prefix="appear")
+        # 簡易バリデーション（英語のカンマ区切りリストか）
+        if text and "," in text and len(text) < 500 and not text.startswith("{"):
+            return text.split("\n")[0].rstrip(".")
+    except Exception as e:  # noqa: BLE001 - Gemini fallback に落とす
         print(f"(appearance gen error [Claude CLI]: {str(e)[:60]})")
-    finally:
-        for p in [prompt_path, output_path, error_path]:
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except OSError:
-                pass
 
     # ── Fallback: Gemini Flash Vision ─────────────────────────
     return _generate_appearance_gemini(image_path, subject_name)

@@ -49,4 +49,6 @@ test_output/
 # anyone follows the lint command in CLAUDE.md.
 _pipeline_progress.json
 .ruff_cache/
+# B-102 (2026-09-19): pipeline.py writes episodes/XXX/logs/build_<ts>.jsonl by default.
+logs/
 
